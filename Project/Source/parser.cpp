@@ -8,6 +8,11 @@ static int GetOperatorPrecedence(Token* token);
 static Ast_ExprNode* ParsePrimaryExpression(Parser* p);
 static Ast_ExprNode* ParseExpression(Parser* p,
                                      int prec = INT_MIN);
+static Ast_ExprNode* ParseExpression(Parser* p,
+                                     Ast_ExprNode* left,
+                                     int prec = INT_MIN);
+static Array<Ast_ExprNode*> ParseExpressionArray(Parser* p, bool* err);
+
 struct TryParse_Ret
 {
     Ast_ExprNode* expr;
@@ -42,12 +47,17 @@ static Ast_DeclStmt* ParseDeclarationStatement(Parser* p,
 static Ast_BlockStmt* ParseBlockStatement(Parser* p);
 static Ast_Type ParseType(Parser* p, bool* err);
 
-static void SyntaxError(Token token, Tokenizer* tokenizer, char* message);
+static void SyntaxError(Token token, Parser* tokenizer, char* message);
+static void SyntaxError(Parser* parser, char* message);
 
-// TODO(Leo): This could be a LOT cleaner
-static void SyntaxError(Token token, Tokenizer* tokenizer, char* message)
+static void SyntaxError(Token token, Parser* parser, char* message)
 {
-    CompilationError(token, tokenizer->startOfFile, "Syntax error", message);
+    CompilationError(token, parser->tokenizer, "Syntax error", message);
+}
+
+static void SyntaxError(Parser* parser, char* message)
+{
+    CompilationError(parser->tokenizer, "Syntax error", message);
 }
 
 inline int GetOperatorPrecedence(Token* token)
@@ -63,6 +73,7 @@ inline int GetOperatorPrecedence(Token* token)
         case '>': return 10;
         case '+': return 20;
         case '-': return 20;
+        case '/':
         case '*': return 40;
         case '=': return 5;
     }
@@ -138,7 +149,7 @@ static Ast_ExprNode* ParsePrimaryExpression(Parser* p)
                 
                 if(token->type != ',')
                 {
-                    SyntaxError(*token, p->tokenizer, "Expected ','");
+                    SyntaxError(p, "Expected ','");
                     return 0;
                 }
                 
@@ -165,10 +176,9 @@ static Ast_ExprNode* ParsePrimaryExpression(Parser* p)
         if(!subscript->indexExpr)
             return 0;
         
-        Token* next = PeekNextToken(p->tokenizer);
-        if(next->type != ']')
+        if(PeekNextToken(p->tokenizer)->type != ']')
         {
-            SyntaxError(*next, p->tokenizer, "Expected ']'");
+            SyntaxError(p, "Expected ']'");
             return 0;
         }
         
@@ -193,8 +203,7 @@ static Ast_ExprNode* ParsePrimaryExpression(Parser* p)
             EatToken(p->tokenizer);  // Eat ')'
         else
         {
-            SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                        "Expected ')' at the end of expression");
+            SyntaxError(p, "Expected ')' at the end of expression");
             return 0;
         }
     }
@@ -220,40 +229,18 @@ static Ast_ExprNode* ParsePrimaryExpression(Parser* p)
         
         auto arrayNode = Arena_AllocAndInit(p->arena, Ast_ArrayInitNode);
         arrayNode->token = bracket;
+        bool err = false;
+        arrayNode->expressions = ParseExpressionArray(p, &err);
+        if(err)
+            return 0;
         
-        TempArenaMemory savepoint = Arena_TempBegin(p->tempArena);
-        defer(Arena_TempEnd(savepoint));
-        
-        Array<Ast_ExprNode*> exprArray = { 0, 0 };
-        while(true)
-        {
-            Ast_ExprNode* tmp = ParseExpression(p);
-            if(!tmp)
-                return 0;
-            
-            Array_AddElement(&exprArray, p->tempArena, tmp);
-            
-            token = PeekNextToken(p->tokenizer);
-            if(token->type == '}')
-                break;
-            
-            if(token->type != ',')
-            {
-                SyntaxError(*token, p->tokenizer, "Expected ','");
-                return 0;
-            }
-            
-            EatToken(p->tokenizer);  // Eat ','
-        }
-        
-        arrayNode->expressions = Array_CopyToArena(exprArray, p->arena);
         node = arrayNode;
         EatToken(p->tokenizer);
     }
     else if(token->type != TokenError)
     {
-        SyntaxError(*token, p->tokenizer, "Expected expression");
-        return 0;
+        //SyntaxError(*token, p->tokenizer, "Expected expression");
+        //return 0;
     }
     return node;
 }
@@ -266,6 +253,40 @@ static Ast_ExprNode* ParseExpression(Parser* p,
     Ast_ExprNode* left = ParsePrimaryExpression(p);
     if(!left)
         return 0;
+    
+    while(true)
+    {
+        Token* token = PeekNextToken(p->tokenizer);
+        int tokenPrec = GetOperatorPrecedence(token);
+        // Stop the recursion
+        if(tokenPrec == prec)
+        {
+            if(IsOperatorLeftToRightAssociative(token))
+                return left;
+        }
+        else if(tokenPrec < prec || tokenPrec == -1)
+            return left;
+        
+        // This is a binary operation
+        
+        auto node = Arena_AllocAndInit(p->arena, Ast_BinExprNode);
+        node->token = *token;
+        node->left  = left;
+        EatToken(p->tokenizer);  // Eat operator
+        node->right = ParseExpression(p, tokenPrec);
+        
+        if(!node->right)
+            return 0;
+        
+        left = node;
+    }
+}
+
+static Ast_ExprNode* ParseExpression(Parser* p,
+                                     Ast_ExprNode* left,
+                                     int prec)
+{
+    ProfileFunc();
     
     while(true)
     {
@@ -308,7 +329,7 @@ static TryParse_Ret TryParseExpression(Parser* p, TokenType expected)
         if(PeekNextToken(p->tokenizer)->type != expected)
         {
             // TODO: Print expected token here
-            SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer, "Unexpected token");
+            SyntaxError(p, "Unexpected token");
             TryParse_Ret ret { 0, true };
             return ret;
         }
@@ -327,7 +348,7 @@ static Ast_Prototype* ParsePrototype(Parser* p)
     
     if(token.type != TokenIdent)
     {
-        SyntaxError(token, p->tokenizer, "Expected function name in prototype");
+        SyntaxError(p, "Expected function name in prototype");
         return 0;
     }
     
@@ -336,8 +357,7 @@ static Ast_Prototype* ParsePrototype(Parser* p)
     
     if(PeekNextToken(p->tokenizer)->type != '(')
     {
-        SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                    "Expected '(' in prototype");
+        SyntaxError(p, "Expected '(' in prototype");
         return 0;
     }
     
@@ -354,7 +374,7 @@ static Ast_Prototype* ParsePrototype(Parser* p)
     {
         if(currentToken.type != TokenIdent)
         {
-            SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer, "Expected identifier");
+            SyntaxError(p, "Expected identifier");
             return 0;
         }
         
@@ -380,8 +400,7 @@ static Ast_Prototype* ParsePrototype(Parser* p)
     
     if(PeekNextToken(p->tokenizer)->type != ')')
     {
-        SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                    "Expected ')' at end of prototype");
+        SyntaxError(p, "Expected ')' at end of prototype");
         EatToken(p->tokenizer);
         return 0;
     }
@@ -396,7 +415,7 @@ static Ast_Prototype* ParsePrototype(Parser* p)
         Token token = *PeekNextToken(p->tokenizer);
         if(token.type != TokenIdent)
         {
-            SyntaxError(token, p->tokenizer, "Expecting return type(s) after '->'");
+            SyntaxError(p, "Expecting return type(s) after '->'");
             return 0;
         }
         
@@ -460,7 +479,7 @@ static Ast_Prototype* ParseExtern(Parser* p)
     Token next = *PeekNextToken(p->tokenizer);
     if(next.type != ';')
     {
-        SyntaxError(next, p->tokenizer, "Expected ';'");
+        SyntaxError(p, "Expected ';'");
         return 0;
     }
     
@@ -532,8 +551,7 @@ static Ast_Stmt* ParseStatement(Parser* p)
     {
         if(PeekNextToken(p->tokenizer)->type != ';')
         {
-            SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                        "Expected ';' at the end of statement");
+            SyntaxError(p, "Expected ';' at the end of statement");
             return 0;
         }
         
@@ -549,15 +567,13 @@ static Ast_If* ParseIfStatement(Parser* p)
     
     if(PeekNextToken(p->tokenizer)->type != TokenIf)
     {
-        SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                    "Expected if statement");
+        SyntaxError(p, "Expected if statement");
         return 0;
     }
     
     if(PeekToken(p->tokenizer, 2)->type != '(')
     {
-        SyntaxError(*PeekToken(p->tokenizer, 2), p->tokenizer,
-                    "Expected '('");
+        SyntaxError(p, "Expected '('");
         return 0;
     }
     
@@ -571,8 +587,7 @@ static Ast_If* ParseIfStatement(Parser* p)
     
     if(PeekNextToken(p->tokenizer)->type != ')')
     {
-        SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                    "Expected ')' at the end of condition");
+        SyntaxError(p, "Expected ')' at the end of condition");
         return 0;
     }
     
@@ -598,15 +613,13 @@ static Ast_For* ParseForStatement(Parser* p)
     
     if(PeekNextToken(p->tokenizer)->type != TokenFor)
     {
-        SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                    "Expected for statement");
+        SyntaxError(p, "Expected for statement");
         return 0;
     }
     
     if(PeekToken(p->tokenizer, 2)->type != '(')
     {
-        SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                    "Expected '('");
+        SyntaxError(p, "Expected '('");
         return 0;
     }
     
@@ -643,15 +656,13 @@ static Ast_While* ParseWhileStatement(Parser* p)
     
     if(PeekNextToken(p->tokenizer)->type != TokenWhile)
     {
-        SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                    "Expected while statement");
+        SyntaxError(p, "Expected while statement");
         return 0;
     }
     
     if(PeekToken(p->tokenizer, 2)->type != '(')
     {
-        SyntaxError(*PeekToken(p->tokenizer, 2), p->tokenizer,
-                    "Expected '('");
+        SyntaxError(p, "Expected '('");
         return 0;
     }
     
@@ -665,8 +676,7 @@ static Ast_While* ParseWhileStatement(Parser* p)
     
     if(PeekNextToken(p->tokenizer)->type != ')')
     {
-        SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                    "Expected ')' at the end of condition");
+        SyntaxError(p, "Expected ')' at the end of condition");
         return 0;
     }
     
@@ -709,21 +719,19 @@ static Array<Ast_ExprNode*> ParseExpressionArray(Parser* p, bool* err)
     Array<Ast_ExprNode*> result = { 0, 0 };
     *err = false;
     
-    while(true)
+    auto expr = ParseExpression(p);
+    while(expr)
     {
-        auto expr = ParseExpression(p);
-        if(!expr)
+        Array_AddElement(&result, p->tempArena, expr);
+        
+        if(PeekNextToken(p->tokenizer)->type != ',')
         {
             *err = true;
             return result;
         }
         
-        Array_AddElement(&result, p->tempArena, expr);
-        
-        if(PeekNextToken(p->tokenizer)->type != ',')
-            break;
-        
         EatToken(p->tokenizer);  // Eat ','
+        auto expr = ParseExpression(p);
     }
     
     result = Array_CopyToArena(result, p->arena);
@@ -741,20 +749,20 @@ static Ast_Type ParseType(Parser* p, bool* err)
         EatToken(p->tokenizer);
         t = *PeekNextToken(p->tokenizer);
         
-        ++result.numPointers;
+        //++result.numPointers;
     }
     
     t = *PeekNextToken(p->tokenizer);
     if(t.type != TokenIdent)
     {
-        SyntaxError(t, p->tokenizer, "Expecting identifier here");
+        SyntaxError(p, "Expecting identifier here");
         *err = true;
         return result;
     }
     
     EatToken(p->tokenizer);  // Eat ident
     
-    result.ident = t;
+    result.baseType = t;
     if(PeekNextToken(p->tokenizer)->type == '(')
     {
         EatToken(p->tokenizer);  // Eat '('
@@ -764,7 +772,7 @@ static Ast_Type ParseType(Parser* p, bool* err)
         
         if(PeekNextToken(p->tokenizer)->type != ')')
         {
-            SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer, "Expecting ')'");
+            SyntaxError(p, "Expecting ')'");
             *err = true;
             return result;
         }
@@ -775,6 +783,7 @@ static Ast_Type ParseType(Parser* p, bool* err)
     return result;
 }
 
+// This is pretty messy... Would just be better to it the other way.
 static Ast_Stmt* ParseDeclOrExpr(Parser* p,
                                  bool forceInitialization)
 {
@@ -788,6 +797,114 @@ static Ast_Stmt* ParseDeclOrExpr(Parser* p,
     auto savepoint = Arena_TempBegin(p->tempArena);
     defer(Arena_TempEnd(savepoint));
     
+    Token t = *PeekNextToken(p->tokenizer);
+    
+    Array<Ast_TypeDescriptor> typeDesc = { 0, 0 };
+    // If determined to be a declaration
+    bool isDecl = false;
+    // TODO: Other keywords might be here
+    while(t.type == '^' || t.type == '[')
+    {
+        isDecl = true;
+        Ast_ExprNode* arrSize = 0;
+        if(t.type == '[')
+        {
+            t.type = TokenSubscript;
+            arrSize = ParseExpression(p);
+        }
+        
+        Array_AddElement(&typeDesc, p->tempArena, { t, arrSize } );
+        EatToken(p->tokenizer);
+        t = *PeekNextToken(p->tokenizer);
+    }
+    
+    typeDesc = Array_CopyToArena(typeDesc, p->arena);
+    
+    Array<Ast_ExprNode*> exprArr = { 0, 0 };
+    Token ident;  // Either for function call or for
+    
+    // NOTE: there has to be a single element in here,
+    // if it was a polymorphic struct 
+    if(PeekToken(p->tokenizer, 1)->type == TokenIdent &&
+       PeekToken(p->tokenizer, 2)->type == '(')
+    {
+        ident = *PeekNextToken(p->tokenizer);
+        
+        EatToken(p->tokenizer);
+        EatToken(p->tokenizer);
+        bool err = false;
+        exprArr = ParseExpressionArray(p, &err);
+        if(err)
+            return 0;
+        
+        if(PeekNextToken(p->tokenizer)->type != ')')
+        {
+            SyntaxError(p, "Expecting ')'");
+            return 0;
+        }
+        
+        EatToken(p->tokenizer);  // Eat ')'
+        
+        if(PeekNextToken(p->tokenizer)->type == TokenIdent)
+        {
+            isDecl = true;
+            EatToken(p->tokenizer);
+        }
+    }
+    else if(PeekToken(p->tokenizer, 1)->type == TokenIdent &&
+            PeekToken(p->tokenizer, 2)->type == TokenIdent)
+    {
+        isDecl = true;
+        EatToken(p->tokenizer);
+    }
+    
+    if(isDecl)
+    {
+        auto decl = Arena_AllocAndInit(p->arena, Ast_Declaration);
+        decl->typeInfo.typeDesc = typeDesc;
+        decl->typeInfo.baseType = ident;
+        decl->nameIdent = *PeekNextToken(p->tokenizer);
+        if(decl->nameIdent.type != TokenIdent)
+        {
+            SyntaxError(p, "Unexpected token");
+            return 0;
+        }
+        
+        EatToken(p->tokenizer);
+        
+        // Don't forget to do the initialization stuff here
+        
+        result = decl;
+    }
+    else
+    {
+        // If we set the expression previously,
+        // AND it's not a declaration then this
+        // has to be a function call
+        if(exprArr.ptr)
+        {
+            auto call = Arena_AllocAndInit(p->arena, Ast_CallExprNode);
+            call->token = ident;
+            call->args  = exprArr;
+            
+            auto exprStmt = Arena_AllocAndInit(p->arena, Ast_ExprStmt);
+            exprStmt->expr = ParseExpression(p, call);
+            
+            result = exprStmt;
+        }
+        else
+        {
+            auto exprStmt = Arena_AllocAndInit(p->arena, Ast_ExprStmt);
+            exprStmt->expr = ParseExpression(p);
+            
+            result = exprStmt;
+        }
+    }
+    
+    Assert(result->type == DeclStmt || result->type == ExprStmt);
+    return result;
+    
+#if 0
     // TODO: this doesn't handle any type specifier yet.
     
     Ast_ExprNode* maybeExpr = ParseExpression(p);
@@ -876,6 +993,7 @@ static Ast_Stmt* ParseDeclOrExpr(Parser* p,
     
     Assert(result->type == DeclStmt || result->type == ExprStmt);
     return result;
+#endif
 }
 
 static TryParseDecl_Ret TryParseExpressionOrDeclaration(Parser* p,
@@ -891,8 +1009,7 @@ static TryParseDecl_Ret TryParseExpressionOrDeclaration(Parser* p,
         if(PeekNextToken(p->tokenizer)->type != expected)
         {
             // TODO(Leo): print expected token
-            SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                        "Unexpected token");
+            SyntaxError(p, "Unexpected token");
             TryParseDecl_Ret ret = { 0, true };
         }
     }
@@ -922,7 +1039,7 @@ static Ast_DeclStmt* ParseDeclarationStatement(Parser* p,
     Token identifier = *PeekNextToken(p->tokenizer);
     if (identifier.type != TokenIdent)
     {
-        SyntaxError(identifier, p->tokenizer, "Expected identifier");
+        SyntaxError(p, "Expected identifier");
         return 0;
     }
     
@@ -941,8 +1058,7 @@ static Ast_DeclStmt* ParseDeclarationStatement(Parser* p,
     }
     else if(forceInitialization)
     {
-        SyntaxError(equal, p->tokenizer,
-                    "Expected '=', variable has to be initialized");
+        SyntaxError(p, "Expected '=', variable has to be initialized");
         return 0;
     }
     
@@ -955,8 +1071,7 @@ static Ast_ReturnStmt* ParseReturnStatement(Parser* p)
     
     if (PeekNextToken(p->tokenizer)->type != TokenReturn)
     {
-        SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                    "Expected 'return'");
+        SyntaxError(p, "Expected 'return'");
         return 0;
     }
     
@@ -968,8 +1083,7 @@ static Ast_ReturnStmt* ParseReturnStatement(Parser* p)
         stmt->returnValue = ParseExpression(p);
     else
     {
-        SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                    "Expected return value");
+        SyntaxError(p, "Expected return value");
         return 0;
     }
     
@@ -982,8 +1096,7 @@ static Ast_BlockStmt* ParseBlockStatement(Parser* p)
     
     if(PeekNextToken(p->tokenizer)->type != '{')
     {
-        SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                    "Expected '{' for the beginning of the block");
+        SyntaxError(p, "Expected '{' for the beginning of the block");
         return 0;
     }
     
@@ -1010,8 +1123,7 @@ static Ast_BlockStmt* ParseBlockStatement(Parser* p)
     
     if(PeekNextToken(p->tokenizer)->type != '}')
     {
-        SyntaxError(*PeekNextToken(p->tokenizer), p->tokenizer,
-                    "Expected '}' for block ending");
+        SyntaxError(p, "Expected '}' for block ending");
         return 0;
     }
     
@@ -1063,7 +1175,7 @@ bool ParseRootNode(Parser *parser, Tokenizer *tokenizer)
             case TokenEOF: { endOfFile = true; } break;
             default:
             {
-                SyntaxError(*token, tokenizer, "Unexpected token");
+                SyntaxError(*token, parser, "Unexpected token");
                 parseSuccess = false;
             } break;
         }

@@ -52,7 +52,6 @@ int GenerateIR(IR_Context *ctx, Ast_Root *root)
     // First pass for function declarations
     for (int i = 0; i < root->topStmts.length; ++i)
     {
-        printf("prova %lld\n", root->topStmts.length);
         auto stmt = root->topStmts[i];
         
         if (!stmt)
@@ -75,7 +74,6 @@ int GenerateIR(IR_Context *ctx, Ast_Root *root)
     // Second pass for function definitions
     for (int i = 0; i < root->topStmts.length; ++i)
     {
-        
         auto stmt = root->topStmts[i];
         
         if(stmt->type == Function)
@@ -214,7 +212,7 @@ static LLVMValueRef GenerateVar(IR_Context* ctx, Ast_Declaration* stmt, bool exp
     if(!argSym)
         return 0;
     
-    auto type = GetType(stmt->typeInfo.ident, stmt->typeInfo.numPointers);
+    auto type = GetType(stmt->typeInfo.baseType, 0);
     if(!type)
         return 0;
     

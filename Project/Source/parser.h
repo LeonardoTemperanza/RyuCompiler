@@ -24,23 +24,24 @@ struct Ast_Root
 
 struct Ast_ExprNode;
 
+// Examples of types:
+// [3][4]int arr;   3x4 matrix
+// ^int ptr;        int pointer
+// [3]^int ptrArr;  array of int pointers
+// [3]^[4]int var;  array of pointers to static arrays
+// vec3(float) v;   polimorphic compound type
+// There are also const qualifiers and all that 
+struct Ast_TypeDescriptor
+{
+    Token t;
+    Ast_ExprNode* arrSize;  // Only used with the "subscript" token
+};
+
 struct Ast_Type
 {
-    Token ident;
+    Array<Ast_TypeDescriptor> typeDesc = { 0, 0 };
     
-    // Useful for accurate error messages
-    Array<Token> qualifiers = { 0, 0 };
-    // Useful for quickly determining if a declaration has
-    // a certain qualifier or not.
-    // TODO: Currently, there is no way to declare an array.
-    // Arrays should work like this: [3][4]^int matrixPtr3x4;
-    // But they could also be like this: [3]^[4]int arrayOfPtrsToArrays;
-    // In general an array of tokens is probably needed, not only that but
-    // also the order in which the tokens appear is important, and also
-    // the array size could be an expression i suppose.
-    bool isConst = 0;
-    uint8 numPointers = 0;
-    
+    Token baseType;
     // Used for parametric polymorphism
     Array<Ast_ExprNode*> params = { 0, 0 };
 };
@@ -62,7 +63,7 @@ struct Ast_ExprNode
     Token token;
     
     // Any expression could have a cast
-    // Associated to them
+    // associated to them
     bool hasCast = false;
     Ast_Type castTo;
     

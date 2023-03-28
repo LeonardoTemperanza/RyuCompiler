@@ -27,6 +27,10 @@ Symbol* GetGlobalSymbolOrError(IR_Context* ctx, Token token);
 
 // We need to change stuff about the error system, but we could do that later
 
+void InsertPrimitiveTypes(SymbolTable* table);
+void PerformTypingStage(Ast_Root* ast);
+void TypeCheckExpr(Ast_ExprNode* expr);
+
 void InsertPrimitiveTypes(SymbolTable* table)
 {
     
@@ -42,6 +46,7 @@ void PerformTypingStage(Ast_Root* ast)
         
         if(topStmt->type == Function)
         {
+            
         }
         else if(topStmt->type == Prototype)
         {

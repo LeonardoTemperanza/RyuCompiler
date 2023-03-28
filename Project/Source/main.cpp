@@ -77,6 +77,8 @@ int MainDriver(Tokenizer* tokenizer, Parser* parser, IR_Context* ctx)
     if(!success)
         return 1;
     
+    printf("Parsed successfully!\n");
+    
     //InterpretTestCode();
     
     int errorCode = GenerateIR(ctx, &(parser->root));

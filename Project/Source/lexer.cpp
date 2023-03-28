@@ -318,8 +318,10 @@ Token* PeekToken(Tokenizer* t, int lookahead)
     return t->peekBuffer + idx;
 }
 
-void CompilationError(Token token, char* fileContents, char* prefix, char* message)
+void CompilationError(Token token, Tokenizer* t, char* prefix, char* message)
 {
+    char* fileContents = t->startOfFile;
+    
     fprintf(stderr, "%s (%d,%d): %s\n", prefix, token.lineNum, token.sc - token.sl + 1, message);
     bool endOfLine = false;
     int i = token.sl;
@@ -349,4 +351,9 @@ void CompilationError(Token token, char* fileContents, char* prefix, char* messa
     }
     
     fprintf(stderr, "^\n");
+}
+
+void CompilationError(Tokenizer* t, char* prefix, char* message)
+{
+    CompilationError(*PeekNextToken(t), t->startOfFile, prefix, message);
 }

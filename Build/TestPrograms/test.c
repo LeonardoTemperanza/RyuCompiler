@@ -3,27 +3,14 @@
 
 // Need to add: types, more files support, compound types, pointers
 
-proc main() -> vec3(2+3),bool err
+proc main()->prova p
 {
-    //var a;
-    //var b;
+    //test1();
 
-    *****int a = a;
+    test1();
 
-    //*int a = 2.3;
-    //return a;
-
-    //**int(2+3+4, 2+3) a + 2;
-
-    //test(1,2,3,4);
-
-    // var a = 2; should turn into int a = 2;
-    // if (1!=1)
-    //    return 3;
-    return 2;
-
-    *int prova = 2;
-    return 2;
+    test1(2) prova;
+    return test1();
 }
 
 /*
