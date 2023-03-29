@@ -59,7 +59,7 @@ int main(int argCount, char** argValue)
     
     Parser parser = { &tempArena, &astArena, &tokenizer };
     
-    IR_Context IRCtx = InitIRContext(&permanentArena, &tempArena, &scopeStackArena, fileContents);
+    IR_Context IRCtx = InitIRContext(&permanentArena, &tempArena, &scopeStackArena, &parser);
     
     int result = MainDriver(&tokenizer, &parser, &IRCtx);
     
@@ -79,8 +79,12 @@ int MainDriver(Tokenizer* tokenizer, Parser* parser, IR_Context* ctx)
     
     printf("Parsed successfully!\n");
     
+    PerformTypingStage(ctx, &parser->root);
+    
+    printf("Type checked successfully!\n");
+    
     //InterpretTestCode();
     
-    int errorCode = GenerateIR(ctx, &(parser->root));
+    //int errorCode = GenerateIR(ctx, &(parser->root));
     return 0;
 }

@@ -1,6 +1,8 @@
 
 #include "parser.h"
 
+// TODO: need to remove the old declaration node
+
 // Returns value of operator precedence (1 is the lowest),
 // and returns -1 if the supplied token is not an operator
 static int GetOperatorPrecedence(Token* token);
@@ -717,21 +719,22 @@ static Ast_ExprOrDecl* ParseExpressionOrDeclaration(Parser* p,
 static Array<Ast_ExprNode*> ParseExpressionArray(Parser* p, bool* err)
 {
     Array<Ast_ExprNode*> result = { 0, 0 };
-    *err = false;
     
-    auto expr = ParseExpression(p);
-    while(expr)
+    while(true)
     {
-        Array_AddElement(&result, p->tempArena, expr);
-        
-        if(PeekNextToken(p->tokenizer)->type != ',')
+        auto expr = ParseExpression(p);
+        if(!expr)
         {
             *err = true;
             return result;
         }
         
+        Array_AddElement(&result, p->tempArena, expr);
+        
+        if(PeekNextToken(p->tokenizer)->type != ',')
+            break;
+        
         EatToken(p->tokenizer);  // Eat ','
-        auto expr = ParseExpression(p);
     }
     
     result = Array_CopyToArena(result, p->arena);
@@ -783,7 +786,6 @@ static Ast_Type ParseType(Parser* p, bool* err)
     return result;
 }
 
-// This is pretty messy... Would just be better to it the other way.
 static Ast_Stmt* ParseDeclOrExpr(Parser* p,
                                  bool forceInitialization)
 {
@@ -800,8 +802,28 @@ static Ast_Stmt* ParseDeclOrExpr(Parser* p,
     Token t = *PeekNextToken(p->tokenizer);
     
     Array<Ast_TypeDescriptor> typeDesc = { 0, 0 };
+    
     // If determined to be a declaration
     bool isDecl = false;
+    // TODO: this is for later, for good error messages.
+    enum ReasonForDecl
+    {
+        UsedCaret      = 0,
+        UsedSqrBracket = 1,
+        UsedConst      = 2,
+    };
+    static constexpr const char* messages[] = { "A", "B", "C" };
+    
+    struct Funcs
+    {
+        static char* GetReasonMessage(ReasonForDecl reason)
+        {
+            char* startMessage = "";
+            //char* message = malloc();
+            return 0;
+        };
+    };
+    
     // TODO: Other keywords might be here
     while(t.type == '^' || t.type == '[')
     {
@@ -809,8 +831,12 @@ static Ast_Stmt* ParseDeclOrExpr(Parser* p,
         Ast_ExprNode* arrSize = 0;
         if(t.type == '[')
         {
+            EatToken(p->tokenizer);
+            
             t.type = TokenSubscript;
             arrSize = ParseExpression(p);
+            //if(!arrSize)
+            //return 0;
         }
         
         Array_AddElement(&typeDesc, p->tempArena, { t, arrSize } );
@@ -821,21 +847,30 @@ static Ast_Stmt* ParseDeclOrExpr(Parser* p,
     typeDesc = Array_CopyToArena(typeDesc, p->arena);
     
     Array<Ast_ExprNode*> exprArr = { 0, 0 };
-    Token ident;  // Either for function call or for
+    Token ident;  // Either for function call or for base type
+    Token openParen;
+    // There is a function call or a polymorphic type
+    bool callOrPoly = false;
     
     // NOTE: there has to be a single element in here,
     // if it was a polymorphic struct 
     if(PeekToken(p->tokenizer, 1)->type == TokenIdent &&
        PeekToken(p->tokenizer, 2)->type == '(')
     {
+        callOrPoly = true;
         ident = *PeekNextToken(p->tokenizer);
+        openParen = *PeekToken(p->tokenizer, 2);
         
         EatToken(p->tokenizer);
         EatToken(p->tokenizer);
-        bool err = false;
-        exprArr = ParseExpressionArray(p, &err);
-        if(err)
-            return 0;
+        
+        if(PeekNextToken(p->tokenizer)->type != ')')
+        {
+            bool err = false;
+            exprArr = ParseExpressionArray(p, &err);
+            if(err)
+                return 0;
+        }
         
         if(PeekNextToken(p->tokenizer)->type != ')')
         {
@@ -846,10 +881,7 @@ static Ast_Stmt* ParseDeclOrExpr(Parser* p,
         EatToken(p->tokenizer);  // Eat ')'
         
         if(PeekNextToken(p->tokenizer)->type == TokenIdent)
-        {
             isDecl = true;
-            EatToken(p->tokenizer);
-        }
     }
     else if(PeekToken(p->tokenizer, 1)->type == TokenIdent &&
             PeekToken(p->tokenizer, 2)->type == TokenIdent)
@@ -860,6 +892,12 @@ static Ast_Stmt* ParseDeclOrExpr(Parser* p,
     
     if(isDecl)
     {
+        if(callOrPoly && exprArr.length == 0)
+        {
+            SyntaxError(openParen, p, "Assuming declaration because; Polymorphic type is required to have at least 1 parameter.");
+            return 0;
+        }
+        
         auto decl = Arena_AllocAndInit(p->arena, Ast_Declaration);
         decl->typeInfo.typeDesc = typeDesc;
         decl->typeInfo.baseType = ident;
@@ -872,16 +910,30 @@ static Ast_Stmt* ParseDeclOrExpr(Parser* p,
         
         EatToken(p->tokenizer);
         
-        // Don't forget to do the initialization stuff here
+        // Initialization
+        Token* t = PeekNextToken(p->tokenizer);
+        if(t->type == '=')
+        {
+            EatToken(p->tokenizer);
+            
+            auto assignment = Arena_AllocAndInit(p->arena, Ast_BinExprNode);
+            assignment->token = *t;
+            
+            auto lhs = Arena_AllocAndInit(p->arena, Ast_ExprNode);
+            lhs->token = decl->nameIdent;
+            assignment->left  = lhs;
+            assignment->right = ParseExpression(p);
+            if(!assignment->right)
+                return 0;
+            
+            decl->initialization = assignment;
+        }
         
         result = decl;
     }
     else
     {
-        // If we set the expression previously,
-        // AND it's not a declaration then this
-        // has to be a function call
-        if(exprArr.ptr)
+        if(callOrPoly)
         {
             auto call = Arena_AllocAndInit(p->arena, Ast_CallExprNode);
             call->token = ident;
@@ -889,6 +941,8 @@ static Ast_Stmt* ParseDeclOrExpr(Parser* p,
             
             auto exprStmt = Arena_AllocAndInit(p->arena, Ast_ExprStmt);
             exprStmt->expr = ParseExpression(p, call);
+            if(!exprStmt->expr)
+                return 0;
             
             result = exprStmt;
         }
@@ -903,97 +957,6 @@ static Ast_Stmt* ParseDeclOrExpr(Parser* p,
     
     Assert(result->type == DeclStmt || result->type == ExprStmt);
     return result;
-    
-#if 0
-    // TODO: this doesn't handle any type specifier yet.
-    
-    Ast_ExprNode* maybeExpr = ParseExpression(p);
-    if(!maybeExpr)
-        return 0;
-    
-    Token type;
-    Array<Ast_ExprNode*> typeParams;
-    Token ident;
-    bool isExpr = false;
-    uint8 numPointers = 0;
-    // If two identifiers are back to back, then
-    // it's immediately clear that it's a declaration
-    // *int intPtr = 0;
-    if(PeekNextToken(p->tokenizer)->type == TokenIdent)
-    {
-        ident = *PeekNextToken(p->tokenizer);
-        
-        // This might be a declaration
-        auto tmp = maybeExpr;
-        while(tmp)
-        {
-            // Reached the end of the '*' chain
-            // (Could be a polymorphic type)
-            if(tmp->type == IdentNode || tmp->type == CallNode)
-            {
-                type = tmp->token;
-                if(tmp->type == CallNode)
-                    typeParams = ((Ast_CallExprNode*)tmp)->args;
-                
-                isExpr = false;
-                break;
-            }
-            
-            if(tmp->type != UnaryNode || tmp->token.type != '*')
-            {
-                isExpr = true;
-                break;
-            }
-            
-            // It's a unary post-fix '*', so it could be part
-            // of the declaration
-            ++numPointers;
-            auto unaryTmp = (Ast_UnaryExprNode*)tmp;
-            tmp = unaryTmp->expr;
-        }
-    }
-    else
-        isExpr = true;
-    
-    if(isExpr)
-    {
-        result = Arena_AllocAndInit(p->arena, Ast_ExprStmt);
-        auto exprRes = (Ast_ExprStmt*)result;
-        exprRes->expr = maybeExpr;
-    }
-    else
-    {
-        EatToken(p->tokenizer);  // Eat the var identifier
-        
-        result = Arena_AllocAndInit(p->arena, Ast_Declaration);
-        auto declRes = (Ast_Declaration*)result;
-        declRes->typeInfo.ident  = type;
-        declRes->nameIdent       = ident;
-        declRes->typeInfo.params = typeParams;
-        declRes->typeInfo.numPointers = numPointers;
-        
-        Token maybeEqual = *PeekNextToken(p->tokenizer);
-        if(maybeEqual.type == '=')
-        {
-            EatToken(p->tokenizer);
-            
-            auto binOp = Arena_AllocAndInit(p->arena, Ast_BinExprNode);
-            
-            auto binLhs   = Arena_AllocAndInit(p->arena, Ast_ExprNode);
-            binLhs->type  = IdentNode;
-            binLhs->token = ident;
-            
-            binOp->token = maybeEqual;
-            binOp->left  = binLhs;
-            binOp->right = ParseExpression(p);
-            
-            declRes->initialization = binOp;
-        }
-    }
-    
-    Assert(result->type == DeclStmt || result->type == ExprStmt);
-    return result;
-#endif
 }
 
 static TryParseDecl_Ret TryParseExpressionOrDeclaration(Parser* p,

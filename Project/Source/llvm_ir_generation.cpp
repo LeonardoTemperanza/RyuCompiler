@@ -101,6 +101,7 @@ int GenerateIR(IR_Context *ctx, Ast_Root *root)
     if (!genCode || ctx->errorOccurred)
         return -4;
     
+    
     char* errorMessage = 0;
     if(LLVMVerifyModule(ctx->module, LLVMPrintMessageAction, &errorMessage) == 1)
         return -5;
@@ -170,15 +171,15 @@ int GenerateIR(IR_Context *ctx, Ast_Root *root)
     return 0;
 } 
 
-IR_Context InitIRContext(Arena* arena, Arena* tempArena, Arena* scopeStackArena, char* fileContents)
+IR_Context InitIRContext(Arena* arena, Arena* tempArena, Arena* scopeStackArena, Parser* parser)
 {
     IR_Context ctx;
+    ctx.parser = parser;
     ctx.module = LLVMModuleCreateWithName("kal");
     ctx.builder = LLVMCreateBuilder();
     ctx.arena = arena;
     ctx.tempArena = tempArena;
     ctx.scopeStackArena = scopeStackArena;
-    ctx.fileContents = fileContents;
     return ctx;
 }
 
@@ -262,7 +263,7 @@ static LLVMValueRef GenerateVar(IR_Context *ctx, Ast_DeclStmt *stmt, bool expect
         LLVMTypeRef exprType = LLVMTypeOf(expr);
         if(LLVMTypeOf(argSym->address) != LLVMPointerType(exprType, 0))
         {
-            SemanticError(stmt->equal, ctx->fileContents, "Mismatching types");
+            SemanticError(stmt->equal, ctx, "Mismatching types");
             return 0;
         }
         
@@ -300,7 +301,7 @@ static LLVMValueRef GenerateExpr(IR_Context* ctx, Ast_ExprNode* node, bool expec
             // If not a pointer
             if(LLVMTypeOf(sym->address) != LLVMPointerType(LLVMPointerType(LLVMDoubleType(), 0), 0))
             {
-                SemanticError(node->token, ctx->fileContents, "Incorrect type, expecting pointer");
+                SemanticError(node->token, ctx, "Incorrect type, expecting pointer");
                 ctx->errorOccurred = true;
                 return 0;
             }
@@ -312,7 +313,7 @@ static LLVMValueRef GenerateExpr(IR_Context* ctx, Ast_ExprNode* node, bool expec
             
             if(LLVMTypeOf(idxValue) != LLVMDoubleType())
             {
-                SemanticError(subscript->indexExpr->token, ctx->fileContents, "Incorrect type, expecting double");
+                SemanticError(subscript->indexExpr->token, ctx, "Incorrect type, expecting double");
                 ctx->errorOccurred = true;
                 return 0;
             }
@@ -347,7 +348,7 @@ static LLVMValueRef GenerateExpr(IR_Context* ctx, Ast_ExprNode* node, bool expec
             
             if(LLVMTypeOf(value) != LLVMDoubleType())
             {
-                SemanticError(unaryNode->token, ctx->fileContents, "Mismatching type, expecting double");
+                SemanticError(unaryNode->token, ctx, "Mismatching type, expecting double");
                 ctx->errorOccurred = true;
                 return 0;
             }
@@ -384,7 +385,7 @@ static LLVMValueRef GenerateExpr(IR_Context* ctx, Ast_ExprNode* node, bool expec
                 
                 if(LLVMTypeOf(value) != LLVMDoubleType())
                 {
-                    SemanticError(arrayNode->expressions[i]->token, ctx->fileContents, "Incorrect type, expected double");
+                    SemanticError(arrayNode->expressions[i]->token, ctx, "Incorrect type, expected double");
                     ctx->errorOccurred = true;
                     return 0;
                 }
@@ -434,7 +435,7 @@ static LLVMValueRef GenerateCond(IR_Context* ctx, Ast_ExprOrDecl* node)
     else if(condType != LLVMIntType(1))
     {
         Token token = node->isDecl? node->decl->id : node->expr->token;
-        SemanticError(token, ctx->fileContents, "Incorrect type, expecting bool");
+        SemanticError(token, ctx, "Incorrect type, expecting bool");
         return 0;
     }
     
@@ -541,7 +542,7 @@ static LLVMValueRef GenerateBinOp(IR_Context* ctx, Ast_BinExprNode* node)
     // Besides '=', all other operations only involve double types
     if(!isEqualOp && ((LLVMTypeOf(left) != LLVMDoubleType()) || (LLVMTypeOf(right) != LLVMDoubleType())))
     {
-        SemanticError(node->token, ctx->fileContents, "Incorrect types");
+        SemanticError(node->token, ctx, "Incorrect types");
         ctx->errorOccurred = true;
         return 0;
     }
@@ -591,7 +592,7 @@ static LLVMValueRef GenerateBinOp(IR_Context* ctx, Ast_BinExprNode* node)
             // Left must be lvalue
             if(!node->left->isLeftValue)
             {
-                SemanticError(node->token, ctx->fileContents, "lhs of '=' must be lvalue");
+                SemanticError(node->token, ctx, "lhs of '=' must be lvalue");
                 return 0;
             }
             
@@ -602,7 +603,7 @@ static LLVMValueRef GenerateBinOp(IR_Context* ctx, Ast_BinExprNode* node)
             LLVMTypeRef rightType = LLVMTypeOf(right);
             if(LLVMTypeOf(left) != LLVMPointerType(rightType, 0))
             {
-                SemanticError(node->token, ctx->fileContents, "Mismatching types");
+                SemanticError(node->token, ctx, "Mismatching types");
                 return 0;
             }
             
@@ -642,7 +643,7 @@ static LLVMValueRef GenerateCall(IR_Context* ctx, Ast_CallExprNode* node)
     {
         if(LLVMTypeOf(curParam) != LLVMTypeOf(values[count]))
         {
-            SemanticError(node->token, ctx->fileContents, "Parameter types do not match function signature");
+            SemanticError(node->token, ctx, "Parameter types do not match function signature");
             return 0;
         }
         
@@ -652,7 +653,7 @@ static LLVMValueRef GenerateCall(IR_Context* ctx, Ast_CallExprNode* node)
     
     if(count != node->args.length || curParam)
     {
-        SemanticError(node->token, ctx->fileContents, "Incorrect number of parameters in function call");
+        SemanticError(node->token, ctx, "Incorrect number of parameters in function call");
         return 0;
     }
     
@@ -767,7 +768,7 @@ static void GenerateSimpleStmt(IR_Context *ctx, Ast_Stmt *stmt)
             // Can only return double
             if(LLVMTypeOf(expr) != LLVMDoubleType())
             {
-                SemanticError(returnStmt->returnValue->token, ctx->fileContents, "Incorrect type, expecting double");
+                SemanticError(returnStmt->returnValue->token, ctx, "Incorrect type, expecting double");
                 ctx->errorOccurred = true;
                 return;
             }

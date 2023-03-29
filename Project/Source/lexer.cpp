@@ -355,5 +355,5 @@ void CompilationError(Token token, Tokenizer* t, char* prefix, char* message)
 
 void CompilationError(Tokenizer* t, char* prefix, char* message)
 {
-    CompilationError(*PeekNextToken(t), t->startOfFile, prefix, message);
+    CompilationError(*PeekNextToken(t), t, prefix, message);
 }

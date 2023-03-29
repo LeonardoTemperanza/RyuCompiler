@@ -9,7 +9,7 @@
 #include "lexer.h"
 #include "parser.h"
 
-void SemanticError(Token token, char* fileContents, char* message);
+void SemanticError(Token token, IR_Context* ctx, char* message);
 
 int IdentHashFunction(String str);
 Symbol* GetSymbol(SymbolTable* symTable, String str, uint32* scopeStack, int scopeIdx);
@@ -28,37 +28,9 @@ Symbol* GetGlobalSymbolOrError(IR_Context* ctx, Token token);
 // We need to change stuff about the error system, but we could do that later
 
 void InsertPrimitiveTypes(SymbolTable* table);
-void PerformTypingStage(Ast_Root* ast);
+void PerformTypingStage(IR_Context* ctx, Ast_Root* ast);
 void TypeCheckExpr(Ast_ExprNode* expr);
 
-void InsertPrimitiveTypes(SymbolTable* table)
-{
-    
-}
-
-void PerformTypingStage(Ast_Root* ast)
-{
-    printf("Performing typing stage!\n");
-    
-    for(int i = 0; i < ast->topStmts.length; ++i)
-    {
-        Ast_TopLevelStmt* topStmt = ast->topStmts[i];
-        
-        if(topStmt->type == Function)
-        {
-            
-        }
-        else if(topStmt->type == Prototype)
-        {
-            
-        }
-        else
-            Assert(false && "Not yet implemented!");
-    }
-}
-
-void TypeCheckExpr(Ast_ExprNode* expr)
-{
-    
-}
-
+void Semantics_Block(IR_Context* ctx, Ast_BlockStmt* block);
+void Semantics_Declaration(IR_Context* ctx, Ast_Declaration* decl);
+void Semantics_Stmt(IR_Context* ctx, Ast_Stmt* stmt);

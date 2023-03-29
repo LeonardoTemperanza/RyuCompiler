@@ -30,13 +30,18 @@ enum TypeId
 
 struct Symbol
 {
-    String ident;
+    String ident;  // TODO: remove this one
+    Token token;
     LLVMValueRef address;
     uint32 scopeId;
     
-    // Type information
-    TypeId type;
-    
+    union
+    {
+        void* astPtr;
+        Ast_Declaration* decl;
+        Ast_Function* func;
+        // Struct declaration
+    };
     
     Symbol* next = 0;
 };
@@ -55,6 +60,8 @@ struct SymbolTable
 
 struct IR_Context
 {
+    Parser* parser;
+    
     LLVMModuleRef module;
     LLVMBuilderRef builder;
     LLVMValueRef currentFunction;
@@ -75,5 +82,5 @@ struct IR_Context
     bool errorOccurred = false;
 };
 
-IR_Context InitIRContext(Arena* arena, Arena* tempArena, Arena* scopeStackArena, char* fileContents);
+IR_Context InitIRContext(Arena* arena, Arena* tempArena, Arena* scopeStackArena, Parser* parser);
 int GenerateIR(IR_Context *ctx, Ast_Root *root);

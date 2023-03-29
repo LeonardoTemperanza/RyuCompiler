@@ -30,7 +30,7 @@ struct Ast_ExprNode;
 // [3]^int ptrArr;  array of int pointers
 // [3]^[4]int var;  array of pointers to static arrays
 // vec3(float) v;   polimorphic compound type
-// There are also const qualifiers and all that 
+// There are also going to be const qualifiers and all that 
 struct Ast_TypeDescriptor
 {
     Token t;

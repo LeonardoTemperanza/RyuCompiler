@@ -92,5 +92,5 @@ inline Token* PeekNextToken(Tokenizer* t)
     return PeekToken(t, 1);
 }
 
-void CompilationError(Token token, char* fileContents, char* prefix, char* message);
-void CompilationError(char* fileContents, char* prefix, char* message);
+void CompilationError(Token token, Tokenizer* t, char* prefix, char* message);
+void CompilationError(Tokenizer* t, char* prefix, char* message);
