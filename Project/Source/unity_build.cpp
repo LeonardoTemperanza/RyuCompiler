@@ -22,11 +22,15 @@
 // however let's continue with LLVM
 // for now in order to get an idea of the structure
 // of the front-end.
-//#include "ir_generation.cpp"
-#include "llvm_ir_generation.cpp"
+//#include "ir_generation.cpp"  // Ignore LLVM for now, we're just doing the type checking
+//#include "llvm_ir_generation.cpp"
 //#include "interpreter.cpp"
 #include "lexer.cpp"
 #include "main.cpp"
 #include "memory_management.cpp"
 #include "parser.cpp"
-#include "semantics.cpp"
+//#include "semantics.cpp"
+
+#ifdef Debug
+#include "debug.cpp"
+#endif

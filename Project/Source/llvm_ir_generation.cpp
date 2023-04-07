@@ -171,18 +171,6 @@ int GenerateIR(IR_Context *ctx, Ast_Root *root)
     return 0;
 } 
 
-IR_Context InitIRContext(Arena* arena, Arena* tempArena, Arena* scopeStackArena, Parser* parser)
-{
-    IR_Context ctx;
-    ctx.parser = parser;
-    ctx.module = LLVMModuleCreateWithName("kal");
-    ctx.builder = LLVMCreateBuilder();
-    ctx.arena = arena;
-    ctx.tempArena = tempArena;
-    ctx.scopeStackArena = scopeStackArena;
-    return ctx;
-}
-
 static LLVMTypeRef GetType(Token typeIdent, uint8 numPointers)
 {
     if(typeIdent.type != TokenIdent)

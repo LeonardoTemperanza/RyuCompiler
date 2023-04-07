@@ -14,22 +14,6 @@
 // The second one seems to be better because when good
 // cache locality is needed things are stored in an array
 // anyway, usually.
-#if 0
-
-#define Arena_FromStack(arenaPtr, stackVar) \
-(decltype(stackVar)*)Arena_AllocAndCopy((arenaPtr), &(stackVar), sizeof(stackVar), \
-alignof(decltype(stackVar)))
-#define Arena_AllocArray(arenaPtr, size, type) \
-(type*)Arena_Alloc((arenaPtr), (size)*sizeof(type), alignof(type))
-#define Arena_AllocVar(arenaPtr, type) \
-(type*)Arena_Alloc((arenaPtr), sizeof(type), alignof(type))
-
-// Calls the constructor / initializer list. A "placement new" is used because
-// by default C++ can't call the constructor on custom allocated variables.
-#define Arena_AllocAndInit(arenaPtr, type) \
-new (Arena_Alloc((arenaPtr), sizeof(type), alignof(type))) type
-
-#else
 
 #define Arena_FromStack(arenaPtr, stackVar) \
 (decltype(stackVar)*)Arena_AllocAndCopy((arenaPtr), &(stackVar), sizeof(stackVar))
@@ -43,7 +27,19 @@ new (Arena_Alloc((arenaPtr), sizeof(type), alignof(type))) type
 #define Arena_AllocAndInit(arenaPtr, type) \
 new (Arena_Alloc((arenaPtr), sizeof(type))) type
 
-#endif
+// Variants that allow the use of a different alignment
+#define Arena_FromStackAlign(arenaPtr, stackVar, alignment) \
+(decltype(stackVar)*)Arena_AllocAndCopy((arenaPtr), &(stackVar), sizeof(stackVar), (alignment))
+#define Arena_AllocArrayAlign(arenaPtr, size, type, alignment) \
+(type*)Arena_Alloc((arenaPtr), (size)*sizeof(type), (alignment))
+#define Arena_AllocVarAlign(arenaPtr, type, alignment) \
+(type*)Arena_Alloc((arenaPtr), sizeof(type), (alignment))
+#define Arena_AllocAndInitAlign(arenaPtr, type, alignment) \
+new (Arena_Alloc((arenaPtr), sizeof(type), (alignment))) type
+
+// NOTE(Leo): Should be inserted at the beginning of a function,
+// or at the beginning of a block.
+#define Arena_TempGuard(arenaPtr) auto savepoint = Arena_TempBegin(arenaPtr); defer(Arena_TempEnd(savepoint));
 
 struct Arena
 {
@@ -54,7 +50,7 @@ struct Arena
     
     // NOTE(Leo): Commit memory in
     // blocks of size commitSize,
-    // if 0 then it never commits
+    // if == 0, then it never commits
     // (useful for stack-allocated arenas)
     size_t commitSize;
 };

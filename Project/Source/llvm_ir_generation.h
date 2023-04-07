@@ -9,55 +9,6 @@
 #include "parser.h"
 #include "memory_management.h"
 
-// The way the symbol table works needs to be reworked
-
-enum TypeId
-{
-    TypeInt,
-    TypeInt8,
-    TypeInt16,
-    TypeInt32,
-    TypeInt64,
-    TypeUInt8,
-    TypeUInt16,
-    TypeUInt32,
-    TypeUInt64,
-    TypeFloat,
-    TypeDouble,
-    TypeArray,
-    TypeStruct
-};
-
-struct Symbol
-{
-    String ident;  // TODO: remove this one
-    Token token;
-    LLVMValueRef address;
-    uint32 scopeId;
-    
-    union
-    {
-        void* astPtr;
-        Ast_Declaration* decl;
-        Ast_Function* func;
-        // Struct declaration
-    };
-    
-    Symbol* next = 0;
-};
-
-struct SymbolTableEntry
-{
-    bool occupied = false;
-    Symbol symbol;
-};
-
-#define SymTable_ArraySize 200
-struct SymbolTable
-{
-    SymbolTableEntry symArray[SymTable_ArraySize];
-};
-
 struct IR_Context
 {
     Parser* parser;

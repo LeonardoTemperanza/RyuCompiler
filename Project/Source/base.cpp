@@ -100,11 +100,23 @@ bool operator ==(char* s1, String s2)
     return true;
 }
 
+// Exits if it sees a null terminator
+bool String_FirstCharsMatchEntireString(char* stream, String str)
+{
+    for(int i = 0; i < str.length; ++i)
+    {
+        if(stream[i] == 0 || stream[i] != str[i])
+            return false;
+    }
+    
+    return true;
+}
+
 #ifdef Profile
 void InitSpall()
 {
     // Draw the amount of time this function takes, too.
-    uint64 beginTime = __rdtsc();
+    //uint64 beginTime = __rdtsc();
     
     spallCtx = spall_init_file("constellate.spall", 1000000.0 / GetRdtscFreq());
     
@@ -115,8 +127,8 @@ void InitSpall()
     spallBuffer.length = bufferSize;
     spallBuffer.data   = buffer;
     
-    spall_buffer_begin(&spallCtx, &spallBuffer, __FUNCTION__, sizeof(__FUNCTION__), beginTime);
-    spall_buffer_end(&spallCtx, &spallBuffer, __rdtsc());
+    //spall_buffer_begin(&spallCtx, &spallBuffer, __FUNCTION__, sizeof(__FUNCTION__), beginTime);
+    //spall_buffer_end(&spallCtx, &spallBuffer, __rdtsc());
 }
 
 void QuitSpall()

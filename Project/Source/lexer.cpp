@@ -7,32 +7,77 @@
 // This is defined in such a way that it's possible
 // to temporarily define a macro "X" that can do
 // anything with these strings and types
-#define Lexer_StringTokenMapping \
-X("proc", TokenProc) \
-X("extern", TokenExtern) \
-X("return", TokenReturn) \
-/*X("var", TokenVar)*/ \
-X("if", TokenIf) \
-X("else", TokenElse) \
-X("for", TokenFor) \
-X("while", TokenWhile) \
+#define KeywordStringTokenMapping \
+X("proc", Tok_Proc) \
+X("extern", Tok_Extern) \
+X("return", Tok_Return) \
+/*X("var", Tok_Var)*/ \
+X("if", Tok_If) \
+X("else", Tok_Else) \
+X("for", Tok_For) \
+X("while", Tok_While) \
+X("const", Tok_Const) \
+X("int", Tok_Int32) \
+X("int32", Tok_Int32) \
+X("int8", Tok_Int8) \
+X("int16", Tok_Int16) \
+X("int32", Tok_Int32) \
+X("int64", Tok_Int64) \
+X("uint8", Tok_Uint8) \
+X("uint16", Tok_Uint16) \
+X("uint32", Tok_Uint32) \
+X("uint64", Tok_Uint64) \
+X("float", Tok_Float) \
+X("double", Tok_Double)
 
-// Counts the number of keywords
-#define X(tokenString, tokenType) 1+
-const int numTokenStrings = Lexer_StringTokenMapping 0;
-#undef X
+// NOTE(Leo): Order matters here (<<= before <<)
+#define OperatorStringTokenMapping \
+X("++", Tok_Increment) \
+X("--", Tok_Decrement) \
+X("<<=", Tok_LShiftEquals) \
+X(">>=", Tok_RShiftEquals) \
+X("<<", Tok_LShift) \
+X(">>", Tok_RShift) \
+X("<=", Tok_LE) \
+X(">=", Tok_GE) \
+X("==", Tok_EQ) \
+X("!=", Tok_NEQ) \
+X("&&", Tok_And) \
+X("||", Tok_Or) \
+X("+=", Tok_PlusEquals) \
+X("-=", Tok_MinusEquals) \
+X("*=", Tok_MulEquals) \
+X("/=", Tok_DivEquals) \
+X("%=", Tok_ModEquals) \
+X("&=", Tok_AndEquals) \
+X("^=", Tok_XorEquals) \
+X("|=", Tok_OrEquals)
 
-#define X(tokenString, tokenType) { (tokenString), (int64)strlen(tokenString) },
-const String tokenStrings[numTokenStrings] =
+#define X(string, _) { (string), (int64)strlen(string) },
+const String keywordStrings[] =
 {
-    Lexer_StringTokenMapping
+    KeywordStringTokenMapping
 };
 #undef X
 
-#define X(tokenString, tokenType) { (tokenType) },
-const TokenType tokenTypes[numTokenStrings] =
+#define X(_, tokenType) { (tokenType) },
+const TokenType keywordTypes[] =
 {
-    Lexer_StringTokenMapping
+    KeywordStringTokenMapping
+};
+#undef X
+
+#define X(string, _) { (string), (int64)strlen(string) },
+const String operatorStrings[] =
+{
+    OperatorStringTokenMapping
+};
+#undef X
+
+#define X(_, tokenType) { (tokenType) },
+const TokenType operatorTypes[] =
+{
+    OperatorStringTokenMapping
 };
 #undef X
 
@@ -170,6 +215,18 @@ static float String2Float(char* string, int length)
     return result;
 }
 
+static void LexFile(Tokenizer* t)
+{
+    while(true)
+    {
+        Token tok = GetToken(t);
+        Array_AddElement(&t->tokens, t->arena, tok);
+        
+        if(tok.type == Tok_EOF)
+            break;
+    }
+}
+
 static Token GetToken(Tokenizer* t)
 {
     ProfileFunc();
@@ -177,7 +234,7 @@ static Token GetToken(Tokenizer* t)
     EatAllWhitespace(t);
     
     Token result;
-    result.type    = TokenError;
+    result.type    = Tok_Error;
     result.sl      = t->startOfCurLine;
     result.lineNum = t->curLineNum;
     result.sc      = t->at - t->startOfFile;
@@ -185,19 +242,19 @@ static Token GetToken(Tokenizer* t)
     
     if(t->at[0] == 0)
     {
-        result.type = TokenEOF;
+        result.type = Tok_EOF;
     }
     else if(IsAllowedForStartIdent(t->at[0]))
     {
-        result.type = TokenIdent;
+        result.type = Tok_Ident;
         for(int i = 1; IsAllowedForMiddleIdent(t->at[i]); ++i)
             ++result.ident.length;
         
-        for(int i = 0; i < numTokenStrings; ++i)
+        for(int i = 0; i < StArraySize(keywordStrings); ++i)
         {
-            if(tokenStrings[i] == result.ident)
+            if(keywordStrings[i] == result.ident)
             {
-                result.type = tokenTypes[i];
+                result.type = keywordTypes[i];
                 break;
             }
         }
@@ -207,7 +264,7 @@ static Token GetToken(Tokenizer* t)
     }
     else if(IsNumeric(t->at[0]))
     {
-        result.type = TokenNum;
+        result.type = Tok_Num;
         int length = 0;
         int numPoints = 0;
         do
@@ -223,7 +280,7 @@ static Token GetToken(Tokenizer* t)
         if(numPoints > 1)
         {
             printf("Error: Unidentified token\n");
-            result.type = TokenError;
+            result.type = Tok_Error;
             result.doubleValue = 0.0f;
         }
         else
@@ -234,97 +291,53 @@ static Token GetToken(Tokenizer* t)
     }
     else
     {
-        String tmpStr = { t->at, 2 };
-        if(tmpStr == "<=")
+        // TODO: fix Lexer issue
+        bool found = false;
+        String foundStr = { 0, 0 };
+        for(int i = 0; i < StArraySize(operatorStrings); ++i)
         {
-            result.type = TokenLE;
-            result.ec = result.sc + 1;
-            t->at += 2;
+            if(String_FirstCharsMatchEntireString(result.ident.ptr, operatorStrings[i]))
+            {
+                result.ident.length = operatorStrings[i].length;
+                result.type = operatorTypes[i];
+                found = true;
+                break;
+            }
         }
-        else if(tmpStr == ">=")
+        
+        if(found)
         {
-            result.type = TokenGE;
-            result.ec = result.sc + 1;
-            t->at += 2;
-        }
-        else if(tmpStr == "==")
-        {
-            result.type = TokenEQ;
-            result.ec = result.sc + 1;
-            t->at += 2;
-        }
-        else if(tmpStr == "!=")
-        {
-            result.type = TokenNEQ;
-            result.ec = result.sc + 1;
-            t->at += 2;
-        }
-        else if(tmpStr == "->")
-        {
-            result.type = TokenArrow;
-            result.ec = result.sc + 1;
-            t->at += 2;
+            t->at += result.ident.length;
+            result.ec = result.sc + result.ident.length - 1;
         }
         else
         {
-            result.type = (TokenType)result.ident[0];
+            
+            result.type = (TokenType)t->at[0];
+            result.ident.length = 1;
             result.ec   = result.sc;
             ++t->at;
         }
     }
     
+    
     return result;
 }
 
-void EatToken(Tokenizer* t)
-{
-    t->peekStart = (t->peekStart + 1) % Tokenizer_MaxPeekNum;
-    
-    if(t->peekLength == 0)
-        PeekNextToken(t);
-    
-    --t->peekLength;
-    if(t->eofTokenOffset > 0)
-        --t->eofTokenOffset;
-}
+// TODO: annoying duplicated code here
 
-// NOTE(Leo): lookahead starts from 1 (I thought it was
-// the one that intuitively made the most sense)
-Token* PeekToken(Tokenizer* t, int lookahead)
+void CompileError(Tokenizer* t, Token* token, char* message)
 {
-    Assert(lookahead < Tokenizer_MaxPeekNum &&
-           "Exceeded max peek limit!");
+    if(t->status == CompStatus_Error)
+        return;
     
-    // If trying to peek past the EOF token, keep returning
-    // that instead.
-    if(t->eofTokenOffset >= 0 && t->peekLength >= t->eofTokenOffset)
-    {
-        int idx = (t->peekStart + t->eofTokenOffset) % Tokenizer_MaxPeekNum;
-        return t->peekBuffer + idx;
-    }
+    t->status = CompStatus_Error;
     
-    if(lookahead > t->peekLength)
-    {
-        for(int i = t->peekLength; i < lookahead; ++i)
-        {
-            int idx = (t->peekStart + i) % Tokenizer_MaxPeekNum;
-            t->peekBuffer[idx] = GetToken(t);
-        }
-        
-        t->peekLength += (lookahead - t->peekLength);
-    }
-    
-    int idx = (t->peekStart + lookahead - 1) % Tokenizer_MaxPeekNum;
-    return t->peekBuffer + idx;
-}
-
-void CompilationError(Token token, Tokenizer* t, char* prefix, char* message)
-{
     char* fileContents = t->startOfFile;
     
-    fprintf(stderr, "%s (%d,%d): %s\n", prefix, token.lineNum, token.sc - token.sl + 1, message);
+    fprintf(stderr, "%s (%d,%d): %s\n", "Error", token->lineNum, token->sc - token->sl + 1, message);
     bool endOfLine = false;
-    int i = token.sl;
+    int i = token->sl;
     while(!endOfLine)
     {
         if(fileContents[i] == '\t')
@@ -338,11 +351,11 @@ void CompilationError(Token token, Tokenizer* t, char* prefix, char* message)
             fileContents[i] == 0;
     }
     
-    int length = i - token.sl;
+    int length = i - token->sl;
     
     fprintf(stderr, "\n");
     
-    for(int i = token.sl; i < token.sc; ++i)
+    for(int i = token->sl; i < token->sc; ++i)
     {
         if(fileContents[i] == '\t')
             fprintf(stderr, "----");
@@ -353,7 +366,71 @@ void CompilationError(Token token, Tokenizer* t, char* prefix, char* message)
     fprintf(stderr, "^\n");
 }
 
-void CompilationError(Tokenizer* t, char* prefix, char* message)
+// TODO: actually finish this
+// NOTE: This necessitates a variable number of char* vars
+void CompileError(Tokenizer* t, Token* token, int numStrings, char* message1, ...)
 {
-    CompilationError(*PeekNextToken(t), t, prefix, message);
+    if(t->status == CompStatus_Error)
+        return;
+    
+    t->status = CompStatus_Error;
+    
+    char* fileContents = t->startOfFile;
+    
+    va_list args;
+    va_start(args, token);
+    
+    fprintf(stderr, "%s (%d,%d): ", "Error", token->lineNum, token->sc - token->sl + 1);
+    for(int i = 0; i < numStrings; ++i)
+    {
+        
+    }
+    
+    bool endOfLine = false;
+    int i = token->sl;
+    while(!endOfLine)
+    {
+        if(fileContents[i] == '\t')
+            fprintf(stderr, "    ");
+        else
+            fprintf(stderr, "%c", fileContents[i]);
+        
+        ++i;
+        endOfLine = fileContents[i] == '\r' ||
+            fileContents[i] == '\n' ||
+            fileContents[i] == 0;
+    }
+    
+    int length = i - token->sl;
+    
+    fprintf(stderr, "\n");
+    
+    for(int i = token->sl; i < token->sc; ++i)
+    {
+        if(fileContents[i] == '\t')
+            fprintf(stderr, "----");
+        else
+            fprintf(stderr, "-");
+    }
+    
+    fprintf(stderr, "^\n");
+    
+    va_end(args);
+}
+
+char* TokTypeToString(TokenType tokType)
+{
+    for(int i = 0; i < StArraySize(keywordTypes); ++i)
+    {
+        if(tokType == keywordTypes[i])
+            return keywordStrings[i].ptr;
+    }
+    
+    for(int i = 0; i < StArraySize(operatorTypes); ++i)
+    {
+        if(tokType == operatorTypes[i])
+            return operatorStrings[i].ptr;
+    }
+    
+    return "";
 }

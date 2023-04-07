@@ -9,7 +9,7 @@
 #include <new>       // This is only used for the placement new in memory arenas
 #include <climits>
 #include <assert.h>
-
+#include <stdarg.h>
 
 #ifdef Debug
 #define Assert(expression) assert(expression)
@@ -36,6 +36,11 @@ defer(spall_buffer_end(&spallCtx, &spallBuffer, __rdtsc()))
 #define KB(num) (num)*1024LLU
 #define MB(num) KB(num)*1024LLU
 #define GB(num) MB(num)*1024LLU
+
+#define StArraySize(array) sizeof(array) / sizeof(array[0])
+
+// TODO: bad type conversion here???
+#define Str_Literal(string) String { (string), (int64)strlen(string) }
 
 typedef int8_t  int8;
 typedef int16_t int16;
@@ -100,6 +105,8 @@ char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName);
 bool operator ==(String s1, String s2);
 bool operator ==(char* s1, String s2);
 bool operator ==(String s1, char* s2);
+
+bool String_FirstCharsMatchEntireString(char* stream, String str);
 
 // Others
 // NOTE(Leo): Defer, used to execute anything at the end of the scope

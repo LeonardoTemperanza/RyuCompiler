@@ -2,11 +2,16 @@
 #include "base.h"
 #include "lexer.h"
 #include "parser.h"
-#include "llvm_ir_generation.h"
+//#include "llvm_ir_generation.h"
+#include "semantics.h"
 
 int MainDriver(Tokenizer* tokenizer,
                Parser* parser,
-               IR_Context* ctx);
+               //IR_Context* ctx,
+               Typer* typer);
+
+int test(const int i, float prova)
+{ return 0; }
 
 int main(int argCount, char** argValue)
 {
@@ -16,6 +21,8 @@ int main(int argCount, char** argValue)
 #endif
     
     ProfileFunc();
+    
+    static int * prova = 0;
     
     if(argCount == 1)
     {
@@ -34,6 +41,8 @@ int main(int argCount, char** argValue)
     size_t size = GB(1);
     size_t commitSize = MB(2);
     
+    // TODO: why is this separate from the ast arena?
+    // I'm guessing this has the symbol table only, or something?
     Arena permanentArena;
     void* permanentStorage = ReserveMemory(size);
     Assert(permanentStorage);
@@ -56,12 +65,14 @@ int main(int argCount, char** argValue)
     Arena_Init(&scopeStackArena, scopeStackStorage, 2048, 256);
     
     Tokenizer tokenizer = { fileContents, fileContents };
+    tokenizer.arena = &astArena;
     
     Parser parser = { &tempArena, &astArena, &tokenizer };
     
-    IR_Context IRCtx = InitIRContext(&permanentArena, &tempArena, &scopeStackArena, &parser);
+    //IR_Context IRCtx;//= InitIRContext(&permanentArena, &tempArena, &scopeStackArena, &parser);
+    Typer typer = InitTyper(&permanentArena, &tempArena, &scopeStackArena, &parser);
     
-    int result = MainDriver(&tokenizer, &parser, &IRCtx);
+    int result = MainDriver(&tokenizer, &parser, /*&IRCtx,*/ &typer);
     
     FreeMemory(permanentStorage, size);
     FreeMemory(tempStorage, size);
@@ -69,20 +80,24 @@ int main(int argCount, char** argValue)
     return result;
 }
 
-int MainDriver(Tokenizer* tokenizer, Parser* parser, IR_Context* ctx)
+int MainDriver(Tokenizer* tokenizer, Parser* parser, /*IR_Context* ctx,*/ Typer* typer)
 {
     ProfileFunc();
     
-    bool success = ParseRootNode(parser, tokenizer);
+    LexFile(tokenizer);
+    //ParseFile(parser);
+    
+    /*bool success = ParseRootNode(parser, tokenizer);
     if(!success)
         return 1;
     
     printf("Parsed successfully!\n");
     
-    PerformTypingStage(ctx, &parser->root);
+    PerformTypingStage(typer, &parser->root);
     
-    printf("Type checked successfully!\n");
-    
+    if(!typer->errorOccurred)
+        printf("Type checked successfully!\n");
+    */
     //InterpretTestCode();
     
     //int errorCode = GenerateIR(ctx, &(parser->root));
