@@ -17,7 +17,8 @@ Array<Ast_TopLevel*> ParseFile(Parser* p)
     Array<Ast_TopLevel*> result = { 0, 0 };
     p->at = p->tokenizer->tokens.ptr;
     
-    while(true)
+    bool quit = false;
+    while(!quit)
     {
         Ast_TopLevel* node = 0;
         
@@ -25,15 +26,15 @@ Array<Ast_TopLevel*> ParseFile(Parser* p)
         {
             case Tok_Proc: node = CastToTopLevel(ParseFunctionDef(p)); break;
             case Tok_Struct: Assert(false); break;
+            case Tok_Error:
+            case Tok_EOF: quit = true; break;
             // If none of those keywords, must be
             // a global variable declaration
             default: node = CastToTopLevel(ParseDeclOrExpr(p)); break;
         }
         
-        if(!node || p->error)
-            break;
-        
-        Array_AddElement(&result, p->tempArena, node);
+        if(!quit)
+            Array_AddElement(&result, p->tempArena, node);
     }
     
     result = Array_CopyToArena(result, p->arena);
@@ -43,12 +44,19 @@ Array<Ast_TopLevel*> ParseFile(Parser* p)
 Ast_FunctionDef* ParseFunctionDef(Parser* p)
 {
     EatRequiredToken(p, Tok_Proc);
-    if(p->error)
-        return 0;
     
     auto func = Ast_MakeNode<Ast_FunctionDef>(p->arena, p->at);
     
+    // Parse function declarator
     
+    EatRequiredToken(p, '{');
+    
+    while(true)
+    {
+        
+    }
+    
+    EatRequiredToken(p, '}');
     return 0;
 }
 
@@ -78,7 +86,6 @@ Ast_Node* ParseDeclOrExpr(Parser* p)
     if(isDecl) result = ParseDeclaration(p);
     else       result = ParseExpression(p);
     
-    EatRequiredToken(p, ';');
     return result;
 }
 
@@ -97,9 +104,10 @@ Ast_Stmt* ParseStatement(Parser* p)
     Ast_Stmt* stmt;
     switch(p->at->type)
     {
-        //case Tok_If: stmt = ParseIf(p);
-        //case Tok_For: stmt = ParseFor(p);
-        case '{': stmt = ParseBlock(p);
+        case Tok_If: stmt = ParseIf(p);
+        case Tok_For: stmt = ParseFor(p);
+        case '{': stmt = ParseBlock(p); break;
+        case Tok_Error: return 0;
         default: stmt = CastToStmt(ParseDeclOrExpr(p));
     }
     
@@ -111,14 +119,33 @@ Ast_If* ParseIf(Parser* p)
     return 0;
 }
 
+Ast_For* ParseFor(Parser* p)
+{
+    return 0;
+}
+
+Ast_While* ParseWhile(Parser* p)
+{
+    return 0;
+}
+
+Ast_Defer* ParseDefer(Parser* p)
+{
+    return 0;
+}
+
 Ast_Block* ParseBlock(Parser* p)
 {
+    EatRequiredToken(p, '{');
+    
     while(true)
     {
         // Logic here
         
         //if(p->tokenizer->
     }
+    
+    EatRequiredToken(p, '}');
     
     return 0;
 }
@@ -167,9 +194,8 @@ Ast_Expr* ParseExpression(Parser* p, int prec)
     else
     {
         // Prefix operators
-        int curPrefixPrec = GetPrefixOpPrec(p->at->type);
         Ast_UnaryExpr* prefixExpr = 0;
-        while(curPrefixPrec != -1)
+        while(IsOpPrefix(p->at->type))
         {
             auto tmp = Ast_MakeNode<Ast_UnaryExpr>(p->arena, p->at);
             tmp->unaryOperator = p->at->type;
@@ -179,8 +205,6 @@ Ast_Expr* ParseExpression(Parser* p, int prec)
             
             prefixExpr = tmp;
             ++p->at;
-            
-            curPrefixPrec = GetPrefixOpPrec(p->at->type);
         }
         
         // Postfix operators are more complex than
@@ -188,8 +212,11 @@ Ast_Expr* ParseExpression(Parser* p, int prec)
         lhs = ParsePostfixExpression(p);
         
         // Postfix ops have precedence over prefix ops
-        prefixExpr->expr = lhs;
-        lhs = prefixExpr;
+        if(prefixExpr)
+        {
+            prefixExpr->expr = lhs;
+            lhs = prefixExpr;
+        }
     }
     
     while(true)
@@ -219,9 +246,64 @@ Ast_Expr* ParseExpression(Parser* p, int prec)
 
 Ast_Expr* ParsePostfixExpression(Parser* p)
 {
+    Token* ident = EatRequiredToken(p, Tok_Ident);
+    Ast_Expr* result = 0;
     
+    while(true)
+    {
+        if(IsOpPostfix(p->at->type))  // Postfix operators
+        {
+            Token* lastPostfix = p->at;
+            for(Token* token = p->at+1; token->type != Tok_EOF; ++token)
+            {
+                if(!IsOpPostfix(token->type))
+                {
+                    lastPostfix = token;
+                    break;
+                }
+            }
+            
+            // Construct the postfix unary expression list
+            // You have to look at the operators in reverse order
+            Ast_UnaryExpr* unary = Ast_MakeNode<Ast_UnaryExpr>(p->arena, lastPostfix);
+            // unary->...
+            for(Token* token = lastPostfix; token >= p->at; --token)
+            {
+                
+            }
+            
+            // Link it to previous expression
+            
+            p->at = lastPostfix + 1;
+        }
+        else if(p->at->type == '(')  // Function call
+        {
+            Ast_FuncCall* call = Ast_MakeNode<Ast_FuncCall>(p->arena, ident);
+            if(result)
+                call->func = result;
+        }
+        else if(p->at->type == '[')  // Subscript
+        {
+            ++p->at;
+            
+            // TODO: @incomplete
+            ParseExpression(p);
+            
+            EatRequiredToken(p, ']');
+        }
+        else if(p->at->type == '.')
+        {
+            ++p->at;
+            
+            Token* ident = EatRequiredToken(p, Tok_Ident);
+            
+        }
+        // else if...
+        // else if...
+        else break;
+    }
     
-    return 0;
+    return result;
 }
 
 Ast_Expr* ParsePrimaryExpression(Parser* p)
@@ -239,33 +321,65 @@ int GetOperatorPrec(TokenType tokType)
     return 0;
 }
 
-int GetPrefixOpPrec(TokenType tokType)
-{
-    return 0;
-}
-
-int GetPostfixOpPrec(TokenType tokType)
-{
-    return 0;
-}
-
-bool IsOperatorLToR(TokenType tokType)
+bool IsOpPrefix(TokenType tokType)
 {
     return false;
 }
 
-void EatRequiredToken(Parser* p, TokenType tokType)
+bool IsOpPostfix(TokenType tokType)
+{
+    return false;
+}
+
+bool IsOperatorLToR(TokenType tokType)
+{
+    switch(tokType)
+    {
+        default: return false;
+        
+        case '=':
+        case Tok_PlusEquals:
+        case Tok_MinusEquals:
+        case Tok_MulEquals:
+        case Tok_DivEquals:
+        case Tok_ModEquals:
+        case Tok_LShiftEquals:
+        case Tok_RShiftEquals:
+        case Tok_AndEquals:
+        case Tok_XorEquals:
+        case Tok_OrEquals:
+        return false;
+    }
+    
+    return true;
+}
+
+inline Token* EatRequiredToken(Parser* p, TokenType tokType)
 {
     if(p->at->type != tokType)
     {
-        CompileError(p->tokenizer, p->at, 3, "Expecting '", TokTypeToString(tokType), "'");
-        p->error = true;
+        ExpectedTokenError(p, tokType);
+        
+        // Change current token to Tok_Error
+        // and don't go to the next one
+        p->at->type = Tok_Error;
+        return p->at;
     }
-    else
-        ++p->at;
+    
+    return p->at++;
 }
 
-void EatRequiredToken(Parser* p, char tokType)
+inline Token* EatRequiredToken(Parser* p, char tokType)
 {
-    EatRequiredToken(p, (TokenType)tokType);
+    return EatRequiredToken(p, (TokenType)tokType);
+}
+
+inline void ExpectedTokenError(Parser* p, TokenType tokType)
+{
+    CompileError(p->tokenizer, p->at, 3, "Expecting '", TokTypeToString(tokType), "'");
+}
+
+inline void ExpectedTokenError(Parser* p, char tokType)
+{
+    ExpectedTokenError(p, tokType);
 }

@@ -432,5 +432,7 @@ char* TokTypeToString(TokenType tokType)
             return operatorStrings[i].ptr;
     }
     
+    if(tokType == Tok_Ident) return "identifier";
+    
     return "";
 }

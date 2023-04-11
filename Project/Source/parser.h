@@ -205,6 +205,7 @@ struct Ast_Declaration : public Ast_Node
 {
     Ast_Declaration() { kind = AstKind_Declaration; };
     
+    TypeInfo* typeInfo; // TODO: should this be here then?
     Array<Ast_Declarator*> declarators;
     String name;
 };
@@ -304,16 +305,19 @@ struct Ast_TernaryExpr : public Ast_Expr
     Ast_FuncCall* overloaded = 0;
 };
 
+// This could also be a function pointer though...
 struct Ast_FuncCall : public Ast_Expr
 {
     Ast_FuncCall() { kind = AstKind_UnaryExpr; };
     
+    // You can call a function pointer like:
+    // funcPtrs[2](3);
     Ast_Expr* func;
     Array<Ast_Expr*> args;
     
     // Filled in by the typechecker (or overload resolver?)
-    Ast_FunctionDef* called;
-    TypeInfo* typeInfo;
+    Ast_FunctionDef* called = 0;
+    TypeInfo* typeInfo = 0;
 };
 
 struct Ast_Subscript : public Ast_Expr
@@ -322,6 +326,27 @@ struct Ast_Subscript : public Ast_Expr
     
     Ast_Expr* array;
     Ast_Expr* idxExpr;
+    
+    // Filled in by the typechecker
+    TypeInfo* typeInfo = 0;
+};
+
+struct Ast_IdentExpr : public Ast_Expr
+{
+    Ast_IdentExpr() { kind = AstKind_Ident; };
+    
+    String ident;
+    
+    // Filled in by the typechecker
+    Ast_Declaration* declaration = 0;
+};
+
+struct Ast_Typecast : public Ast_Expr
+{
+    Ast_Typecast() { kind = AstKind_Typecast; };
+    
+    TypeInfo* typeInfo;
+    Ast_Expr* expr;
 };
 
 // Runtime typechecking for dynamic casts (only if in debug build)
@@ -356,7 +381,6 @@ struct Parser
     Token* at;
     
     Array<Ast_Node*> nodes;
-    bool error = true;
 };
 
 template<typename t>
@@ -368,6 +392,9 @@ Ast_Node* ParseDeclOrExpr(Parser* p);
 Ast_Declaration* ParseDeclaration(Parser* p);
 Ast_Stmt* ParseStatement(Parser* p);
 Ast_If* ParseIf(Parser* p);
+Ast_For* ParseFor(Parser* p);
+Ast_While* ParseWhile(Parser* p);
+Ast_Defer* ParseDefer(Parser* p);
 Ast_Block* ParseBlock(Parser* p);
 
 Ast_Expr* ParseExpression(Parser* p, int prec = INT_MIN);
@@ -376,9 +403,13 @@ Ast_Expr* ParsePrimaryExpression(Parser* p);
 TypeInfo* ParseType(Parser* p);
 
 int GetOperatorPrec(TokenType tokType);
-int GetPrefixOpPrec(TokenType tokType);
-int GetPostfixOpPrec(TokenType tokType);
+// TODO: These two should not exist, unary operators do not have precedence in general.
+bool IsOpPrefix(TokenType tokType);
+bool IsOpPostfix(TokenType tokType);
 bool IsOperatorLToR(TokenType tokType);
 
-void EatRequiredToken(Parser* p, TokenType tokType);
-void EatRequiredToken(Parser* p, char tokType);
+inline Token* EatRequiredToken(Parser* p, TokenType tokType);
+inline Token* EatRequiredToken(Parser* p, char tokType);
+
+inline void ExpectedTokenError(Parser* p, TokenType tokType);
+inline void ExpectedTokenError(Parser* p, char tokType);
