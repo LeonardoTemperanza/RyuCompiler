@@ -43,21 +43,93 @@ Array<Ast_TopLevel*> ParseFile(Parser* p)
 
 Ast_FunctionDef* ParseFunctionDef(Parser* p)
 {
+    Arena_TempGuard(p->tempArena);
+    
     EatRequiredToken(p, Tok_Proc);
     
     auto func = Ast_MakeNode<Ast_FunctionDef>(p->arena, p->at);
+    func->name = p->at->ident;
     
-    // Parse function declarator
+    // Parse function declaration
+    Token* ident = EatRequiredToken(p, Tok_Ident);
+    
+    EatRequiredToken(p, '(');
+    
+    Ast_DeclaratorFunc decl;
+    decl.argTypes = { 0, 0 };
+    decl.argNames = { 0, 0 };
+    decl.retTypes = { 0, 0 };
+    
+    // Parse arguments
+    if(p->at->type != ')')
+    {
+        struct Arg
+        {
+            TypeInfo* type;
+            Token* name;
+        };
+        Array<Arg> args = { 0, 0 };
+        while(true)
+        {
+            TypeInfo* type = ParseType(p);
+            Token* argName = EatRequiredToken(p, Tok_Ident);
+            Arg arg = { type, argName };
+            Array_AddElement(&args, p->tempArena, arg);
+            
+            if(p->at->type == ',') ++p->at;
+            else break;
+        }
+        
+        args = Array_CopyToArena(args, p->arena);
+        
+        for(int i = 0; i < args.length; ++i)
+            Array_AddElement(&decl.argTypes, p->arena, args[i].type);
+        for(int i = 0; i < args.length; ++i)
+            Array_AddElement(&decl.argNames, p->arena, args[i].name);
+    }
+    
+    EatRequiredToken(p, ')');
+    
+    // Parse return types
+    if(p->at->type == Tok_Arrow)  // There is at least one return type
+    {
+        while(true)
+        {
+            TypeInfo* type = ParseType(p);
+            // Skip optional identifier
+            if(p->at->type == Tok_Ident) ++p->at;
+            
+            Array_AddElement(&decl.retTypes, p->arena, type);
+            
+            if(p->at->type == ',') ++p->at;
+            else break;
+        }
+    }
     
     EatRequiredToken(p, '{');
     
-    while(true)
+    Ast_Block block;
+    block.stmts = { 0, 0 };
+    
+    if(p->at->type != '}')
     {
+        while(true)
+        {
+            Ast_Stmt* stmt = ParseStatement(p);
+            Array_AddElement(&block.stmts, p->tempArena, stmt);
+            
+            if(p->at->type == ';') ++p->at;
+            else break;
+        }
         
+        block.stmts = Array_CopyToArena(block.stmts, p->arena);
     }
     
     EatRequiredToken(p, '}');
-    return 0;
+    
+    func->decl = decl;
+    func->block = block;
+    return func;
 }
 
 Ast_Node* ParseDeclOrExpr(Parser* p)
@@ -163,7 +235,7 @@ Ast_Expr* ParseExpression(Parser* p, int prec)
         
         Token* closeParen = 0;
         for(Token* token = p->at;
-            token->type != Tok_EOF && !closeParen;
+            token->type != Tok_EOF && token->type != Tok_Error && !closeParen;
             ++token)
         {
             if(token->type == ')')

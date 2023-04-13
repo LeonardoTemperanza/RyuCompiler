@@ -85,7 +85,13 @@ int MainDriver(Tokenizer* tokenizer, Parser* parser, /*IR_Context* ctx,*/ Typer*
     ProfileFunc();
     
     LexFile(tokenizer);
-    //ParseFile(parser);
+    ParseFile(parser);
+    
+    if(tokenizer->status == CompStatus_Success)
+        printf("Parsing was successful\n");
+    else
+        printf("There were syntax errors!\n");
+    
     
     /*bool success = ParseRootNode(parser, tokenizer);
     if(!success)

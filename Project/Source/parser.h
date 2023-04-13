@@ -182,7 +182,7 @@ struct Ast_Switch : public Ast_Stmt
     Ast_Switch() { kind = AstKind_Switch; };
     
     Ast_Expr* switchExpr;
-    Array<Ast_Expr*> cases;
+    Array<Ast_Expr*> cases = { 0, 0 };
 };
 
 struct Ast_Defer : public Ast_Stmt
@@ -196,7 +196,7 @@ struct Ast_Block : public Ast_Stmt
 {
     Ast_Block() { kind = AstKind_Block; };
     
-    Array<Ast_Stmt*> stmts;
+    Array<Ast_Stmt*> stmts = { 0, 0 };
     
     // Scope info???
 };
@@ -205,8 +205,8 @@ struct Ast_Declaration : public Ast_Node
 {
     Ast_Declaration() { kind = AstKind_Declaration; };
     
-    TypeInfo* typeInfo; // TODO: should this be here then?
-    Array<Ast_Declarator*> declarators;
+    TypeInfo* typeInfo;
+    Array<Ast_Declarator*> declarators = { 0, 0 };
     String name;
 };
 
@@ -234,8 +234,10 @@ struct Ast_DeclaratorFunc : public TypeInfo
 {
     Ast_DeclaratorFunc() { kind = AstKind_DeclaratorFunc; };
     
-    Array<TypeInfo*> argTypes;
-    Array<TypeInfo*> retTypes;
+    Array<TypeInfo*> argTypes = { 0, 0 };
+    Array<Token*> argNames = { 0, 0 };
+    Array<TypeInfo*> retTypes = { 0, 0 };
+    // Eventually we'll need return names maybe?
 };
 
 struct Ast_DeclaratorIdent : public TypeInfo
@@ -243,7 +245,7 @@ struct Ast_DeclaratorIdent : public TypeInfo
     Ast_DeclaratorIdent() { kind = AstKind_DeclaratorIdent; };
     
     String ident;
-    Array<Ast_Expr*> polyParams;
+    Array<Ast_Expr*> polyParams = { 0, 0 };
 };
 
 struct Ast_DeclaratorStruct : public TypeInfo
@@ -313,7 +315,7 @@ struct Ast_FuncCall : public Ast_Expr
     // You can call a function pointer like:
     // funcPtrs[2](3);
     Ast_Expr* func;
-    Array<Ast_Expr*> args;
+    Array<Ast_Expr*> args = { 0, 0 };
     
     // Filled in by the typechecker (or overload resolver?)
     Ast_FunctionDef* called = 0;
@@ -380,7 +382,7 @@ struct Parser
     Tokenizer* tokenizer;
     Token* at;
     
-    Array<Ast_Node*> nodes;
+    Array<Ast_Node*> nodes = { 0, 0 };
 };
 
 template<typename t>

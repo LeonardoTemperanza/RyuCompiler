@@ -370,6 +370,8 @@ void CompileError(Tokenizer* t, Token* token, char* message)
 // NOTE: This necessitates a variable number of char* vars
 void CompileError(Tokenizer* t, Token* token, int numStrings, char* message1, ...)
 {
+    printf("This function is not done\n");
+    
     if(t->status == CompStatus_Error)
         return;
     

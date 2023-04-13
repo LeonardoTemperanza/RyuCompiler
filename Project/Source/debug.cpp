@@ -19,7 +19,26 @@ void PrintAst(Ast_Node* node, int offset)
     
     switch(node->kind)
     {
-        
+        case AstKind_FunctionDef:
+        {
+            
+        }
+        break;
+        case AstKind_Block: break;
+        case AstKind_If: break;
+        case AstKind_For: break;
+        case AstKind_While: break;
+        case AstKind_DoWhile: break;
+        case AstKind_Switch: break;
+        case AstKind_Literal: break;
+        case AstKind_Ident: break;
+        case AstKind_FuncCall: break;
+        case AstKind_BinaryExpr: break;
+        case AstKind_UnaryExpr: break;
+        case AstKind_TernaryExpr: break;
+        case AstKind_Typecast: break;
+        case AstKind_Subscript: break;
+        case AstKind_MemberAccess: break;
     }
 }
 
