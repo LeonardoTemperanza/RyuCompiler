@@ -34,29 +34,63 @@ char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName)
 
 // Array utilities
 template<typename t>
-void Array_AddElement(Array<t>* arr, Arena* a, t element)
+void Array<t>::AddElement(Arena* a, t element)
 {
     // If empty, allocate a new array
-    if(arr->length == 0)
-        arr->ptr = Arena_FromStack(a, element);
+    if(this->length == 0)
+        this->ptr = Arena_FromStack(a, element);
     else
     {
-        auto ptr = (t*)Arena_ResizeLastAlloc(a, arr->ptr,
-                                             sizeof(t) * arr->length,
-                                             sizeof(t) * (arr->length + 1));
-        Assert(ptr == arr->ptr && "You tried to resize an allocation that was not the last one");
-        arr->ptr = ptr;
-        arr->ptr[arr->length] = element;
+        auto ptr = (t*)Arena_ResizeLastAlloc(a, this->ptr,
+                                             sizeof(t) * this->length,
+                                             sizeof(t) * (this->length + 1));
+        Assert(ptr == this->ptr && "Adding an element to an array that was not the last allocation performed in the linear arena is not allowed");
+        this->ptr = ptr;
+        this->ptr[this->length] = element;
     }
     
-    ++arr->length;
+    ++this->length;
 }
 
 template<typename t>
-Array<t> Array_CopyToArena(Array<t> arr, Arena* to)
+Array<t> Array<t>::CopyToArena(Arena* to)
 {
-    arr.ptr = (t*)Arena_AllocAndCopy(to, arr.ptr, sizeof(t) * arr.length);
-    return arr;
+    Array<t> result = *this;
+    result.ptr = (t*)Arena_AllocAndCopy(to, this->ptr, sizeof(t) * this->length);
+    return result;
+}
+
+// Array utilities
+template<typename t>
+void DynArray<t>::AddElement(t element)
+{
+    vec.push_back(element);
+    ++length;
+}
+
+void StringBuilder::Append(String str, Arena* dest)
+{
+    if(this->string.ptr)
+    {
+        auto ptr = (char*)Arena_ResizeLastAlloc(dest, this->string.ptr,
+                                                sizeof(char) * this->string.length,
+                                                sizeof(char) * (this->string.length + str.length));
+        Assert(ptr == this->string.ptr && "Appending to a string that was not the last allocation performed in the linear arena is not allowed");
+        this->string.ptr = ptr;
+        memcpy((void*)(this->string.ptr + this->string.length), str.ptr, str.length);
+        this->string.length += str.length;
+    }
+    else
+    {
+        this->string.ptr = Arena_AllocArray(dest, str.length, char);
+        memcpy(this->string.ptr, str.ptr, str.length);
+        this->string.length = str.length;
+    }
+}
+
+String StringBuilder::ToString(Arena* dest)
+{
+    return this->string.CopyToArena(dest);
 }
 
 // String utilities
@@ -112,23 +146,64 @@ bool String_FirstCharsMatchEntireString(char* stream, String str)
     return true;
 }
 
+// Thread context
+void ThreadCtx_Init(ThreadContext* threadCtx, size_t scratchReserveSize, size_t scratchCommitSize)
+{
+    Arena* scratch = threadCtx->scratchPool;
+    for(int i = 0; i < StArraySize(threadCtx->scratchPool); ++i)
+    {
+        auto baseMemory = ReserveMemory(scratchReserveSize);
+        Arena_Init(&scratch[i], baseMemory, scratchReserveSize, scratchCommitSize);
+    }
+}
+
+// Some procedures might accept arenas as arguments,
+// for dynamically allocated results yielded to the caller.
+// The argument arena might, in turn, be a scratch arena used
+// by the caller for some temporary computation. This means
+// that whenever a procedure wants a thread-local scratch buffer
+// it needs to provide the arenas that they're already using,
+// so that the provided scratch arena does not conflict with anything
+//
+// For more information on memory arenas: https://www.rfleury.com/p/untangling-lifetimes-the-arena-allocator
+Arena* GetScratchArena(ThreadContext* threadCtx, Arena** conflictArray, int count)
+{
+    Assert(count < ThreadCtx_NumScratchArenas);
+    Arena* result = 0;
+    Arena* scratch = threadCtx->scratchPool;
+    for(int i = 0; i < StArraySize(threadCtx->scratchPool); ++i)
+    {
+        bool conflict = false;
+        for(int j = 0; j < count; ++j)
+        {
+            if(&scratch[i] == conflictArray[j])
+            {
+                conflict = true;
+                break;
+            }
+        }
+        
+        if(!conflict)
+        {
+            result = &scratch[i];
+            break;
+        }
+    }
+    
+    return result;
+}
+
 #ifdef Profile
 void InitSpall()
 {
-    // Draw the amount of time this function takes, too.
-    //uint64 beginTime = __rdtsc();
-    
     spallCtx = spall_init_file("constellate.spall", 1000000.0 / GetRdtscFreq());
     
-    size_t bufferSize = GB(1);
+    size_t bufferSize = MB(100);
     uchar* buffer = (uchar*)malloc(bufferSize);
     memset(buffer, 1, bufferSize);
     
     spallBuffer.length = bufferSize;
     spallBuffer.data   = buffer;
-    
-    //spall_buffer_begin(&spallCtx, &spallBuffer, __FUNCTION__, sizeof(__FUNCTION__), beginTime);
-    //spall_buffer_end(&spallCtx, &spallBuffer, __rdtsc());
 }
 
 void QuitSpall()
@@ -136,4 +211,15 @@ void QuitSpall()
     spall_buffer_quit(&spallCtx, &spallBuffer);
     spall_quit(&spallCtx);
 }
-#endif
+
+ProfileFuncGuard::ProfileFuncGuard(char* funcName)
+{
+    spall_buffer_begin(&spallCtx, &spallBuffer, funcName, sizeof(funcName), __rdtsc());
+}
+
+ProfileFuncGuard::~ProfileFuncGuard()
+{
+    spall_buffer_end(&spallCtx, &spallBuffer, __rdtsc());
+}
+
+#endif  /* Profile */

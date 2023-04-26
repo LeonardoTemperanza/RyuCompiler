@@ -9,16 +9,21 @@
 // anything with these strings and types
 #define KeywordStringTokenMapping \
 X("proc", Tok_Proc) \
-X("extern", Tok_Extern) \
+/*X("extern", Tok_Extern)*/ \
 X("return", Tok_Return) \
 /*X("var", Tok_Var)*/ \
 X("if", Tok_If) \
 X("else", Tok_Else) \
 X("for", Tok_For) \
 X("while", Tok_While) \
+X("do", Tok_Do) \
+X("break", Tok_Break) \
+X("continue", Tok_Continue) \
+X("defer", Tok_Defer) \
 X("const", Tok_Const) \
-X("int", Tok_Int32) \
-X("int32", Tok_Int32) \
+X("struct", Tok_Struct) \
+X("cast", Tok_Cast) \
+/* Primitive types */ \
 X("int8", Tok_Int8) \
 X("int16", Tok_Int16) \
 X("int32", Tok_Int32) \
@@ -32,6 +37,7 @@ X("double", Tok_Double)
 
 // NOTE(Leo): Order matters here (<<= before <<)
 #define OperatorStringTokenMapping \
+X("->", Tok_Arrow) \
 X("++", Tok_Increment) \
 X("--", Tok_Decrement) \
 X("<<=", Tok_LShiftEquals) \
@@ -80,18 +86,6 @@ const TokenType operatorTypes[] =
     OperatorStringTokenMapping
 };
 #undef X
-
-static Token GetToken(Tokenizer* t);
-
-inline bool IsAlphabetic(char c);
-inline bool IsNumeric(char c);
-inline bool IsWhitespace(char c);
-inline bool IsAllowedForStartIdent(char c);
-inline bool IsAllowedForMiddleIdent(char c);
-inline bool IsNewline(char c);
-static void EatAllWhitespace(Tokenizer* t);
-static bool FindStringInStream(char* stream, char* string);
-static float String2Float(char* string, int length);
 
 inline bool IsAlphabetic(char c)
 {
@@ -217,20 +211,20 @@ static float String2Float(char* string, int length)
 
 static void LexFile(Tokenizer* t)
 {
+    ProfileFunc(prof);
+    
     while(true)
     {
         Token tok = GetToken(t);
-        Array_AddElement(&t->tokens, t->arena, tok);
+        t->tokens.AddElement(t->arena, tok);
         
-        if(tok.type == Tok_EOF)
+        if(tok.type == Tok_EOF || tok.type == Tok_Error)
             break;
     }
 }
 
 static Token GetToken(Tokenizer* t)
 {
-    ProfileFunc();
-    
     EatAllWhitespace(t);
     
     Token result;
@@ -238,11 +232,13 @@ static Token GetToken(Tokenizer* t)
     result.sl      = t->startOfCurLine;
     result.lineNum = t->curLineNum;
     result.sc      = t->at - t->startOfFile;
+    result.ec      = result.sc;
     result.ident   = { t->at, 1 };
     
     if(t->at[0] == 0)
     {
         result.type = Tok_EOF;
+        result.ec = result.sc;
     }
     else if(IsAllowedForStartIdent(t->at[0]))
     {
@@ -265,6 +261,8 @@ static Token GetToken(Tokenizer* t)
     else if(IsNumeric(t->at[0]))
     {
         result.type = Tok_Num;
+        
+        //#if 0
         int length = 0;
         int numPoints = 0;
         do
@@ -288,10 +286,10 @@ static Token GetToken(Tokenizer* t)
         
         t->at += length;
         result.ec = result.sc + result.ident.length - 1;
+        //#endif
     }
     else
     {
-        // TODO: fix Lexer issue
         bool found = false;
         String foundStr = { 0, 0 };
         for(int i = 0; i < StArraySize(operatorStrings); ++i)
@@ -312,7 +310,6 @@ static Token GetToken(Tokenizer* t)
         }
         else
         {
-            
             result.type = (TokenType)t->at[0];
             result.ident.length = 1;
             result.ec   = result.sc;
@@ -320,22 +317,29 @@ static Token GetToken(Tokenizer* t)
         }
     }
     
-    
     return result;
 }
 
-// TODO: annoying duplicated code here
-
-void CompileError(Tokenizer* t, Token* token, char* message)
+void CompileError(Tokenizer* t, Token* token, String message)
 {
     if(t->status == CompStatus_Error)
         return;
-    
     t->status = CompStatus_Error;
+    
+    if(token->type == Tok_EOF || token->type == Tok_Error)
+    {
+        printf("Reached unexpected EOF\n");
+        return;
+    }
     
     char* fileContents = t->startOfFile;
     
-    fprintf(stderr, "%s (%d,%d): %s\n", "Error", token->lineNum, token->sc - token->sl + 1, message);
+    fprintf(stderr, "Error(%d,%d): %.*s\n",
+            token->lineNum,
+            token->sc - token->sl + 1,
+            (int)message.length, message.ptr);
+    
+    // Print line in file
     bool endOfLine = false;
     int i = token->sl;
     while(!endOfLine)
@@ -366,75 +370,28 @@ void CompileError(Tokenizer* t, Token* token, char* message)
     fprintf(stderr, "^\n");
 }
 
-// TODO: actually finish this
-// NOTE: This necessitates a variable number of char* vars
-void CompileError(Tokenizer* t, Token* token, int numStrings, char* message1, ...)
+String TokTypeToString(TokenType tokType, Arena* dest)
 {
-    printf("This function is not done\n");
-    
-    if(t->status == CompStatus_Error)
-        return;
-    
-    t->status = CompStatus_Error;
-    
-    char* fileContents = t->startOfFile;
-    
-    va_list args;
-    va_start(args, token);
-    
-    fprintf(stderr, "%s (%d,%d): ", "Error", token->lineNum, token->sc - token->sl + 1);
-    for(int i = 0; i < numStrings; ++i)
-    {
-        
-    }
-    
-    bool endOfLine = false;
-    int i = token->sl;
-    while(!endOfLine)
-    {
-        if(fileContents[i] == '\t')
-            fprintf(stderr, "    ");
-        else
-            fprintf(stderr, "%c", fileContents[i]);
-        
-        ++i;
-        endOfLine = fileContents[i] == '\r' ||
-            fileContents[i] == '\n' ||
-            fileContents[i] == 0;
-    }
-    
-    int length = i - token->sl;
-    
-    fprintf(stderr, "\n");
-    
-    for(int i = token->sl; i < token->sc; ++i)
-    {
-        if(fileContents[i] == '\t')
-            fprintf(stderr, "----");
-        else
-            fprintf(stderr, "-");
-    }
-    
-    fprintf(stderr, "^\n");
-    
-    va_end(args);
-}
-
-char* TokTypeToString(TokenType tokType)
-{
+    // No need to allocate in these cases
     for(int i = 0; i < StArraySize(keywordTypes); ++i)
     {
         if(tokType == keywordTypes[i])
-            return keywordStrings[i].ptr;
+            return keywordStrings[i];
     }
     
     for(int i = 0; i < StArraySize(operatorTypes); ++i)
     {
         if(tokType == operatorTypes[i])
-            return operatorStrings[i].ptr;
+            return operatorStrings[i];
     }
     
-    if(tokType == Tok_Ident) return "identifier";
+    if(tokType == Tok_Ident) return StrLit("identifier");
+    if(tokType == Tok_EOF)   return StrLit("end of file");
+    if(tokType == Tok_Error) return StrLit("error");
     
-    return "";
+    // If it's just the ASCII code, then an arena
+    // allocation is needed
+    String result { 0, 1 };
+    result.ptr = Arena_FromStackPack(dest, (char)tokType);
+    return result;
 }

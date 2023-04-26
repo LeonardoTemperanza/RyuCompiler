@@ -1,7 +1,19 @@
 
 #include "base.h"
 #include "os_agnostic.h"
+
+//#define WIN32_LEAN_AND_MEAN
+//#include <windows.h>
+//#undef WIN32_LEAN_AND_MEAN
+
 #include "miniwindows.h"
+
+static DWORD win32ThreadContextIdx = 0;
+
+void OS_Init()
+{
+    win32ThreadContextIdx = TlsAlloc();
+}
 
 // Memory utilities
 void* ReserveMemory(size_t size)
@@ -21,6 +33,17 @@ void FreeMemory(void* mem, size_t size)
 {
     bool result = VirtualFree(mem, 0, MEM_RELEASE);
     Assert(result && "VirtualFree failed!");
+}
+
+// Thread context
+void SetThreadContext(void* ptr)
+{
+    TlsSetValue(win32ThreadContextIdx, ptr);
+}
+
+void* GetThreadContext()
+{
+    return (void*)TlsGetValue(win32ThreadContextIdx);
 }
 
 // Timing and profiling utilities

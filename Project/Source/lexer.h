@@ -10,12 +10,8 @@ enum TokenType
 {
     // Ascii types
     
-    // Lexer message types
-    Tok_EOF = 257,
-    Tok_Error,
-    
     // Operator types (not single character)
-    Tok_OperatorBegin,
+    Tok_OperatorBegin = 257,
     Tok_LE = Tok_OperatorBegin,
     Tok_GE,
     Tok_EQ,
@@ -39,32 +35,12 @@ enum TokenType
     Tok_Subscript,   // Not an actual token, only needed for operator precedence
     Tok_OperatorEnd = Tok_Subscript,
     
-    // Keywords
-    Tok_Proc,
-    Tok_Struct,
-    Tok_Extern,
-    //TokenVar,  // TODO: use later for type inference
-    Tok_If,
-    Tok_Else,
-    Tok_For,
-    Tok_While,
-    Tok_Return,
-    Tok_Arrow,  // For function return types
-    
-    // Type qualifiers
-    Tok_Const,
-    Tok_Volatile,
-    
-    // Generic identifier, could be a type or
-    // a variable name. The program is not
-    // able to figure that out until later
-    // in the semantic analysis stage
-    // TokenTypes after TokenIdentBegin are considered
-    // identifiers by the parser
-    // These are all considered "identifiers" by
-    // the parser.
+    // Primitive types should be considered
+    // as identifiers by the parser.
     Tok_IdentBegin,
-    Tok_Int8 = Tok_IdentBegin,
+    // Primitive types
+    Tok_PrimitiveTypesBegin = Tok_IdentBegin,
+    Tok_Int8 = Tok_PrimitiveTypesBegin,
     Tok_Int16,
     Tok_Int32,
     Tok_Int64,
@@ -74,12 +50,51 @@ enum TokenType
     Tok_Uint64,
     Tok_Float,
     Tok_Double,
+    Tok_PrimitiveTypesEnd = Tok_Double,
     Tok_Ident,
     Tok_IdentEnd = Tok_Ident,
     
-    // Constants
+    // Keywords
+    Tok_Proc,
+    Tok_Struct,
+    //Tok_Extern,
+    //TokenVar,  // TODO: use later for type inference
+    Tok_If,
+    Tok_Else,
+    Tok_For,
+    Tok_While,
+    Tok_Do,
+    Tok_Break,
+    Tok_Continue,
+    Tok_Defer,
+    Tok_Return,
+    Tok_Cast,
+    Tok_Arrow,  // For function return types
+    
+    // Type qualifiers
+    Tok_Const,
+    Tok_Volatile,
+    
+    
+    // Literals
     Tok_Num,
-    Tok_StrLiteral
+    Tok_StrLiteral,
+    
+    // Lexer message types
+    Tok_EOF,
+    Tok_Error,
+};
+
+struct TokenHotData
+{
+    union
+    {
+        String ident;
+        uint64 uintValue;
+        int64 intValue;
+        float floatValue;
+        double doubleValue;
+    };
 };
 
 struct Token
@@ -93,11 +108,16 @@ struct Token
     // Additional information
     union
     {
-        String ident;
-        uint64 uintValue;
-        int64 intValue;
-        float floatValue;
-        double doubleValue;
+        // Use token hot data either anonymously or not
+        TokenHotData tokenHotData;
+        union
+        {
+            String ident;
+            uint64 uintValue;
+            int64 intValue;
+            float floatValue;
+            double doubleValue;
+        };
     };
 };
 
@@ -107,7 +127,7 @@ enum ParseStatus
     CompStatus_Success = 0
 };
 
-// TODO: there should be the file name here
+// TODO: Implement file paths
 struct Tokenizer
 {
     char* startOfFile;
@@ -120,14 +140,28 @@ struct Tokenizer
     Array<Token> tokens = { 0, 0 };
     
     ParseStatus status = CompStatus_Success;
+    
+    String fullFilePath = { 0, 0 };
 };
+
+static Token GetToken(Tokenizer* t);
+
+inline bool IsAlphabetic(char c);
+inline bool IsNumeric(char c);
+inline bool IsWhitespace(char c);
+inline bool IsAllowedForStartIdent(char c);
+inline bool IsAllowedForMiddleIdent(char c);
+inline bool IsNewline(char c);
+static void EatAllWhitespace(Tokenizer* t);
+static bool FindStringInStream(char* stream, char* string);
+static float String2Float(char* string, int length);
+
+inline bool IsTokIdent(TokenType tokType) { return tokType >= Tok_IdentBegin && tokType <= Tok_IdentEnd; }
 
 void EatToken(Tokenizer* t);
 Token* PeekToken(Tokenizer* t, int lookahead);
-inline Token* PeekNextToken(Tokenizer* t) 
-{
-    return PeekToken(t, 1);
-}
+inline Token* PeekNextToken(Tokenizer* t) { return PeekToken(t, 1); }
 
-void CompileError(Tokenizer* t, Token* token, char* message);
-void CompileError(Tokenizer* t, Token* token, int numStrings, char* message1, ...);
+void CompileError(Tokenizer* t, Token* token, String message);
+//void CompileError(Tokenizer* t, Token* token, char* message);
+//void CompileError(Tokenizer* t, Token* token, int numStrings, char* message1, ...);

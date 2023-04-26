@@ -1,7 +1,34 @@
 #include "memory_management.h"
 
-// Helper function used by the allocation function
-static uintptr AlignForward(uintptr ptr, size_t align);
+ScratchArena::ScratchArena()
+{
+    auto threadCtx = (ThreadContext*)GetThreadContext();
+    this->arena = GetScratchArena(threadCtx, 0, 0);
+    this->tempGuard = Arena_TempBegin(this->arena);
+}
+
+ScratchArena::ScratchArena(Arena* a1)
+{
+    auto threadCtx = (ThreadContext*)GetThreadContext();
+    this->arena = GetScratchArena(threadCtx, &a1, 1);
+    this->tempGuard = Arena_TempBegin(this->arena);
+}
+
+ScratchArena::ScratchArena(Arena* a1, Arena* a2)
+{
+    Arena* conflicts[] = { a1, a2 };
+    auto threadCtx = (ThreadContext*)GetThreadContext();
+    this->arena = GetScratchArena(threadCtx, conflicts, 2);
+    this->tempGuard = Arena_TempBegin(this->arena);
+}
+
+ScratchArena::ScratchArena(Arena* a1, Arena* a2, Arena* a3)
+{
+    Arena* conflicts[] = { a1, a2, a3 };
+    auto threadCtx = (ThreadContext*)GetThreadContext();
+    this->arena = GetScratchArena(threadCtx, conflicts, 3);
+    this->tempGuard = Arena_TempBegin(this->arena);
+}
 
 void Arena_Init(Arena* arena,
                 void* backingBuffer,

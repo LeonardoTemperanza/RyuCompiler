@@ -7,94 +7,37 @@
 #include "lexer.h"
 #include "parser.h"
 
-struct SymbolTable {};
-
 struct Typer
 {
+    Tokenizer* tokenizer;
     Parser* parser;
     
-    Arena* arena;
+    Arena* arena;  // Arena where the ast is stored
     Arena* tempArena;
     
-    Arena* scopeStackArena;
-    uint32* curScopeStack = 0;
-    uint32 curScopeIdx = 0;
-    uint32 scopeCounter = 0;
-    
-    SymbolTable globalSymTable;
-    SymbolTable* curSymTable;
-    bool errorOccurred = false;
+    Ast_Block* globalScope = 0;
+    // Same thing here right? Array when small, hash-table when big, maybe?
+    DynArray<OverloadSet> overloads;
 };
 
-Typer InitTyper(Arena* arena, Arena* tempArena, Arena* scopeStackArena, Parser* parser)
-{
-    Typer t;
-    return t;
-}
+Typer InitTyper(Arena* arena, Parser* parser);
+void SemanticError(Typer* t, Token* token, char* message);
 
-/*
-enum SymbolType
-{
-    IsSymbolType,
-    IsSymbolFunc,
-    IsSymbolVar
-};
+// Identifier resolution
 
-struct Symbol
-{
-    String ident;
-    uint32 scopeId;
-    
-    SymbolType symType;
-    union
-    {
-        // Ast_StructDecl* structDecl; // Struct declaration
-        Ast_Declaration* decl;
-        Ast_Function* func;
-    };
-    
-    Symbol* next = 0;
-};
+Ast_Declaration* IdentResolution();
+bool CheckRedefinition(Typer* t, Ast_Block* scope, Ast_Declaration* decl);
+void AddDeclaration(Typer* t, Ast_Block* scope, Ast_Declaration* decl);
 
-struct SymbolTableEntry
-{
-    bool occupied = false;
-    Symbol symbol;
-};
+// Types
+TypeInfo* GetBaseType(TypeInfo* type);
+bool TypesCompatible(Typer* t, TypeInfo* type1, TypeInfo* type2);
+bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2);
+bool TypesImplicitlyCompatible(Typer* t, TypeInfo* type1, TypeInfo* type2);
+String TypeInfo2String(TypeInfo* type, Arena* dest);
 
-#define SymTable_ArraySize 200
-struct SymbolTable
-{
-    SymbolTableEntry symArray[SymTable_ArraySize];
-};
-
-Typer InitTyper(Arena* arena, Arena* tempArena, Arena* scopeStackArena, Parser* parser);
-
-void SemanticError(Token token, Typer* ctx, char* message);
-
-int IdentHashFunction(String str);
-Symbol* GetSymbol(SymbolTable* symTable, String str, uint32* scopeStack, int scopeIdx);
-Symbol* GetSymbolOrError(Typer* ctx, Token token);
-struct InsertSymbol_Ret
-{
-    Symbol* res;
-    bool alreadyDefined;
-};
-InsertSymbol_Ret InsertSymbol(Arena* arena, SymbolTable* symTable, String str, uint32 scopeId);
-Symbol* InsertGlobalSymbolOrError(Typer* ctx, Token token);
-Symbol* InsertSymbolOrError(Typer* ctx, Token token);
-Symbol* GetGlobalSymbol(SymbolTable* symTable, String str);
-Symbol* GetGlobalSymbolOrError(Typer* ctx, Token token);
-
-// We need to change stuff about the error system, but we could do that later
-
-void PerformTypingStage(Typer* ctx, Ast_Root* ast);
-
-void InsertPrimitiveTypes(SymbolTable* table);
-void PerformTypingStage(Typer* ctx, Ast_Root* ast);
-void TypeCheckExpr(Typer* ctx, Ast_ExprNode* expr);
-
-void Semantics_Block(Typer* ctx, Ast_BlockStmt* block);
-void Semantics_Declaration(Typer* ctx, Ast_Declaration* decl);
-void Semantics_Stmt(Typer* ctx, Ast_Stmt* stmt);
-*/
+// Semantics
+void Semantics_Expr(Typer* t, Ast_Expr* expr);
+void Semantics_Block(Typer* t, Ast_Block* ast);
+void TypingStage(Typer* typer, Ast_Node* ast, Ast_Block* curScope);
+void TypingStage(Typer* t, Ast_Block* fileScope);

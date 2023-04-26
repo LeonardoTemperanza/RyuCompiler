@@ -3,17 +3,19 @@
 
 #include "base.h"
 
-// This file provides allocation strategies that are
-// utilized throughout this project
+// This provides allocation strategies that are
+// utilized throughout the project
+
 #define Default_Alignment (2 * sizeof(void*))
 
 // NOTE(Leo): The first helper macros are for smallest alignment
 // (good for cache locality, but bad for SSE?),
-// while the second helper macros are for 18-byte alignment
+// while the second helper macros (pack) are for 18-byte alignment
 // (good for SSE, bad for cache locality?)
 // The second one seems to be better because when good
 // cache locality is needed things are stored in an array
 // anyway, usually.
+
 
 #define Arena_FromStack(arenaPtr, stackVar) \
 (decltype(stackVar)*)Arena_AllocAndCopy((arenaPtr), &(stackVar), sizeof(stackVar))
@@ -21,13 +23,23 @@
 (type*)Arena_Alloc((arenaPtr), (size)*sizeof(type))
 #define Arena_AllocVar(arenaPtr, type) \
 (type*)Arena_Alloc((arenaPtr), sizeof(type))
-
 // Calls the constructor / initializer list. A "placement new" is used because
 // by default C++ can't call the constructor on custom allocated variables.
 #define Arena_AllocAndInit(arenaPtr, type) \
 new (Arena_Alloc((arenaPtr), sizeof(type))) type
 
-// Variants that allow the use of a different alignment
+
+#define Arena_FromStackPack(arenaPtr, stackVar) \
+(decltype(stackVar)*)Arena_AllocAndCopy((arenaPtr), &(stackVar), sizeof(stackVar), alignof(decltype(stackVar)))
+#define Arena_AllocArrayPack(arenaPtr, size, type) \
+(type*)Arena_Alloc((arenaPtr), (size)*sizeof(type), alignof(type))
+#define Arena_AllocVarPack(arenaPtr, type) \
+(type*)Arena_Alloc((arenaPtr), sizeof(type), alignof(type))
+#define Arena_AllocAndInitPack(arenaPtr, type) \
+new (Arena_Alloc((arenaPtr), sizeof(type), alignof(type))) type
+
+
+// Variants that allow the use of different alignment
 #define Arena_FromStackAlign(arenaPtr, stackVar, alignment) \
 (decltype(stackVar)*)Arena_AllocAndCopy((arenaPtr), &(stackVar), sizeof(stackVar), (alignment))
 #define Arena_AllocArrayAlign(arenaPtr, size, type, alignment) \
@@ -37,9 +49,6 @@ new (Arena_Alloc((arenaPtr), sizeof(type))) type
 #define Arena_AllocAndInitAlign(arenaPtr, type, alignment) \
 new (Arena_Alloc((arenaPtr), sizeof(type), (alignment))) type
 
-// NOTE(Leo): Should be inserted at the beginning of a function,
-// or at the beginning of a block.
-#define Arena_TempGuard(arenaPtr) auto savepoint = Arena_TempBegin(arenaPtr); defer(Arena_TempEnd(savepoint));
 
 struct Arena
 {
@@ -62,38 +71,6 @@ struct TempArenaMemory
     size_t prevOffset;
 };
 
-// Initialize the arena with a pre-allocated buffer
-void Arena_Init(Arena* arena,
-                void* backingBuffer,
-                size_t backingBufferLength,
-                size_t commitSize);
-void* Arena_Alloc(Arena* arena,
-                  size_t size,
-                  size_t align = Default_Alignment);
-void* Arena_ResizeLastAlloc(Arena* arena,
-                            void* oldMemory,
-                            size_t oldSize,
-                            size_t newSize,
-                            size_t align = Default_Alignment);
-void* Arena_AllocAndCopy(Arena* arena,
-                         void* toCopy,
-                         size_t size,
-                         size_t align = Default_Alignment);
-// The provided string can also not be null-terminated.
-// The resulting string will be null-terminated
-// automatically.
-char* Arena_PushString(Arena* arena,
-                       void* toCopy,
-                       size_t size);
-
-// Used to free all the memory within the allocator
-// by setting the buffer offsets to zero
-inline void Arena_FreeAll(Arena* arena)
-{
-    arena->offset     = 0;
-    arena->prevOffset = 0;
-}
-
 inline TempArenaMemory Arena_TempBegin(Arena* arena)
 {
     TempArenaMemory tmp;
@@ -109,4 +86,61 @@ inline void Arena_TempEnd(TempArenaMemory tmp)
     Assert(tmp.prevOffset >= 0);
     tmp.arena->offset     = tmp.offset;
     tmp.arena->prevOffset = tmp.prevOffset;
+}
+
+/*
+struct Arena_TempGuard
+{
+    Arena_TempGuard() = delete;
+    Arena_TempGuard(Arena* arena) { savepoint = Arena_TempBegin(arena); };
+    ~Arena_TempGuard() { Arena_TempEnd(savepoint); };
+    
+    TempArenaMemory savepoint;
+};
+*/
+
+// Serves as a helper for obtaining a scratch
+// arena. It also resets the arena's state upon
+// destruction.
+struct ScratchArena
+{
+    // This could be templatized, but...
+    // we're not going to need more than
+    // 4 scratch arenas anyway, and you could
+    // always add more constructors
+    ScratchArena();
+    ScratchArena(Arena* a1);
+    ScratchArena(Arena* a1, Arena* a2);
+    ScratchArena(Arena* a1, Arena* a2, Arena* a3);
+    inline ~ScratchArena() { Arena_TempEnd(tempGuard); };
+    inline void Reset() { Arena_TempEnd(tempGuard); };
+    inline operator Arena*() { return arena; };
+    
+    Arena* arena;
+    TempArenaMemory tempGuard;
+};
+
+uintptr AlignForward(uintptr ptr, size_t align);
+
+// Initialize the arena with a pre-allocated buffer
+void Arena_Init(Arena* arena, void* backingBuffer,
+                size_t backingBufferLength, size_t commitSize);
+void* Arena_Alloc(Arena* arena,
+                  size_t size, size_t align = Default_Alignment);
+void* Arena_ResizeLastAlloc(Arena* arena, void* oldMemory,
+                            size_t oldSize, size_t newSize,
+                            size_t align = Default_Alignment);
+void* Arena_AllocAndCopy(Arena* arena, void* toCopy,
+                         size_t size, size_t align = Default_Alignment);
+// The provided string can also not be null-terminated.
+// The resulting string will be null-terminated
+// automatically.
+char* Arena_PushString(Arena* arena, void* toCopy, size_t size);
+
+// Used to free all the memory within the allocator
+// by setting the buffer offsets to zero
+inline void Arena_FreeAll(Arena* arena)
+{
+    arena->offset     = 0;
+    arena->prevOffset = 0;
 }

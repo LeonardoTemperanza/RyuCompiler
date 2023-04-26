@@ -7,22 +7,25 @@
 
 int MainDriver(Tokenizer* tokenizer,
                Parser* parser,
-               //IR_Context* ctx,
                Typer* typer);
-
-int test(const int i, float prova)
-{ return 0; }
 
 int main(int argCount, char** argValue)
 {
+    // OS-specific initialization
+    OS_Init();
+    
 #ifdef Profile
     InitSpall();
     defer(QuitSpall());
 #endif
     
-    ProfileFunc();
+    // Start of application
+    ProfileFunc(prof);
     
-    static int * prova = 0;
+    // Main thread context
+    ThreadContext threadCtx;
+    ThreadCtx_Init(&threadCtx, GB(2), KB(32));
+    SetThreadContext(&threadCtx);
     
     if(argCount == 1)
     {
@@ -41,71 +44,50 @@ int main(int argCount, char** argValue)
     size_t size = GB(1);
     size_t commitSize = MB(2);
     
-    // TODO: why is this separate from the ast arena?
-    // I'm guessing this has the symbol table only, or something?
-    Arena permanentArena;
-    void* permanentStorage = ReserveMemory(size);
-    Assert(permanentStorage);
-    Arena_Init(&permanentArena, permanentStorage, size, commitSize);
-    
-    // This arena is used for temporary allocations, for
-    // computations that are local to a single function
-    Arena tempArena;
-    void* tempStorage = ReserveMemory(size);
-    Arena_Init(&tempArena, tempStorage, size, commitSize);
-    
     Arena astArena;
     void* astStorage = ReserveMemory(size);
     Assert(astStorage);
     Arena_Init(&astArena, astStorage, size, commitSize);
     
-    Arena scopeStackArena;
-    void* scopeStackStorage = ReserveMemory(2048);
-    Assert(scopeStackStorage);
-    Arena_Init(&scopeStackArena, scopeStackStorage, 2048, 256);
-    
     Tokenizer tokenizer = { fileContents, fileContents };
     tokenizer.arena = &astArena;
+    Parser parser = { &astArena, &tokenizer };
+    Typer typer = InitTyper(&astArena, &parser);
     
-    Parser parser = { &tempArena, &astArena, &tokenizer };
+    int result = MainDriver(&tokenizer, &parser, &typer);
     
-    //IR_Context IRCtx;//= InitIRContext(&permanentArena, &tempArena, &scopeStackArena, &parser);
-    Typer typer = InitTyper(&permanentArena, &tempArena, &scopeStackArena, &parser);
-    
-    int result = MainDriver(&tokenizer, &parser, /*&IRCtx,*/ &typer);
-    
-    FreeMemory(permanentStorage, size);
-    FreeMemory(tempStorage, size);
-    FreeMemory(astStorage, size);
+    // No need to free memory
     return result;
 }
 
-int MainDriver(Tokenizer* tokenizer, Parser* parser, /*IR_Context* ctx,*/ Typer* typer)
+int MainDriver(Tokenizer* tokenizer, Parser* parser, Typer* typer)
 {
-    ProfileFunc();
+    ProfileFunc(prof);
+    
+    Ast_Block globalScope;
+    parser->globalScope = &globalScope;
     
     LexFile(tokenizer);
-    ParseFile(parser);
+    Ast_Block* fileAst = ParseFile(parser);
+    
+    Assert(fileAst->kind = AstKind_Block);
     
     if(tokenizer->status == CompStatus_Success)
         printf("Parsing was successful\n");
     else
+    {
         printf("There were syntax errors!\n");
+        return 0;
+    }
     
+    TypingStage(typer, fileAst);
     
-    /*bool success = ParseRootNode(parser, tokenizer);
-    if(!success)
-        return 1;
+    if(tokenizer->status == CompStatus_Success)
+        printf("Typechecking was successful\n");
+    else
+        printf("There were semantic errors!\n");
     
-    printf("Parsed successfully!\n");
-    
-    PerformTypingStage(typer, &parser->root);
-    
-    if(!typer->errorOccurred)
-        printf("Type checked successfully!\n");
-    */
     //InterpretTestCode();
-    
     //int errorCode = GenerateIR(ctx, &(parser->root));
     return 0;
 }

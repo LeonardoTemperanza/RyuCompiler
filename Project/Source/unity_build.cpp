@@ -29,7 +29,7 @@
 #include "main.cpp"
 #include "memory_management.cpp"
 #include "parser.cpp"
-//#include "semantics.cpp"
+#include "semantics.cpp"
 
 #ifdef Debug
 #include "debug.cpp"

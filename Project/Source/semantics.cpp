@@ -1,548 +1,350 @@
 
 #include "semantics.h"
 
-// Primitive type infos
-Type int32Type = { false, false, false, false, Typeid_Int32 };
+// Primitive types
 
-static void SemanticError(Token token, Typer* ctx, char* message)
-{
-    ctx->errorOccurred = true;
-    CompilationError(token, ctx->parser->tokenizer, "Semantic error", message);
-}
-
-Typer InitTyper(Arena* arena, Arena* tempArena, Arena* scopeStackArena, Parser* parser)
+Typer InitTyper(Arena* astArena, Parser* parser)
 {
     Typer t;
-    t.arena = arena;
-    t.tempArena = tempArena;
-    t.scopeStackArena = scopeStackArena;
+    t.tokenizer = parser->tokenizer;
     t.parser = parser;
+    t.arena = astArena;
+    
     return t;
 }
 
-static void StartScope(Typer* ctx)
+// There are going to be many different types of error
+void SemanticError(Typer* t, Token* token, char* message)
 {
-    Arena_AllocVar(ctx->scopeStackArena, uint32);
-    ++ctx->curScopeIdx;
-    ++ctx->scopeCounter;
-    ctx->curScopeStack[ctx->curScopeIdx] = ctx->scopeCounter;
+    t->parser->tokenizer->status = CompStatus_Error;
+    printf("WIP function! ");
+    fprintf(stderr, message);
+    printf("\n");
 }
 
-static void EndScope(Typer* ctx)
+void SemanticError(Typer* t, Token* token, String message)
 {
-    ctx->scopeStackArena->offset = (size_t)((&ctx->curScopeStack[ctx->curScopeIdx]) - ctx->scopeStackArena->offset);
-    --ctx->curScopeIdx;
+    t->parser->tokenizer->status = CompStatus_Error;
+    printf("WIP function! ");
+    fprintf(stderr, "%.*s\n", (int)message.length, message.ptr);
 }
 
-static int IdentHashFunction(String str)
+// This will later use a hash-table.
+// Each scope will have its own hash-table, and the search will just be
+// a linked-list traversal of hash-tables (or arrays if the number of decls is low)
+Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, String ident)
 {
-    int result = 0;
-    int smallPrime = 3;
-    
-    for(int i = 0; i < str.length; ++i)
-        result = (result * smallPrime + str[i]) % SymTable_ArraySize;
-    
-    return result;
-}
-
-// Doesn't use the scope logic
-static Symbol* GetGlobalSymbol(SymbolTable* symTable, String str)
-{
-    Symbol* result = 0;
-    int idx = IdentHashFunction(str);
-    
-    SymbolTableEntry* symTableEntry = &symTable->symArray[idx];
-    if(symTableEntry->occupied)
+    for(Ast_Block* curScope = scope; curScope; curScope = curScope->enclosing)
     {
-        for(Symbol* curSym = &symTableEntry->symbol;
-            curSym; curSym = curSym->next)
+        for(int i = 0; i < curScope->decls.length; ++i)
         {
-            if(str == curSym->ident)
-                return curSym;
+            if(curScope->decls[i]->name == ident)
+                return curScope->decls[i];
         }
     }
     
-    return result;
+    return 0;
 }
 
-static Symbol* GetGlobalSymbolOrError(Typer* ctx, Token token)
+bool CheckRedefinition(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
 {
-    Symbol* symbol = GetGlobalSymbol(&ctx->globalSymTable, token.ident);
-    if(!symbol)
+    // If the same name was found x
+    for(int i = 0; i < scope->decls.length; ++i)
     {
-        SemanticError(token, ctx, "Undeclared identifier");
-        ctx->errorOccurred = true;
-    }
-    
-    return symbol;
-}
-
-static Symbol* GetSymbol(SymbolTable* symTable, String str, uint32* scopeStack, int scopeIdx)
-{
-    Symbol* result = 0;
-    int idx = IdentHashFunction(str);
-    
-    // Look for the last matching symbol (in order from farthest to closest)
-    for (int i = 0; i <= scopeIdx; ++i)
-    {
-        // Symbol is stored in table with offset based on the scope id
-        int curTableIdx = (idx + scopeStack[i]) % SymTable_ArraySize;
-        
-        SymbolTableEntry* symTableEntry = &symTable->symArray[curTableIdx];
-        if(symTableEntry->occupied)
+        if(scope->decls[i]->name == decl->name)
         {
-            for(Symbol* curSym = &symTableEntry->symbol;
-                curSym; curSym = curSym->next)
-            {
-                if(str == curSym->ident)
-                    result = curSym;
-            }
+            SemanticError(t, decl->where, "Redefinition, this was defined more than once");
+            return false;
         }
     }
     
-    return result;
+    return true;
 }
 
-static Symbol* GetSymbolOrError(Typer* ctx, Token token)
+void AddDeclaration(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
 {
-    Symbol* symbol = GetSymbol(ctx->curSymTable, token.ident, ctx->curScopeStack, ctx->curScopeIdx);
-    if(!symbol)
-    {
-        SemanticError(token, ctx, "Undeclared identifier");
-    }
+    if(!CheckRedefinition(t, scope, decl))
+        return;
     
-    return symbol;
+    scope->decls.AddElement(decl);
 }
 
-static InsertSymbol_Ret InsertSymbol(Arena* arena, SymbolTable* symTable, String str, uint32 scopeId)
+TypeInfo* GetBaseType(TypeInfo* type)
 {
-    InsertSymbol_Ret result;
-    
-    int idx = IdentHashFunction(str);
-    idx = (idx + scopeId) % SymTable_ArraySize;
-    
-    Symbol* resultSym = 0;
-    bool found = false;
-    
-    // Allocate the string
-    char* copiedStr = Arena_PushString(arena,
-                                       str.ptr, str.length);
-    
-    SymbolTableEntry* curTableEntry = symTable->symArray + idx;
-    if(curTableEntry->occupied)
+    while(true)
     {
-        Symbol* curSymbol = &curTableEntry->symbol;
-        while(curSymbol->next)
+        switch(type->typeId)
         {
-            if(curSymbol->ident == str && curSymbol->scopeId == scopeId)
-                found = true;
-            
-            curSymbol = curSymbol->next;
-        }
-        
-        if(curSymbol->ident == str && curSymbol->scopeId == scopeId)
-            found = true;
-        
-        if(!found)
-        {
-            auto newSymbol = Arena_AllocAndInit(arena, Symbol);
-            newSymbol->ident   = { copiedStr, str.length };
-            curSymbol->next    = newSymbol;
-            curSymbol->scopeId = scopeId;
-            resultSym = curSymbol->next;
+            default: return 0;
+            case AstKind_DeclaratorIdent: return type;
+            case AstKind_DeclaratorPtr: type = ((Ast_DeclaratorPtr*)type)->baseType; break;
+            case AstKind_DeclaratorArr: type = ((Ast_DeclaratorArr*)type)->baseType; break;
         }
     }
-    else
-    {
-        curTableEntry->symbol.ident = { copiedStr, str.length };
-        curTableEntry->occupied = true;
-        curTableEntry->symbol.next = 0;
-        curTableEntry->symbol.scopeId = scopeId;
-        resultSym = &(curTableEntry->symbol);
-    }
     
-    result = { resultSym, found };
-    return result;
+    Assert(false && "Unreachable code");
+    return 0;
 }
 
-
-static InsertSymbol_Ret InsertSymbol(Arena* arena, SymbolTable* symTable, Token token, uint32 scopeId, void* ast, SymbolType type)
-{
-    String str = token.ident;
-    
-    InsertSymbol_Ret result;
-    
-    int idx = IdentHashFunction(str);
-    idx = (idx + scopeId) % SymTable_ArraySize;
-    
-    Symbol* resultSym = 0;
-    bool found = false;
-    
-    // Allocate the string
-    char* copiedStr = Arena_PushString(arena,
-                                       str.ptr, str.length);
-    
-    SymbolTableEntry* curTableEntry = symTable->symArray + idx;
-    if(curTableEntry->occupied)
-    {
-        Symbol* curSymbol = &curTableEntry->symbol;
-        while(curSymbol->next)
-        {
-            if(curSymbol->ident == str && curSymbol->scopeId == scopeId)
-                found = true;
-            
-            curSymbol = curSymbol->next;
-        }
-        
-        if(curSymbol->ident == str && curSymbol->scopeId == scopeId)
-            found = true;
-        
-        if(!found)
-        {
-            auto newSymbol = Arena_AllocAndInit(arena, Symbol);
-            newSymbol->ident   = { copiedStr, str.length };
-            curSymbol->next    = newSymbol;
-            curSymbol->scopeId = scopeId;
-            curSymbol->symType = type;
-            curSymbol->decl    = (Ast_Declaration*)ast;
-            resultSym = curSymbol->next;
-        }
-    }
-    else
-    {
-        curTableEntry->symbol.ident = { copiedStr, str.length };
-        curTableEntry->occupied = true;
-        curTableEntry->symbol.next = 0;
-        curTableEntry->symbol.scopeId = scopeId;
-        curTableEntry->symbol.symType = type;
-        curTableEntry->symbol.decl    = (Ast_Declaration*)ast;
-        resultSym = &(curTableEntry->symbol);
-    }
-    
-    result = { resultSym, found };
-    return result;
-}
-
-static InsertSymbol_Ret InsertSymbol(Arena* arena, SymbolTable* symTable, Token token, uint32 scopeId, void* astPtr)
-{
-    String str = token.ident;
-    
-    InsertSymbol_Ret result;
-    
-    int idx = IdentHashFunction(str);
-    idx = (idx + scopeId) % SymTable_ArraySize;
-    
-    Symbol* resultSym = 0;
-    bool found = false;
-    
-    // Allocate the string
-    char* copiedStr = Arena_PushString(arena,
-                                       str.ptr, str.length);
-    
-    SymbolTableEntry* curTableEntry = symTable->symArray + idx;
-    if(curTableEntry->occupied)
-    {
-        Symbol* curSymbol = &curTableEntry->symbol;
-        while(curSymbol->next)
-        {
-            if(curSymbol->ident == str && curSymbol->scopeId == scopeId)
-                found = true;
-            
-            curSymbol = curSymbol->next;
-        }
-        
-        if(curSymbol->ident == str && curSymbol->scopeId == scopeId)
-            found = true;
-        
-        if(!found)
-        {
-            auto newSymbol = Arena_AllocAndInit(arena, Symbol);
-            newSymbol->ident   = { copiedStr, str.length };
-            //newSymbol->token   = token;
-            //newSymbol->astPtr  = astPtr;
-            curSymbol->next    = newSymbol;
-            curSymbol->scopeId = scopeId;
-            resultSym = curSymbol->next;
-        }
-    }
-    else
-    {
-        curTableEntry->symbol.ident = { copiedStr, str.length };
-        curTableEntry->occupied = true;
-        curTableEntry->symbol.next = 0;
-        curTableEntry->symbol.scopeId = scopeId;
-        resultSym = &(curTableEntry->symbol);
-    }
-    
-    result = { resultSym, found };
-    return result;
-}
-
-static Symbol* InsertGlobalSymbolOrError(Typer* ctx, Token token, void* astPtr)
-{
-    InsertSymbol_Ret ret = InsertSymbol(ctx->arena, &ctx->globalSymTable, token, 0, astPtr);
-    if(ret.alreadyDefined)
-    {
-        SemanticError(token, ctx, "Redefinition");
-        return 0;
-    }
-    
-    return ret.res;
-}
-
-static Symbol* InsertGlobalSymbolOrError(Typer* ctx, Token token)
-{
-    InsertSymbol_Ret ret = InsertSymbol(ctx->arena, &ctx->globalSymTable, token.ident, 0);
-    if(ret.alreadyDefined)
-    {
-        SemanticError(token, ctx, "Redefinition");
-        return 0;
-    }
-    
-    return ret.res;
-}
-
-static Symbol* InsertSymbolOrError(Typer* ctx, Token token)
-{
-    InsertSymbol_Ret ret = InsertSymbol(ctx->arena, ctx->curSymTable,
-                                        token.ident, ctx->curScopeStack[ctx->curScopeIdx]);
-    if(ret.alreadyDefined)
-    {
-        SemanticError(token, ctx, "Redefinition in the current scope");
-        return 0;
-    }
-    
-    return ret.res;
-}
-
-static Symbol* InsertSymbolOrError(Typer* ctx, Token token, void* astPtr, SymbolType type)
-{
-    InsertSymbol_Ret ret = InsertSymbol(ctx->arena, ctx->curSymTable,
-                                        token, ctx->curScopeStack[ctx->curScopeIdx], astPtr, type);
-    if(ret.alreadyDefined)
-    {
-        SemanticError(token, ctx, "Redefinition in the current scope");
-        return 0;
-    }
-    
-    return ret.res;
-}
-
-bool TypesEqual(Type* type1, Type* type2)
+bool TypesCompatible(Typer* t, TypeInfo* type1, TypeInfo* type2)
 {
     if(type1 == type2)
         return true;
     
-    if(type1->typeId != type2->typeId)
-        return false;
-    
-    if(type1->typeId >= Typeid_BasicTypesBegin && type1->typeId <= Typeid_BasicTypesEnd)
+    // Pointers can be explicitly casted to pointers to other types
+    if(type1->typeId == type2->typeId)
         return true;
     
-    switch(type1->typeId)
+    
+    while(true)
     {
-        default: Assert(false);
-        case Typeid_Ptr:
+        if(type1->typeId != type2->typeId)
         {
-            return TypesEqual(type1->ptrType.baseType, type2->ptrType.baseType);
+            return true;
         }
-        break;
-        case Typeid_Array:  // Here you may have to evaluate this expression.
-        case Typeid_Struct:
-        break;
+        
+        switch(type1->typeId)
+        {
+            default: return 0;
+            case AstKind_DeclaratorIdent: return true;  // Check if same ident
+            case AstKind_DeclaratorPtr:
+            {
+                if(type1->typeId != type2->typeId)
+                    return false;
+                type1 = ((Ast_DeclaratorPtr*)type1)->baseType;
+                type2 = ((Ast_DeclaratorPtr*)type2)->baseType;
+                break;
+            }
+            case AstKind_DeclaratorArr:
+            {
+                if(type1->typeId != type2->typeId)
+                    return false;
+                type1 = ((Ast_DeclaratorArr*)type1)->baseType;
+                type2 = ((Ast_DeclaratorArr*)type2)->baseType;
+                break;
+            }
+        }
     }
     
     return false;
-};
+}
 
-void PerformTypingStage(Typer* ctx, Ast_Root* ast)
+bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2)
 {
-    printf("Performing typing stage!\n");
+    if(type1 == type2)
+        return true;
     
-    // First pass for function declarations
-    for (int i = 0; i < ast->topStmts.length; ++i)
+    while(true)
     {
-        auto stmt = ast->topStmts[i];
+        if(type1->typeId != type2->typeId)
+            return false;
         
-        if (!stmt)
-            return;
-        
-        if(stmt->type == Function)
+        switch(type1->typeId)
         {
-            auto funcDefinition = (Ast_Function*)stmt;
-            
-            // Insert in the symbol table
-            InsertGlobalSymbolOrError(ctx, funcDefinition->prototype->token, funcDefinition->prototype);
-            
-            //genCode = GenerateProto(ctx, funcDefinition->prototype);
+            default: return 0;
+            case AstKind_DeclaratorIdent:
+            {
+                auto ident1 = (Ast_DeclaratorIdent*)type1;
+                auto ident2 = (Ast_DeclaratorIdent*)type2;
+                if(ident1->ident == ident2->ident)
+                    return true;
+                return false;
+            }  // Check if same ident
+            case AstKind_DeclaratorPtr:
+            {
+                if(type1->typeId != type2->typeId)
+                    return false;
+                type1 = ((Ast_DeclaratorPtr*)type1)->baseType;
+                type2 = ((Ast_DeclaratorPtr*)type2)->baseType;
+                break;
+            }
+            case AstKind_DeclaratorArr:
+            {
+                if(type1->typeId != type2->typeId)
+                    return false;
+                type1 = ((Ast_DeclaratorArr*)type1)->baseType;
+                type2 = ((Ast_DeclaratorArr*)type2)->baseType;
+                break;
+            }
         }
-        else if(stmt->type == Prototype)
-        {
-            auto proto = (Ast_Prototype*)stmt;
-            InsertGlobalSymbolOrError(ctx, proto->token, proto);
-            //genCode = GenerateProto(ctx, (Ast_Prototype*)stmt);
-        }
-        else
-            return;
     }
     
-    // Second pass for function definitions
-    for (int i = 0; i < ast->topStmts.length; ++i)
+    return true;
+}
+
+// @incomplete
+bool TypesImplicitlyCompatible(Typer* t, TypeInfo* type1, TypeInfo* type2)
+{
+    if(type1 == type2)
+        return true;
+    
+    return false;
+}
+
+String TypeInfo2String(TypeInfo* type, Arena* dest)
+{
+    if(!type)
+        return { 0, 0 };
+    
+    ScratchArena scratch(dest);
+    ScratchArena scratch2(dest, scratch);
+    
+    //ScratchArena scratch2(dest, scratch.arena);
+    StringBuilder strBuilder;
+    
+    bool quit = false;
+    while(!quit)
     {
-        auto stmt = ast->topStmts[i];
-        
-        if(stmt->type == Function)
+        if(type->typeId <= Typeid_BasicTypesEnd && type->typeId >= Typeid_BasicTypesBegin)
         {
-            ctx->scopeCounter = 0;
-            ctx->curScopeIdx  = 0;
-            auto savepoint = Arena_TempBegin(ctx->arena);
-            defer(Arena_TempEnd(savepoint));
-            ctx->curSymTable = Arena_AllocAndInit(ctx->arena, SymbolTable);
+            TokenType tokType = PrimitiveTypeidToTokType(type->typeId);
+            String tokTypeStr = TokTypeToString(tokType, scratch2);
             
-            auto funcDefinition = (Ast_Function*)stmt;
-            
-            Symbol* proto = GetGlobalSymbol(&ctx->globalSymTable, funcDefinition->prototype->token.ident);
-            if(!proto)
+            strBuilder.Append(tokTypeStr, scratch);
+            quit = true;
+        }
+        else switch(type->typeId)
+        {
+            default: Assert(false); break;
+            case Typeid_Ident:
             {
-                fprintf(stderr, "Internal error: declaration not found during function definition\n");
-                return;
+                strBuilder.Append(StrLit("ident"), scratch.arena);
+                quit = true;
+                break;
+            }
+            case Typeid_Ptr:
+            {
+                strBuilder.Append(StrLit("^"), scratch.arena);
+                type = ((Ast_DeclaratorPtr*)type)->baseType;
+                break;
+            }
+            case Typeid_Arr:
+            {
+                strBuilder.Append(StrLit("[]"), scratch.arena);
+                type = ((Ast_DeclaratorArr*)type)->baseType;
+                break;
+            }
+        }
+    }
+    
+    return strBuilder.ToString(dest);
+}
+
+void Semantics_Expr(Typer* t, Ast_Expr* expr)
+{
+    ScratchArena scratch;
+    
+    switch(expr->kind)
+    {
+        //default: Assert(false); break;
+        default: printf("not supported\n"); break;
+        case AstKind_BinaryExpr:
+        {
+            printf("binary\n");
+            
+            auto bin = (Ast_BinaryExpr*)expr;
+            Semantics_Expr(t, bin->lhs);
+            Semantics_Expr(t, bin->rhs);
+            auto type1 = bin->lhs->typeInfo;
+            auto type2 = bin->rhs->typeInfo;
+            if(type1 && type2)
+            {
+                if(!TypesIdentical(t, type1, type2))
+                {
+                    SemanticError(t, bin->where, StrLit("expr Mismatching types, "));
+                    SemanticError(t, bin->where, TypeInfo2String(type1, scratch.arena));
+                    SemanticError(t, bin->where, TypeInfo2String(type2, scratch.arena));
+                }
+                else
+                    bin->typeInfo = type1;
+            }
+            else
+            {
+                if(!type1)
+                    printf("type1 null ");
+                if(!type2)
+                    printf("type2 null ");
             }
             
-            auto savepoint2 = Arena_TempBegin(ctx->scopeStackArena);
-            ctx->curScopeStack = Arena_AllocVar(ctx->scopeStackArena, uint32);
-            ctx->curScopeStack[0] = 0;
-            defer(Arena_TempEnd(savepoint));
-            
-            StartScope(ctx);
-            Semantics_Block(ctx, funcDefinition->body);
-            
-            //GenerateBody(ctx, funcDefinition, proto->address);
-            ctx->curSymTable = 0;
-            
-            if(ctx->errorOccurred)
-                return;
+            printf("\n");
+            break;
         }
-    }
-    
-#if 0
-    for(int i = 0; i < ast->topStmts.length; ++i)
-    {
-        Ast_TopLevelStmt* topStmt = ast->topStmts[i];
-        
-        if(topStmt->type == Function)
+        case AstKind_NumLiteral:
         {
-            auto body = ((Ast_Function*)topStmt)->body;
-            Semantics_Block(ctx, body);
-        }
-        else if(topStmt->type == Prototype)
-        {
-            
-        }
-        else
-            Assert(false && "Not yet implemented!");
-    }
-#endif
-}
-
-void Semantics_Block(Typer* ctx, Ast_BlockStmt* block)
-{
-    for(Ast_BlockNode* it = block->first; it; it = it->next)
-    {
-        if(it->stmt->type == BlockStmt)
-        {
-            StartScope(ctx);
-            Semantics_Block(ctx, (Ast_BlockStmt*)it->stmt);
-            EndScope(ctx);
-        }
-        else
-        {
-            Semantics_Stmt(ctx, it->stmt);
-        }
-        
-        if(ctx->errorOccurred)
-            return;
-    }
-}
-
-void Semantics_Declaration(Typer* ctx, Ast_Declaration* decl)
-{
-    // Maybe handle type inference here in the future?
-    
-    InsertSymbolOrError(ctx, decl->nameIdent, decl, IsSymbolVar);
-    
-    if(decl->initExpr)
-    {
-        TypeCheckExpr(ctx, decl->initExpr);
-        
-        if(!TypesEqual(decl->typeInfo, decl->initExpr->typeInfo))
-        {
-            SemanticError(decl->nameIdent, ctx, "Mismatching types");
+            break;
         }
     }
 }
 
-void Semantics_Stmt(Typer* ctx, Ast_Stmt* stmt)
+void Semantics_Block(Typer* t, Ast_Block* ast)
 {
-    switch(stmt->type)
-    {
-        default: Assert(false && "Not implemented yet!"); return;
-        case EmptyStmt: break;
-        case DeclStmt: Semantics_Declaration(ctx, (Ast_Declaration*)stmt); break;
-        case ExprStmt: TypeCheckExpr(ctx, ((Ast_ExprStmt*)stmt)->expr); break;
-        case BlockStmt: Semantics_Block(ctx, (Ast_BlockStmt*)stmt); break;
-        case ReturnStmt: break;
-    }
-}
-
-void TypeCheckExpr(Typer* ctx, Ast_ExprNode* expr)
-{
-    if(!expr)
-        return;
+    ScratchArena scratch;
     
-    switch(expr->type)
+    for(int i = 0; i < ast->stmts.length; ++i)
     {
-        default: Assert(false && "Not implemented yet!"); return;
-        case BinNode:
+        Ast_Node* node = ast->stmts[i];
+        if(node->kind == AstKind_Declaration)
         {
-            auto binExpr = (Ast_BinExprNode*)expr;
-            TypeCheckExpr(ctx, binExpr->left);
-            TypeCheckExpr(ctx, binExpr->right);
-            
-            if(ctx->errorOccurred)
-                return;
-            
-            if(!TypesEqual(binExpr->left->typeInfo, binExpr->right->typeInfo))
+            auto decl = (Ast_Declaration*)node;
+            AddDeclaration(t, ast, decl);
+            if(decl->initExpr)
             {
-                SemanticError(binExpr->token, ctx, "Mismatching types");
-                return;
+                Semantics_Expr(t, decl->initExpr);
+                if(decl->initExpr->typeInfo)
+                {
+                    // Check that they're the same type here
+                    if(!TypesIdentical(t, decl->typeInfo, decl->initExpr->typeInfo))
+                    {
+                        SemanticError(t, decl->initExpr->where, "Mismatching types");
+                        SemanticError(t, 0, TypeInfo2String(decl->initExpr->typeInfo, scratch.arena));
+                        SemanticError(t, 0, TypeInfo2String(decl->typeInfo, scratch.arena));
+                    }
+                }
+                else printf("no init type info\n");
             }
-            
-            binExpr->typeInfo = binExpr->left->typeInfo;
         }
-        break;
-        case UnaryNode:
+        else if(Ast_IsExpr(node))
         {
-            
+            Semantics_Expr(t, (Ast_Expr*)node);
         }
-        break;
-        case CallNode:
-        {
-            
-        }
-        break;
-        case IdentNode:
-        {
-            Symbol* sym = GetSymbolOrError(ctx, expr->token);
-            if(!sym)
-                return;
-            
-            expr->typeInfo = sym->decl->typeInfo;
-        }
-        break;
-        case NumNode:
-        {
-            expr->typeInfo = &int32Type;
-        }
-        break;
     }
+}
+
+// Perform typing stage for a single "compilation unit",
+// walks through the entire tree and fills in the type info
+void TypingStage(Typer* t, Ast_Node* ast, Ast_Block* curScope)
+{
+    switch(ast->kind)
+    {
+        default: Assert(false && "Not implemented yet"); break;
+        case AstKind_StructDef:
+        {
+            // This could be stopped by ctfe
+            AddDeclaration(t, curScope, (Ast_Declaration*)ast);
+            break;
+        }
+        case AstKind_FunctionDef:
+        {
+            auto func = (Ast_FunctionDef*)ast;
+            
+            // Declaration (could be stopped here by ctfe or by types)
+            AddDeclaration(t, curScope, &func->decl);
+            
+            // Definition
+            Semantics_Block(t, &func->block);
+            
+            break;
+        }
+        case AstKind_Block:
+        {
+            Semantics_Block(t, (Ast_Block*)ast);
+            break;
+        }
+    }
+}
+
+void TypingStage(Typer* t, Ast_Block* fileScope)
+{
+    for(int i = 0; i < fileScope->stmts.length; ++i)
+        TypingStage(t, fileScope->stmts[i], fileScope);
 }

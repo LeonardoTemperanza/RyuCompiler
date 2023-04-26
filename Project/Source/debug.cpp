@@ -5,7 +5,7 @@
 
 void PrintAst(Array<Ast_Node*> nodes, int offset)
 {
-    String str = Str_Literal("prova");
+    String str = StrLit("prova");
     
     for(int i = 0; i < nodes.length; ++i)
         PrintAst(nodes[i]);
@@ -49,21 +49,21 @@ String AstNodeKindToString(Ast_Node* node)
         default: Assert(false);
         
         case AstKind_FunctionDef:
-        return Str_Literal("Func Def");
+        return StrLit("Func Def");
         case AstKind_Declaration:
-        return Str_Literal("Decl");
+        return StrLit("Decl");
         case AstKind_Declarator:
-        return Str_Literal("Declarator");
+        return StrLit("Declarator");
         case AstKind_DeclaratorIdent:
-        return Str_Literal("DeclaratorIdent");
+        return StrLit("DeclaratorIdent");
         case AstKind_Block:
-        return Str_Literal("Block");
+        return StrLit("Block");
         case AstKind_If:
-        return Str_Literal("If");
+        return StrLit("If");
         case AstKind_For:
-        return Str_Literal("For");
+        return StrLit("For");
         case AstKind_While:
-        return Str_Literal("While");
+        return StrLit("While");
         // TODO: put the rest of these
     };
 }

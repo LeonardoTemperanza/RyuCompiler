@@ -5,16 +5,18 @@
 #include "lexer.h"
 #include "memory_management.h"
 
+struct Ast_Block;
+
 struct Ast_FunctionDef;
+struct Ast_StructDef;
 
 struct Ast_Declaration;
 struct Ast_Enumerator;
-struct Ast_Declaration;
 struct Ast_Declarator;
 struct Ast_DeclaratorPtr;
 struct Ast_DeclaratorArr;
 struct Ast_DeclaratorIdent;
-struct Ast_DeclaratorFunc;
+struct Ast_DeclaratorProc;
 struct Ast_DeclaratorStruct;
 
 struct Ast_If;
@@ -35,13 +37,16 @@ struct TypeInfo;
 enum Ast_NodeKind : uint8
 {
     AstKind_None,
+    AstKind_Root,
     
     // Toplevel
     AstKind_ToplevelBegin,
     AstKind_FunctionDef,
+    AstKind_StructDef,
     AstKind_ToplevelEnd,
     
     // Declarations
+    // Remove declarators?
     AstKind_DeclBegin,
     AstKind_Declaration,
     AstKind_Enumerator,
@@ -49,7 +54,7 @@ enum Ast_NodeKind : uint8
     AstKind_DeclaratorPtr,
     AstKind_DeclaratorArr,
     AstKind_DeclaratorIdent,
-    AstKind_DeclaratorFunc,
+    AstKind_DeclaratorProc,
     AstKind_DeclaratorStruct,
     AstKind_DeclEnd,
     
@@ -62,11 +67,14 @@ enum Ast_NodeKind : uint8
     AstKind_DoWhile,
     AstKind_Switch,
     AstKind_Defer,
+    AstKind_Return,
+    AstKind_EmptyStmt,
     AstKind_StmtEnd,
     
     // Expressions
     AstKind_ExprBegin,
     AstKind_Literal,
+    AstKind_NumLiteral,
     AstKind_Ident,
     AstKind_FuncCall,
     AstKind_BinaryExpr,
@@ -87,38 +95,84 @@ enum Ast_NodeKind : uint8
 // There are also going to be const qualifiers and all that 
 enum TypeId
 {
-    Typeid_BasicTypesBegin = Tok_IdentBegin,
-    Typeid_Int8     = Tok_Int8,
-    Typeid_Int16    = Tok_Int16,
-    Typeid_Int32    = Tok_Int32,
-    Typeid_Int64    = Tok_Int64,
-    Typeid_Uint8    = Tok_Uint8,
-    Typeid_Uint16   = Tok_Uint16,
-    Typeid_Uint32   = Tok_Uint32,
-    Typeid_Uint64   = Tok_Uint64,
-    Typeid_Float    = Tok_Float,
-    Typeid_Double   = Tok_Double,
-    Typeid_Function = Tok_IdentEnd + 1,
-    Typeid_BasicTypesEnd = Typeid_Function,
+    Typeid_BasicTypesBegin = 0,
+    Typeid_Int8     = Tok_Int8   - Tok_IdentBegin,
+    Typeid_Int16    = Tok_Int16  - Tok_IdentBegin,
+    Typeid_Int32    = Tok_Int32  - Tok_IdentBegin,
+    Typeid_Int64    = Tok_Int64  - Tok_IdentBegin,
+    Typeid_Uint8    = Tok_Uint8  - Tok_IdentBegin,
+    Typeid_Uint16   = Tok_Uint16 - Tok_IdentBegin,
+    Typeid_Uint32   = Tok_Uint32 - Tok_IdentBegin,
+    Typeid_Uint64   = Tok_Uint64 - Tok_IdentBegin,
+    Typeid_Float    = Tok_Float  - Tok_IdentBegin,
+    Typeid_Double   = Tok_Double - Tok_IdentBegin,
+    Typeid_BasicTypesEnd = Typeid_Double,
     
-    Typeid_Struct = Tok_Ident,
-    Typeid_Ptr    = '^',
-    Typeid_Array  = Tok_Subscript
+    Typeid_Ptr,
+    Typeid_Arr,
+    Typeid_Proc,
+    Typeid_Struct,
+    Typeid_Ident
 };
 
+struct TypeInfo
+{
+    TypeId typeId;
+    Token* where;
+};
+
+// @temporary
+// This is the exact same order as the typeid enum
+TypeInfo primitiveTypes[] =
+{
+    { Typeid_Int8 },  { Typeid_Int16 },  { Typeid_Int32 },  { Typeid_Int64 },
+    { Typeid_Uint8 }, { Typeid_Uint16 }, { Typeid_Uint32 }, { Typeid_Uint64 },
+    { Typeid_Float }, { Typeid_Double }
+};
+
+TypeInfo* TokToPrimitiveTypeid(TokenType tokType)
+{
+    return primitiveTypes + (tokType - Tok_IdentBegin);
+}
+
+TokenType PrimitiveTypeidToTokType(TypeId typeId)
+{
+    return (TokenType)(typeId + Tok_IdentBegin);
+}
+
+// Some of the token data is used frequently (like the token string)
+// so it's beneficial to store it directly here
 struct Ast_Node
 {
     Ast_NodeKind kind;
     Token* where;  // Primary token representing this node
+    union // Token hot data, the name or value
+    {
+        TokenHotData tokenHotData;
+        union
+        {
+            String ident;
+            uint64 uintValue;
+            int64 intValue;
+            float floatValue;
+            double doubleValue;
+        };
+    };
 };
 
 inline bool Ast_IsExpr(Ast_Node* node)
 {
+    if(!node)
+        return true;
+    
     return node->kind >= AstKind_ExprBegin && node->kind <= AstKind_ExprEnd;
 }
 
 inline bool Ast_IsStmt(Ast_Node* node)
 {
+    if(!node)
+        return true;
+    
     return Ast_IsExpr(node)
         || (node->kind >= AstKind_StmtBegin && node->kind <= AstKind_StmtEnd)
         || (node->kind == AstKind_Declaration);
@@ -126,20 +180,41 @@ inline bool Ast_IsStmt(Ast_Node* node)
 
 inline bool Ast_IsDecl(Ast_Node* node)
 {
+    if(!node)
+        return true;
+    
     return node->kind >= AstKind_DeclBegin && node->kind <= AstKind_DeclEnd;
 }
 
 inline bool Ast_IsTopLevel(Ast_Node* node)
 {
-    return node->kind == AstKind_FunctionDef || Ast_IsDecl(node);
+    if(!node)
+        return true;
+    
+    return (node->kind >= AstKind_ToplevelBegin && node->kind <= AstKind_ToplevelEnd) ||
+        node->kind == AstKind_FunctionDef || Ast_IsDecl(node);
 }
 
 // These are like typesafe typedefs (for pointers)
-struct Ast_Expr : public Ast_Node {};
+// @temporary
+struct Ast_Expr : public Ast_Node { TypeInfo* typeInfo; };
 struct Ast_Stmt : public Ast_Node {};
-struct Ast_Decl : public Ast_Node {};
-struct TypeInfo : public Ast_Node {};
 struct Ast_TopLevel : public Ast_Node {};
+
+struct Ast_Block : public Ast_Stmt
+{
+    Ast_Block() { kind = AstKind_Block; };
+    
+    DynArray<Ast_Declaration*> decls;
+    
+    Ast_Block* enclosing = 0;
+    Ast_For* inForStmt = 0;
+    Ast_While* inWhileStmt = 0;
+    Ast_DoWhile* inDoWhileStmt = 0;
+    Ast_Switch* inSwitchStmt = 0;
+    
+    Array<Ast_Node*> stmts = { 0, 0 };
+};
 
 // Statements
 struct Ast_If : public Ast_Stmt
@@ -148,16 +223,16 @@ struct Ast_If : public Ast_Stmt
     
     Ast_Node* condition;  // Declaration or expression
     Ast_Stmt* thenStmt;
-    Ast_Stmt* elseStmt;
+    Ast_Stmt* elseStmt = 0;
 };
 
 struct Ast_For : public Ast_Stmt
 {
     Ast_For() { kind = AstKind_For; };
     
-    Ast_Node* initialization;  // Declaration or expression
-    Ast_Node* condition;  // Declaration or expression
-    Ast_Expr* update;
+    Ast_Node* initialization = 0;  // Declaration or expression
+    Ast_Node* condition = 0;  // Declaration or expression
+    Ast_Expr* update = 0;
     Ast_Stmt* body;
 };
 
@@ -165,7 +240,7 @@ struct Ast_While : public Ast_Stmt
 {
     Ast_While() { kind = AstKind_While; };
     
-    Ast_Expr* condition;
+    Ast_Node* condition;  // Declaration or expression
     Ast_Stmt* doStmt;
 };
 
@@ -192,37 +267,38 @@ struct Ast_Defer : public Ast_Stmt
     Ast_Stmt* stmt;
 };
 
-struct Ast_Block : public Ast_Stmt
+struct Ast_Return : public Ast_Stmt
 {
-    Ast_Block() { kind = AstKind_Block; };
+    Ast_Return() { kind = AstKind_Return; };
     
-    Array<Ast_Stmt*> stmts = { 0, 0 };
-    
-    // Scope info???
+    Ast_Expr* expr = 0;
 };
 
-struct Ast_Declaration : public Ast_Node
+struct Ast_Declaration : public Ast_TopLevel
 {
     Ast_Declaration() { kind = AstKind_Declaration; };
     
     TypeInfo* typeInfo;
-    Array<Ast_Declarator*> declarators = { 0, 0 };
     String name;
+    
+    Ast_Expr* initExpr = 0;
 };
 
 // Declarators
 
 struct Ast_DeclaratorPtr : public TypeInfo
 {
-    Ast_DeclaratorPtr() { kind = AstKind_DeclaratorPtr; };
+    Ast_DeclaratorPtr() { typeId = Typeid_Ptr; };
     
+    TypeInfo* baseType;
     uint16 typeFlags;
 };
 
 struct Ast_DeclaratorArr : public TypeInfo
 {
-    Ast_DeclaratorArr() { kind = AstKind_DeclaratorArr; };
+    Ast_DeclaratorArr() { typeId = Typeid_Arr; };
     
+    TypeInfo* baseType;
     Ast_Expr* sizeExpr;
     
     // Possibly filled in later after the run stage?
@@ -230,35 +306,48 @@ struct Ast_DeclaratorArr : public TypeInfo
     uint64 sizeValue = 0;
 };
 
-struct Ast_DeclaratorFunc : public TypeInfo
+struct Ast_DeclaratorProc : public TypeInfo
 {
-    Ast_DeclaratorFunc() { kind = AstKind_DeclaratorFunc; };
+    Ast_DeclaratorProc() { typeId = Typeid_Proc; };
     
+    String name = { 0, 0 };
     Array<TypeInfo*> argTypes = { 0, 0 };
     Array<Token*> argNames = { 0, 0 };
     Array<TypeInfo*> retTypes = { 0, 0 };
-    // Eventually we'll need return names maybe?
 };
 
 struct Ast_DeclaratorIdent : public TypeInfo
 {
-    Ast_DeclaratorIdent() { kind = AstKind_DeclaratorIdent; };
+    Ast_DeclaratorIdent() { typeId = Typeid_Ident; };
     
     String ident;
     Array<Ast_Expr*> polyParams = { 0, 0 };
+    
+    // Typeid here? Filled in later by the checker
 };
 
 struct Ast_DeclaratorStruct : public TypeInfo
 {
-    Ast_DeclaratorStruct() { kind = AstKind_DeclaratorStruct; };
+    Ast_DeclaratorStruct() { typeId = Typeid_Struct; };
+    
+    Array<TypeInfo*> memberTypes = { 0, 0 };
+    Array<Token*> memberNames = { 0, 0 };
 };
 
-struct Ast_FunctionDef : public Ast_Declaration
+struct Ast_FunctionDef : public Ast_Node
 {
     Ast_FunctionDef() { kind = AstKind_FunctionDef; };
     
-    Ast_DeclaratorFunc decl;
+    Ast_Declaration decl;
     Ast_Block block;
+};
+
+struct Ast_StructDef : public Ast_TopLevel
+{
+    Ast_StructDef() { kind = AstKind_StructDef; };
+    
+    Ast_DeclaratorStruct decl;
+    String name = { 0, 0 };
 };
 
 // Expressions
@@ -270,9 +359,6 @@ struct Ast_BinaryExpr : public Ast_Expr
     Ast_Expr* lhs;
     Ast_Expr* rhs;
     
-    // Filled in by the typechecker
-    TypeInfo* typeInfo;
-    
     // Filled in by the overload resolver (if needed/possible)
     Ast_FuncCall* overloaded = 0;
 };
@@ -283,9 +369,6 @@ struct Ast_UnaryExpr : public Ast_Expr
     
     uint8 unaryOperator;
     Ast_Expr* expr;
-    
-    // Filled in by the typechecker
-    TypeInfo* typeInfo;
     
     // Filled in by the overload resolver (if needed/possible)
     Ast_FuncCall* overloaded = 0;
@@ -300,14 +383,10 @@ struct Ast_TernaryExpr : public Ast_Expr
     Ast_Expr* expr2;
     Ast_Expr* expr3;
     
-    // Filled in by the typechecker
-    TypeInfo* typeInfo;
-    
     // Filled in by the overload resolver (if needed/possible)
     Ast_FuncCall* overloaded = 0;
 };
 
-// This could also be a function pointer though...
 struct Ast_FuncCall : public Ast_Expr
 {
     Ast_FuncCall() { kind = AstKind_UnaryExpr; };
@@ -319,7 +398,6 @@ struct Ast_FuncCall : public Ast_Expr
     
     // Filled in by the typechecker (or overload resolver?)
     Ast_FunctionDef* called = 0;
-    TypeInfo* typeInfo = 0;
 };
 
 struct Ast_Subscript : public Ast_Expr
@@ -328,9 +406,6 @@ struct Ast_Subscript : public Ast_Expr
     
     Ast_Expr* array;
     Ast_Expr* idxExpr;
-    
-    // Filled in by the typechecker
-    TypeInfo* typeInfo = 0;
 };
 
 struct Ast_IdentExpr : public Ast_Expr
@@ -343,66 +418,72 @@ struct Ast_IdentExpr : public Ast_Expr
     Ast_Declaration* declaration = 0;
 };
 
+struct Ast_MemberAccess : public Ast_Expr
+{
+    Ast_MemberAccess() { kind = AstKind_MemberAccess; };
+    
+    Ast_Expr* toAccess;
+    String memberName;
+};
+
 struct Ast_Typecast : public Ast_Expr
 {
     Ast_Typecast() { kind = AstKind_Typecast; };
     
-    TypeInfo* typeInfo;
     Ast_Expr* expr;
 };
 
-// Runtime typechecking for dynamic casts (only if in debug build)
-#ifdef Debug
-inline Ast_Expr* CastToExpr(Ast_Node* node) { Assert(Ast_IsExpr(node)); return (Ast_Expr*)node; }
-inline Ast_Stmt* CastToStmt(Ast_Node* node) { Assert(Ast_IsStmt(node)); return (Ast_Stmt*)node; }
-inline Ast_Decl* CastToDecl(Ast_Node* node) { Assert(Ast_IsDecl(node)); return (Ast_Decl*)node; }
-inline Ast_TopLevel* CastToTopLevel(Ast_Node* node) { Assert(Ast_IsTopLevel(node)); return (Ast_TopLevel*)node; }
-#else
-#define CastToExpr(ptr) (Ast_Expr*)(ptr)
-#define CastToStmt(ptr) (Ast_Expr*)(ptr)
-#define CastToDecl(ptr) (Ast_Decl*)(ptr)
-#define CastToTopLevel(ptr) (Ast_TopLevel*)(ptr);
-#endif
+struct Ast_NumLiteral : public Ast_Expr
+{
+    Ast_NumLiteral() { kind = AstKind_NumLiteral; };
+};
 
-#define GenericDynCast(ptr, asttype, astkind) (Assert((ptr)->kind == (astkind)), (asttype*)(ptr));
-#define CastToIf(ptr) GenericDynCast(ptr, Ast_If, AstKind_If)
-#define CastToFor(ptr) GenericDynCast(ptr, Ast_For, AstKind_For)
-#define CastToWhile(ptr) GenericDynCast(ptr, Ast_While, AstKind_While);
-#define CastToDoWhile(ptr) GenericDynCast(ptr, Ast_DoWhile, AstKind_DoWhile);
-// Do this for all node types i guess
-#undef GenericDynCast
+struct OverloadSet
+{
+    String funcName;
+    DynArray<Ast_DeclaratorProc*> functionTypes;
+};
 
 struct Parser
 {
-    Arena* tempArena;
-    
-    // Ast storage
-    Arena* arena;
-    
+    Arena* arena; // Ast storage
     Tokenizer* tokenizer;
-    Token* at;
+    Token* at;  // Current analyzed token in the stream
     
-    Array<Ast_Node*> nodes = { 0, 0 };
+    Ast_Block* scope = 0;  // Current scope
+    Ast_Block* globalScope = 0;
 };
 
 template<typename t>
 t* Ast_MakeNode(Arena* arena, Token* token);
+Ast_Node* Ast_MakeNode(Arena* arena, Token* token, Ast_NodeKind kind);
 
-Array<Ast_TopLevel*> ParseFile(Parser* p);
+Ast_Block* ParseFile(Parser* p);
 Ast_FunctionDef* ParseFunctionDef(Parser* p);
-Ast_Node* ParseDeclOrExpr(Parser* p);
-Ast_Declaration* ParseDeclaration(Parser* p);
+Ast_StructDef* ParseStructDef(Parser* p);
+Ast_Node* ParseDeclOrExpr(Parser* p, bool forceInit = false);
+Ast_Declaration ParseDeclaration(Parser* p, bool forceInit = false, bool preventInit = false);
 Ast_Stmt* ParseStatement(Parser* p);
 Ast_If* ParseIf(Parser* p);
 Ast_For* ParseFor(Parser* p);
 Ast_While* ParseWhile(Parser* p);
+Ast_DoWhile* ParseDoWhile(Parser* p);
 Ast_Defer* ParseDefer(Parser* p);
+Ast_Return* ParseReturn(Parser* p);
 Ast_Block* ParseBlock(Parser* p);
 
 Ast_Expr* ParseExpression(Parser* p, int prec = INT_MIN);
 Ast_Expr* ParsePostfixExpression(Parser* p);
 Ast_Expr* ParsePrimaryExpression(Parser* p);
-TypeInfo* ParseType(Parser* p);
+TypeInfo* ParseType(Parser* p, Token** outIdent);
+Ast_DeclaratorProc ParseDeclProc(Parser* p, Token** outIdent, bool forceArgNames = true);
+Ast_DeclaratorStruct ParseDeclStruct(Parser* p, Token** outIdent);
+
+// TODO: @temporary Put other declaration keywords here
+inline bool IsTokStartOfDecl(TokenType tokType)
+{
+    return tokType == '^' || tokType == '[' || tokType == Tok_Struct || tokType == Tok_Proc;
+};
 
 int GetOperatorPrec(TokenType tokType);
 // TODO: These two should not exist, unary operators do not have precedence in general.
@@ -410,8 +491,17 @@ bool IsOpPrefix(TokenType tokType);
 bool IsOpPostfix(TokenType tokType);
 bool IsOperatorLToR(TokenType tokType);
 
+// Also skips nested parentheses
+Token* SkipParens(Token* start, char openParen, char closeParen);
+
+inline void ParseError(Parser* p, Token* token, String message);
+inline void ParseError(Parser* p, Token* token, int numStrings, char* message1, ...);
+inline void ParseError(Parser* p, Token* token, char* message);
+
 inline Token* EatRequiredToken(Parser* p, TokenType tokType);
 inline Token* EatRequiredToken(Parser* p, char tokType);
 
 inline void ExpectedTokenError(Parser* p, TokenType tokType);
 inline void ExpectedTokenError(Parser* p, char tokType);
+inline void ExpectedTokenError(Parser* p, Token* tok, TokenType tokType);
+inline void ExpectedTokenError(Parser* p, Token* tok, char tokType);

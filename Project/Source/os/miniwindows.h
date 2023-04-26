@@ -255,4 +255,26 @@ extern "C"
                  VOID
                  );
     
+    WINBASEAPI
+        BOOL
+        WINAPI
+        TlsSetValue(
+                    _In_ DWORD dwTlsIndex,
+                    _In_opt_ LPVOID lpTlsValue
+                    );
+    
+    _Must_inspect_result_
+        WINBASEAPI
+        DWORD
+        WINAPI
+        TlsAlloc(
+                 VOID
+                 );
+    
+    WINBASEAPI
+        LPVOID
+        WINAPI
+        TlsGetValue(
+                    _In_ DWORD dwTlsIndex
+                    );
 }

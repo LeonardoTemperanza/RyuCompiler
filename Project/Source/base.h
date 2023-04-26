@@ -1,3 +1,4 @@
+
 #pragma once
 
 // This file provides common utilities used in all files
@@ -11,26 +12,13 @@
 #include <assert.h>
 #include <stdarg.h>
 
+// @temporary
+#include <vector>
+
 #ifdef Debug
 #define Assert(expression) assert(expression)
 #else
 #define Assert(expression)
-#endif
-
-#ifdef Profile
-#include "spall/spall.h"
-
-SpallProfile spallCtx;
-SpallBuffer spallBuffer;
-
-void InitSpall();
-void QuitSpall();
-
-#define ProfileFunc() \
-spall_buffer_begin(&spallCtx, &spallBuffer, __FUNCTION__, sizeof(__FUNCTION__), __rdtsc()); \
-defer(spall_buffer_end(&spallCtx, &spallBuffer, __rdtsc()))
-#else
-#define ProfileFunc()
 #endif
 
 #define KB(num) (num)*1024LLU
@@ -40,7 +28,7 @@ defer(spall_buffer_end(&spallCtx, &spallBuffer, __rdtsc()))
 #define StArraySize(array) sizeof(array) / sizeof(array[0])
 
 // TODO: bad type conversion here???
-#define Str_Literal(string) String { (string), (int64)strlen(string) }
+#define StrLit(string) String { (string), (int64)strlen(string) }
 
 typedef int8_t  int8;
 typedef int16_t int16;
@@ -58,12 +46,48 @@ typedef uintptr_t uintptr;
 #include "os/os_agnostic.h"
 #include "memory_management.h"
 
+// Thread context
+#define ThreadCtx_NumScratchArenas 4
+struct ThreadContext
+{
+    Arena scratchPool[ThreadCtx_NumScratchArenas];
+};
+
+void ThreadCtx_Init(ThreadContext* threadCtx, size_t scratchReserveSize, size_t scratchCommitSize);
+Arena* GetScratchArena(ThreadContext* threadCtx, Arena** conflictArray, int count);
+
+
+#ifdef Profile
+#include "spall/spall.h"
+
+static SpallProfile spallCtx;
+static SpallBuffer spallBuffer;
+
+void InitSpall();
+void QuitSpall();
+
+#define ProfileFunc(guardName) ProfileFuncGuard guardName(__FUNCTION__);
+
+struct ProfileFuncGuard
+{
+    ProfileFuncGuard() = delete;
+    ProfileFuncGuard(char* funcName);
+    ~ProfileFuncGuard();
+};
+
+#else
+#define ProfileFunc(guardName)
+#endif  /* Profile */
+
 // Generic data structures
 template<typename t>
 struct Array
 {
     t* ptr;
     int64 length;
+    
+    void AddElement(Arena* a, t element);
+    Array<t> CopyToArena(Arena* to);
     
 #ifdef BoundsChecking
     // For reading the value
@@ -78,14 +102,31 @@ struct Array
 #endif
 };
 
-// Array utilities
+// Used for dynamic arrays allocated on the heap
+// @performance @temporary Improve implementation
 template<typename t>
-void Array_AddElement(Array<t>* arr, Arena* a, t element);
-template<typename t>
-Array<t> Array_CopyToArena(Array<t> arr, Arena* to);
+struct DynArray
+{
+    std::vector<t> vec;
+    int64 length = 0;
+    
+    void AddElement(t element);
+    //Array<t> CopyToArena(Arena* to);
+    
+#ifdef BoundsChecking
+    // For reading the value
+    inline t  operator [](int idx) const { Assert(idx < length); return vec[idx]; };
+    // For writing to the value (this returns a left-value)
+    inline t& operator [](int idx) { Assert(idx < length); return vec[idx]; };
+#else
+    // For reading the value
+    inline t  operator [](int idx) const { return vec[idx]; };
+    // For writing to the value (this returns a left-value)
+    inline t& operator [](int idx) { return vec[idx]; };
+#endif
+};
 
 // Generic string. This could be null-terminated or not,
-// as it could point to a stream (thus non-null-terminated),
 // but in the case of strings allocated in a custom allocator,
 // it's better to keep the null terminator for C compatibility.
 // It's the same thing either way, the length shouldn't take the
@@ -102,6 +143,20 @@ inline bool IsPowerOf2(uintptr a)
 char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName);
 
 // String utilities
+
+// Very simple implementation of StringBuilder. Uses linear arenas,
+// it's pretty much an Array<char> that can append strings instead of chars
+// @performance Maybe it would be better to have an array of pointers to strings
+// instead, if the strings are very long (>8 characters).
+// Instead of copying each character twice, you end up only copying each
+// character once (and instead copy the pointers)
+struct StringBuilder
+{
+    String string = { 0, 0 };
+    void Append(String str, Arena* arena);
+    String ToString(Arena* dest);
+};
+
 bool operator ==(String s1, String s2);
 bool operator ==(char* s1, String s2);
 bool operator ==(String s1, char* s2);
@@ -109,9 +164,9 @@ bool operator ==(String s1, char* s2);
 bool String_FirstCharsMatchEntireString(char* stream, String str);
 
 // Others
-// NOTE(Leo): Defer, used to execute anything at the end of the scope
+// Defer, used to execute anything at the end of the scope
 // used in many languages such as D, Go, Odin.
-// Credits to GingerBill for this. 
+// Credits to GingerBill.
 template<typename T> struct Defer_RemoveReference      { typedef T Type; };
 template<typename T> struct Defer_RemoveReference<T&>  { typedef T Type; };
 template<typename T> struct Defer_RemoveReference<T&&> { typedef T Type; };
