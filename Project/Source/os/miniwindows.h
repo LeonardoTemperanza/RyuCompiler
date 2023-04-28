@@ -8,10 +8,16 @@
 
 extern "C"
 {
+#define STD_OUTPUT_HANDLE ((DWORD)-11)
+#define STD_ERROR_HANDLE ((DWORD)-12)
+    
 #define WINAPI  __stdcall
 #define WINBASEAPI
 #define CONST const
+    typedef unsigned short WORD;
+    typedef unsigned long ULONG;
     typedef long LONG;
+    typedef short SHORT;
     typedef long long LONGLONG;
     typedef unsigned long DWORD;
     typedef unsigned __int64 DWORD64;
@@ -35,6 +41,8 @@ extern "C"
     typedef void* HANDLE;
     typedef HANDLE HINSTANCE;
     typedef HINSTANCE HMODULE;
+    typedef DWORD COLORREF;
+    typedef DWORD* LPCOLORREF;
     // What even is this...?
 #define far
 #define FAR far
@@ -54,6 +62,26 @@ extern "C"
         } u;
         LONGLONG QuadPart;
     } LARGE_INTEGER;
+    
+    typedef struct _SMALL_RECT {
+        SHORT Left;
+        SHORT Top;
+        SHORT Right;
+        SHORT Bottom;
+    } SMALL_RECT;
+    
+    typedef struct _COORD {
+        SHORT X;
+        SHORT Y;
+    } COORD, *PCOORD;
+    
+    typedef struct _CONSOLE_SCREEN_BUFFER_INFO {
+        COORD      dwSize;
+        COORD      dwCursorPosition;
+        WORD       wAttributes;
+        SMALL_RECT srWindow;
+        COORD      dwMaximumWindowSize;
+    } CONSOLE_SCREEN_BUFFER_INFO, *PCONSOLE_SCREEN_BUFFER_INFO;
     
 #define FORMAT_MESSAGE_ALLOCATE_BUFFER 0x00000100
     
@@ -277,4 +305,75 @@ extern "C"
         TlsGetValue(
                     _In_ DWORD dwTlsIndex
                     );
+    
+    
+    WINBASEAPI
+        HANDLE
+        WINAPI
+        GetStdHandle(
+                     _In_ DWORD nStdHandle
+                     );
+    
+    WINBASEAPI
+        BOOL
+        WINAPI
+        SetStdHandle(
+                     _In_ DWORD nStdHandle,
+                     _In_ HANDLE hHandle
+                     );
+    
+    WINBASEAPI
+        BOOL
+        WINAPI
+        SetConsoleTextAttribute(
+                                _In_ HANDLE hConsoleOutput,
+                                _In_ WORD wAttributes
+                                );
+    
+    
+    /*typedef struct _CONSOLE_SCREEN_BUFFER_INFO {
+        COORD dwSize;
+        COORD dwCursorPosition;
+        WORD  wAttributes;
+        SMALL_RECT srWindow;
+        COORD dwMaximumWindowSize;
+    } CONSOLE_SCREEN_BUFFER_INFO, *PCONSOLE_SCREEN_BUFFER_INFO;
+    */
+    
+    WINBASEAPI
+        BOOL
+        WINAPI
+        GetConsoleScreenBufferInfo(
+                                   _In_ HANDLE hConsoleOutput,
+                                   _Out_ PCONSOLE_SCREEN_BUFFER_INFO lpConsoleScreenBufferInfo
+                                   );
+    
+    typedef struct _CONSOLE_SCREEN_BUFFER_INFOEX {
+        ULONG cbSize;
+        COORD dwSize;
+        COORD dwCursorPosition;
+        WORD wAttributes;
+        SMALL_RECT srWindow;
+        COORD dwMaximumWindowSize;
+        WORD wPopupAttributes;
+        BOOL bFullscreenSupported;
+        COLORREF ColorTable[16];
+    } CONSOLE_SCREEN_BUFFER_INFOEX, *PCONSOLE_SCREEN_BUFFER_INFOEX;
+    
+    WINBASEAPI
+        BOOL
+        WINAPI
+        GetConsoleScreenBufferInfoEx(
+                                     _In_ HANDLE hConsoleOutput,
+                                     _Inout_ PCONSOLE_SCREEN_BUFFER_INFOEX lpConsoleScreenBufferInfoEx
+                                     );
+    
+    WINBASEAPI
+        BOOL
+        WINAPI
+        SetConsoleScreenBufferInfoEx(
+                                     _In_ HANDLE hConsoleOutput,
+                                     _In_ PCONSOLE_SCREEN_BUFFER_INFOEX lpConsoleScreenBufferInfoEx
+                                     );
+    
 }

@@ -9,10 +9,15 @@
 #include "miniwindows.h"
 
 static DWORD win32ThreadContextIdx = 0;
+static HANDLE win32ConsoleHandle = 0;
+static CONSOLE_SCREEN_BUFFER_INFO win32SavedScreenBufferInfo;
 
 void OS_Init()
 {
     win32ThreadContextIdx = TlsAlloc();
+    win32ConsoleHandle = GetStdHandle(STD_ERROR_HANDLE);
+    
+    GetConsoleScreenBufferInfo(win32ConsoleHandle, &win32SavedScreenBufferInfo);
 }
 
 // Memory utilities
@@ -88,4 +93,16 @@ uint64 GetRdtscFreq()
     }
     
     return tscFreq;
+}
+
+
+void SetErrorColor()
+{
+    GetConsoleScreenBufferInfo(win32ConsoleHandle, &win32SavedScreenBufferInfo);
+    SetConsoleTextAttribute(win32ConsoleHandle, 4);  // Dark red color
+}
+
+void ResetColor()
+{
+    SetConsoleTextAttribute(win32ConsoleHandle, win32SavedScreenBufferInfo.wAttributes);
 }

@@ -40,7 +40,9 @@ enum TokenType
     Tok_IdentBegin,
     // Primitive types
     Tok_PrimitiveTypesBegin = Tok_IdentBegin,
-    Tok_Int8 = Tok_PrimitiveTypesBegin,
+    Tok_Bool = Tok_PrimitiveTypesBegin,
+    Tok_Char,
+    Tok_Int8,
     Tok_Int16,
     Tok_Int32,
     Tok_Int64,

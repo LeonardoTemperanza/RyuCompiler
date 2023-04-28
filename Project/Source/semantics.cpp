@@ -134,8 +134,7 @@ bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2)
 {
     ProfileFunc(prof);
     
-    if(type1 == type2)
-        return true;
+    if(type1 == type2) return true;
     
     while(true)
     {
@@ -172,6 +171,12 @@ bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2)
         }
     }
     
+    return true;
+}
+
+bool ImplicitConversion(Typer* t, Ast_Expr* exprSrc, TypeId dest)
+{
+    ProfileFunc(prof);
     return true;
 }
 
@@ -272,7 +277,6 @@ void Semantics_Expr(Typer* t, Ast_Expr* expr, Ast_Block* block)
         }
         case AstKind_Ident:
         {
-            printf("%.*s\n", (int)expr->where->ident.length, expr->where->ident.ptr); 
             auto decl = IdentResolution(t, block, expr->where->ident);
             
             if(!decl)

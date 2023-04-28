@@ -16,3 +16,7 @@ void* GetThreadContext();
 
 // Timing utilities
 static inline uint64 GetRdtscFreq();
+
+// Printing utilities
+void SetErrorColor();
+void ResetColor();

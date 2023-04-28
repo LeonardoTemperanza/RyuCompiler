@@ -24,6 +24,8 @@ X("const", Tok_Const) \
 X("struct", Tok_Struct) \
 X("cast", Tok_Cast) \
 /* Primitive types */ \
+X("bool", Tok_Bool) \
+X("char", Tok_Char) \
 X("int8", Tok_Int8) \
 X("int16", Tok_Int16) \
 X("int32", Tok_Int32) \
@@ -335,12 +337,16 @@ void CompileError(Tokenizer* t, Token* token, String message)
     
     char* fileContents = t->startOfFile;
     
-    fprintf(stderr, "Error(%d,%d): %.*s\n",
+    SetErrorColor();
+    fprintf(stderr, "Error ");
+    ResetColor();
+    fprintf(stderr, "(%d,%d): %.*s\n",
             token->lineNum,
             token->sc - token->sl + 1,
             (int)message.length, message.ptr);
     
     // Print line in file
+    fprintf(stderr, "    > ");
     bool endOfLine = false;
     int i = token->sl;
     while(!endOfLine)
@@ -358,7 +364,7 @@ void CompileError(Tokenizer* t, Token* token, String message)
     
     int length = i - token->sl;
     
-    fprintf(stderr, "\n");
+    fprintf(stderr, "\n    > ");
     
     for(int i = token->sl; i < token->sc; ++i)
     {

@@ -96,6 +96,8 @@ enum Ast_NodeKind : uint8
 enum TypeId
 {
     Typeid_BasicTypesBegin = 0,
+    Typeid_Bool     = Tok_Bool - Tok_IdentBegin,
+    Typeid_Char     = Tok_Char - Tok_IdentBegin,
     Typeid_Int8     = Tok_Int8   - Tok_IdentBegin,
     Typeid_Int16    = Tok_Int16  - Tok_IdentBegin,
     Typeid_Int32    = Tok_Int32  - Tok_IdentBegin,
@@ -125,6 +127,7 @@ struct TypeInfo
 // This is the exact same order as the typeid enum
 TypeInfo primitiveTypes[] =
 {
+    { Typeid_Bool },
     { Typeid_Int8 },  { Typeid_Int16 },  { Typeid_Int32 },  { Typeid_Int64 },
     { Typeid_Uint8 }, { Typeid_Uint16 }, { Typeid_Uint32 }, { Typeid_Uint64 },
     { Typeid_Float }, { Typeid_Double }
