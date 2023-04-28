@@ -88,6 +88,19 @@ void StringBuilder::Append(String str, Arena* dest)
     }
 }
 
+void StringBuilder::Append(Arena* dest, int numStr, ...)
+{
+    Assert(numStr > 0);
+    
+    va_list list;
+    va_start(list, numStr);
+    
+    for(int i = 0; i < numStr; ++i)
+        this->Append(va_arg(list, String), dest);
+    
+    va_end(list);
+}
+
 String StringBuilder::ToString(Arena* dest)
 {
     return this->string.CopyToArena(dest);

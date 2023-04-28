@@ -457,6 +457,8 @@ struct Parser
 template<typename t>
 t* Ast_MakeNode(Arena* arena, Token* token);
 Ast_Node* Ast_MakeNode(Arena* arena, Token* token, Ast_NodeKind kind);
+template<typename t>
+t Ast_InitNode(Token* token);
 
 Ast_Block* ParseFile(Parser* p);
 Ast_FunctionDef* ParseFunctionDef(Parser* p);

@@ -109,15 +109,15 @@ struct Token
     union
     {
         // Use token hot data either anonymously or not
-        TokenHotData tokenHotData;
-        union
-        {
-            String ident;
-            uint64 uintValue;
-            int64 intValue;
-            float floatValue;
-            double doubleValue;
-        };
+        //TokenHotData tokenHotData;
+        //union
+        //{
+        String ident;
+        uint64 uintValue;
+        int64 intValue;
+        float floatValue;
+        double doubleValue;
+        //};
     };
 };
 

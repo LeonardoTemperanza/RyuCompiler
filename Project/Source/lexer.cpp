@@ -27,6 +27,7 @@ X("cast", Tok_Cast) \
 X("int8", Tok_Int8) \
 X("int16", Tok_Int16) \
 X("int32", Tok_Int32) \
+X("int", Tok_Int32) \
 X("int64", Tok_Int64) \
 X("uint8", Tok_Uint8) \
 X("uint16", Tok_Uint16) \

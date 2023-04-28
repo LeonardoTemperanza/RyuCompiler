@@ -153,7 +153,8 @@ char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName);
 struct StringBuilder
 {
     String string = { 0, 0 };
-    void Append(String str, Arena* arena);
+    void Append(String str, Arena* dest);
+    void Append(Arena* dest, int numStr, ...);
     String ToString(Arena* dest);
 };
 

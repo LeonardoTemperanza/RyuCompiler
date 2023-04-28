@@ -19,9 +19,17 @@ Ast_Node* Ast_MakeNode(Arena* arena, Token* token, Ast_NodeKind kind)
     auto result = Arena_AllocAndInitPack(arena, Ast_Node);
     result->kind  = kind;
     result->where = token;
-    result->tokenHotData = token->tokenHotData;
+    //result->tokenHotData = token->tokenHotData;
     
     return 0;
+}
+
+template<typename t>
+t Ast_InitNode(Token* token)
+{
+    t result;
+    result.where = token;
+    return result;
 }
 
 Ast_Block* ParseFile(Parser* p)
@@ -155,13 +163,14 @@ Ast_Node* ParseDeclOrExpr(Parser* p, bool forceInit)
 
 Ast_Declaration ParseDeclaration(Parser* p, bool forceInit, bool preventInit)
 {
-    Ast_Declaration decl;
     Token* t = 0;
-    decl.typeInfo = ParseType(p, &t);
+    auto typeInfo = ParseType(p, &t);
     if(!IsTokIdent(t->type))
         ExpectedTokenError(p, t, Tok_Ident);
     
-    decl.name = t->ident;
+    auto decl     = Ast_InitNode<Ast_Declaration>(t);
+    decl.name     = t->ident;
+    decl.typeInfo = typeInfo;
     
     if(!preventInit)
     {
@@ -489,14 +498,15 @@ Ast_Expr* ParsePrimaryExpression(Parser* p)
     
     if(IsTokIdent(p->at->type))
     {
+        auto ident = Ast_MakeNode<Ast_IdentExpr>(p->arena, p->at);
         ++p->at;
-        return Ast_MakeNode<Ast_IdentExpr>(p->arena, p->at);
+        return ident;
     }
     else if(p->at->type == Tok_Num)
     {
-        ++p->at;
         auto literalExpr = Ast_MakeNode<Ast_NumLiteral>(p->arena, p->at);
         literalExpr->typeInfo = &primitiveTypes[Typeid_Float];
+        ++p->at;
         return literalExpr;
     }
     
@@ -626,7 +636,7 @@ Ast_DeclaratorProc ParseDeclProc(Parser* p, Token** outIdent, bool forceArgNames
     
     ScratchArena typeScratch;
     ScratchArena nameScratch(typeScratch);
-    Ast_DeclaratorProc decl;
+    Ast_DeclaratorProc decl = Ast_InitNode<Ast_DeclaratorProc>(p->at);
     decl.name     = { 0, 0 };
     decl.argTypes = { 0, 0 };
     decl.argNames = { 0, 0 };
@@ -704,8 +714,9 @@ Ast_DeclaratorStruct ParseDeclStruct(Parser* p, Token** outIdent)
     
     *outIdent = 0;
     
-    Ast_DeclaratorStruct decl;
     EatRequiredToken(p, Tok_Struct);
+    
+    Ast_DeclaratorStruct decl = Ast_InitNode<Ast_DeclaratorStruct>(p->at);
     
     *outIdent = p->at;
     if(IsTokIdent(p->at->type)) ++p->at;

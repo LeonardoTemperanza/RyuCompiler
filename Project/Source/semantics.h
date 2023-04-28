@@ -21,7 +21,7 @@ struct Typer
 };
 
 Typer InitTyper(Arena* arena, Parser* parser);
-void SemanticError(Typer* t, Token* token, char* message);
+void SemanticError(Typer* t, Token* token, String message);
 
 // Identifier resolution
 
@@ -37,7 +37,7 @@ bool TypesImplicitlyCompatible(Typer* t, TypeInfo* type1, TypeInfo* type2);
 String TypeInfo2String(TypeInfo* type, Arena* dest);
 
 // Semantics
-void Semantics_Expr(Typer* t, Ast_Expr* expr);
+void Semantics_Expr(Typer* t, Ast_Expr* expr, Ast_Block* scope);
 void Semantics_Block(Typer* t, Ast_Block* ast);
 void TypingStage(Typer* typer, Ast_Node* ast, Ast_Block* curScope);
 void TypingStage(Typer* t, Ast_Block* fileScope);

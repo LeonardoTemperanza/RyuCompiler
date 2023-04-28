@@ -13,20 +13,19 @@ Typer InitTyper(Arena* astArena, Parser* parser)
     return t;
 }
 
-// There are going to be many different types of error
-void SemanticError(Typer* t, Token* token, char* message)
-{
-    t->parser->tokenizer->status = CompStatus_Error;
-    printf("WIP function! ");
-    fprintf(stderr, message);
-    printf("\n");
-}
-
 void SemanticError(Typer* t, Token* token, String message)
 {
-    t->parser->tokenizer->status = CompStatus_Error;
-    printf("WIP function! ");
-    fprintf(stderr, "%.*s\n", (int)message.length, message.ptr);
+    CompileError(t->parser->tokenizer, token, message);
+}
+
+void InvalidConversionError(Typer* t, Token* token, TypeInfo* type1, TypeInfo* type2)
+{
+    ScratchArena scratch;
+    String str1 = TypeInfo2String(type1, scratch);
+    String str2 = TypeInfo2String(type2, scratch);
+    StringBuilder strBuilder;
+    strBuilder.Append(scratch, 5, StrLit("Mismatching types: '"), str1, StrLit("' and '"), str2, StrLit("'"));
+    SemanticError(t, token, strBuilder.string);
 }
 
 // This will later use a hash-table.
@@ -53,7 +52,7 @@ bool CheckRedefinition(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
     {
         if(scope->decls[i]->name == decl->name)
         {
-            SemanticError(t, decl->where, "Redefinition, this was defined more than once");
+            SemanticError(t, decl->where, StrLit("Redefinition, this was defined more than once"));
             return false;
         }
     }
@@ -88,6 +87,8 @@ TypeInfo* GetBaseType(TypeInfo* type)
 
 bool TypesCompatible(Typer* t, TypeInfo* type1, TypeInfo* type2)
 {
+    ProfileFunc(prof);
+    
     if(type1 == type2)
         return true;
     
@@ -131,6 +132,8 @@ bool TypesCompatible(Typer* t, TypeInfo* type1, TypeInfo* type2)
 
 bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2)
 {
+    ProfileFunc(prof);
+    
     if(type1 == type2)
         return true;
     
@@ -189,7 +192,6 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
     ScratchArena scratch(dest);
     ScratchArena scratch2(dest, scratch);
     
-    //ScratchArena scratch2(dest, scratch.arena);
     StringBuilder strBuilder;
     
     bool quit = false;
@@ -208,19 +210,19 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
             default: Assert(false); break;
             case Typeid_Ident:
             {
-                strBuilder.Append(StrLit("ident"), scratch.arena);
+                strBuilder.Append(StrLit("ident"), scratch);
                 quit = true;
                 break;
             }
             case Typeid_Ptr:
             {
-                strBuilder.Append(StrLit("^"), scratch.arena);
+                strBuilder.Append(StrLit("^"), scratch);
                 type = ((Ast_DeclaratorPtr*)type)->baseType;
                 break;
             }
             case Typeid_Arr:
             {
-                strBuilder.Append(StrLit("[]"), scratch.arena);
+                strBuilder.Append(StrLit("[]"), scratch);
                 type = ((Ast_DeclaratorArr*)type)->baseType;
                 break;
             }
@@ -230,8 +232,9 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
     return strBuilder.ToString(dest);
 }
 
-void Semantics_Expr(Typer* t, Ast_Expr* expr)
+void Semantics_Expr(Typer* t, Ast_Expr* expr, Ast_Block* block)
 {
+    ProfileFunc(prof);
     ScratchArena scratch;
     
     switch(expr->kind)
@@ -240,21 +243,15 @@ void Semantics_Expr(Typer* t, Ast_Expr* expr)
         default: printf("not supported\n"); break;
         case AstKind_BinaryExpr:
         {
-            printf("binary\n");
-            
             auto bin = (Ast_BinaryExpr*)expr;
-            Semantics_Expr(t, bin->lhs);
-            Semantics_Expr(t, bin->rhs);
+            Semantics_Expr(t, bin->lhs, block);
+            Semantics_Expr(t, bin->rhs, block);
             auto type1 = bin->lhs->typeInfo;
             auto type2 = bin->rhs->typeInfo;
             if(type1 && type2)
             {
                 if(!TypesIdentical(t, type1, type2))
-                {
-                    SemanticError(t, bin->where, StrLit("expr Mismatching types, "));
-                    SemanticError(t, bin->where, TypeInfo2String(type1, scratch.arena));
-                    SemanticError(t, bin->where, TypeInfo2String(type2, scratch.arena));
-                }
+                    InvalidConversionError(t, bin->where, type1, type2);
                 else
                     bin->typeInfo = type1;
             }
@@ -264,13 +261,25 @@ void Semantics_Expr(Typer* t, Ast_Expr* expr)
                     printf("type1 null ");
                 if(!type2)
                     printf("type2 null ");
+                printf("\n");
             }
             
-            printf("\n");
             break;
         }
         case AstKind_NumLiteral:
         {
+            break;
+        }
+        case AstKind_Ident:
+        {
+            printf("%.*s\n", (int)expr->where->ident.length, expr->where->ident.ptr); 
+            auto decl = IdentResolution(t, block, expr->where->ident);
+            
+            if(!decl)
+                SemanticError(t, expr->where, StrLit("Undeclared identifier"));
+            else
+                expr->typeInfo = decl->typeInfo;
+            
             break;
         }
     }
@@ -278,6 +287,7 @@ void Semantics_Expr(Typer* t, Ast_Expr* expr)
 
 void Semantics_Block(Typer* t, Ast_Block* ast)
 {
+    ProfileFunc(prof);
     ScratchArena scratch;
     
     for(int i = 0; i < ast->stmts.length; ++i)
@@ -289,23 +299,20 @@ void Semantics_Block(Typer* t, Ast_Block* ast)
             AddDeclaration(t, ast, decl);
             if(decl->initExpr)
             {
-                Semantics_Expr(t, decl->initExpr);
+                Semantics_Expr(t, decl->initExpr, ast);
                 if(decl->initExpr->typeInfo)
                 {
                     // Check that they're the same type here
                     if(!TypesIdentical(t, decl->typeInfo, decl->initExpr->typeInfo))
                     {
-                        SemanticError(t, decl->initExpr->where, "Mismatching types");
-                        SemanticError(t, 0, TypeInfo2String(decl->initExpr->typeInfo, scratch.arena));
-                        SemanticError(t, 0, TypeInfo2String(decl->typeInfo, scratch.arena));
+                        InvalidConversionError(t, decl->where, decl->typeInfo, decl->initExpr->typeInfo);
                     }
                 }
-                else printf("no init type info\n");
             }
         }
         else if(Ast_IsExpr(node))
         {
-            Semantics_Expr(t, (Ast_Expr*)node);
+            Semantics_Expr(t, (Ast_Expr*)node, ast);
         }
     }
 }
@@ -314,6 +321,8 @@ void Semantics_Block(Typer* t, Ast_Block* ast)
 // walks through the entire tree and fills in the type info
 void TypingStage(Typer* t, Ast_Node* ast, Ast_Block* curScope)
 {
+    ProfileFunc(prof);
+    
     switch(ast->kind)
     {
         default: Assert(false && "Not implemented yet"); break;
