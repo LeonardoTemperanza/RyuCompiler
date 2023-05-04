@@ -61,11 +61,22 @@ Array<t> Array<t>::CopyToArena(Arena* to)
 }
 
 // Array utilities
+#define DynArray_MinCapacity 10
 template<typename t>
 void DynArray<t>::AddElement(t element)
 {
-    vec.push_back(element);
-    ++length;
+    ++this->length;
+    if(this->capacity < this->length)
+    {
+        if(this->capacity < DynArray_MinCapacity)
+            this->capacity = DynArray_MinCapacity;
+        else
+            this->capacity = (this->capacity + 1) * 3 / 2;  // TODO: better grow formula?
+        
+        this->ptr = (t*)realloc(this->ptr, sizeof(t) * this->capacity);
+    }
+    
+    this->ptr[this->length - 1] = element;
 }
 
 void StringBuilder::Append(String str, Arena* dest)

@@ -45,8 +45,7 @@ enum Ast_NodeKind : uint8
     AstKind_StructDef,
     AstKind_ToplevelEnd,
     
-    // Declarations
-    // Remove declarators?
+    // Declarators
     AstKind_DeclBegin,
     AstKind_Declaration,
     AstKind_Enumerator,
@@ -93,19 +92,20 @@ enum Ast_NodeKind : uint8
 // [3]^[4]int var;  array of pointers to static arrays
 // vec3(float) v;   polymorphic compound type
 // There are also going to be const qualifiers and all that 
+// NOTE(Leo): Bigger value means more accurate (/bigger) type
 enum TypeId
 {
     Typeid_BasicTypesBegin = 0,
     Typeid_Bool     = Tok_Bool - Tok_IdentBegin,
-    Typeid_Char     = Tok_Char - Tok_IdentBegin,
-    Typeid_Int8     = Tok_Int8   - Tok_IdentBegin,
-    Typeid_Int16    = Tok_Int16  - Tok_IdentBegin,
-    Typeid_Int32    = Tok_Int32  - Tok_IdentBegin,
-    Typeid_Int64    = Tok_Int64  - Tok_IdentBegin,
+    Typeid_Char     = Tok_Char - Tok_IdentBegin,  // Scalar values
     Typeid_Uint8    = Tok_Uint8  - Tok_IdentBegin,
     Typeid_Uint16   = Tok_Uint16 - Tok_IdentBegin,
     Typeid_Uint32   = Tok_Uint32 - Tok_IdentBegin,
     Typeid_Uint64   = Tok_Uint64 - Tok_IdentBegin,
+    Typeid_Int8     = Tok_Int8   - Tok_IdentBegin,
+    Typeid_Int16    = Tok_Int16  - Tok_IdentBegin,
+    Typeid_Int32    = Tok_Int32  - Tok_IdentBegin,
+    Typeid_Int64    = Tok_Int64  - Tok_IdentBegin,
     Typeid_Float    = Tok_Float  - Tok_IdentBegin,
     Typeid_Double   = Tok_Double - Tok_IdentBegin,
     Typeid_BasicTypesEnd = Typeid_Double,
@@ -127,9 +127,9 @@ struct TypeInfo
 // This is the exact same order as the typeid enum
 TypeInfo primitiveTypes[] =
 {
-    { Typeid_Bool },
-    { Typeid_Int8 },  { Typeid_Int16 },  { Typeid_Int32 },  { Typeid_Int64 },
+    { Typeid_Bool },  { Typeid_Char },
     { Typeid_Uint8 }, { Typeid_Uint16 }, { Typeid_Uint32 }, { Typeid_Uint64 },
+    { Typeid_Int8 },  { Typeid_Int16 },  { Typeid_Int32 },  { Typeid_Int64 },
     { Typeid_Float }, { Typeid_Double }
 };
 
@@ -200,7 +200,11 @@ inline bool Ast_IsTopLevel(Ast_Node* node)
 
 // These are like typesafe typedefs (for pointers)
 // @temporary
-struct Ast_Expr : public Ast_Node { TypeInfo* typeInfo; };
+struct Ast_Expr : public Ast_Node
+{
+    TypeInfo* type;
+    TypeInfo* castType;  // Do I actually need this?
+};
 struct Ast_Stmt : public Ast_Node {};
 struct Ast_TopLevel : public Ast_Node {};
 
@@ -281,7 +285,7 @@ struct Ast_Declaration : public Ast_TopLevel
 {
     Ast_Declaration() { kind = AstKind_Declaration; };
     
-    TypeInfo* typeInfo;
+    TypeInfo* type;
     String name;
     
     Ast_Expr* initExpr = 0;
@@ -358,7 +362,7 @@ struct Ast_BinaryExpr : public Ast_Expr
 {
     Ast_BinaryExpr() { kind = AstKind_BinaryExpr; };
     
-    uint8 binaryOperator;
+    uint16 binaryOp;  // I guess this can just be the token type value for now
     Ast_Expr* lhs;
     Ast_Expr* rhs;
     
@@ -370,7 +374,7 @@ struct Ast_UnaryExpr : public Ast_Expr
 {
     Ast_UnaryExpr() { kind = AstKind_UnaryExpr; };
     
-    uint8 unaryOperator;
+    uint16 unaryOp;
     Ast_Expr* expr;
     
     // Filled in by the overload resolver (if needed/possible)

@@ -130,6 +130,28 @@ bool TypesCompatible(Typer* t, TypeInfo* type1, TypeInfo* type2)
     return false;
 }
 
+TypeInfo* GetCommonType(Typer* t, TypeInfo* type1, TypeInfo* type2)
+{
+    // Implicitly convert arrays into pointers
+    if(type1->typeId == Typeid_Arr) return 0;  // TODO TODO TODO Return pointer here
+    
+    // Implicitly convert functions into function pointers
+    
+    // Operations with floats promote up to floats
+    if(type1->typeId == Typeid_Double || type2->typeId == Typeid_Double)
+        return &primitiveTypes[Typeid_Double];
+    if(type1->typeId == Typeid_Float || type2->typeId == Typeid_Float)
+        return &primitiveTypes[Typeid_Float];
+    
+    // Promote any small integral types into ints
+    
+    // If the types don't match pick the bigger one
+    
+    // Unsigned types are preferred
+    
+    return type1;
+}
+
 bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2)
 {
     ProfileFunc(prof);
@@ -174,9 +196,67 @@ bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2)
     return true;
 }
 
-bool ImplicitConversion(Typer* t, Ast_Expr* exprSrc, TypeId dest)
+inline bool IsTypeFloat(TypeInfo* type)
+{
+    return type->typeId == Typeid_Float || type->typeId == Typeid_Double;
+}
+
+inline bool IsTypeSigned(TypeInfo* type)
+{
+    // Floating point types are automatically signed
+    if(IsTypeFloat(type)) return true;
+    
+    if(type->typeId >= Typeid_Char && type->typeId <= Typeid_Int64) return true;
+    
+    return false;
+}
+
+inline bool IsTypeDereferenceable(TypeInfo* type)
+{
+    return type->typeId == Typeid_Ptr || type->typeId == Typeid_Arr;
+}
+
+bool ImplicitConversion(Typer* t, Ast_Expr* exprSrc, TypeInfo* src, TypeInfo* dst)
 {
     ProfileFunc(prof);
+    
+    // Implicitly convert functions & arrays into pointers
+    if(dst->typeId == Typeid_Proc)
+        dst = Ast_MakeNode<Ast_DeclaratorPtr>(t->arena, 0);
+    else if(dst->typeId == Typeid_Arr)
+        dst = Ast_MakeNode<Ast_DeclaratorArr>(t->arena, 0);
+    
+    if(true)  // Data loss warnings
+    {
+        // Int and float conversions
+        if(src->typeId >= Typeid_Char && src->typeId <= Typeid_Double &&
+           dst->typeId >= Typeid_Char && src->typeId <= Typeid_Double)
+        {
+            bool isSrcFloat  = IsTypeFloat(src);
+            bool isDstFloat  = IsTypeFloat(dst);
+            bool isSrcSigned = IsTypeSigned(dst);
+            bool isDstSigned = IsTypeSigned(dst);
+            
+            if(isSrcFloat == isSrcFloat)
+            {
+                if(!isSrcFloat && isSrcSigned != isDstSigned)
+                    SemanticError(t, exprSrc->where, StrLit("Implicit conversion affects signedess"));
+                if(src->typeId > dst->typeId)
+                    SemanticError(t, exprSrc->where, StrLit("Implicit conversion may lose data"));
+            }
+            else
+            {
+                SemanticError(t, exprSrc->where, StrLit("Implicit conversion may lose data"));
+            }
+        }
+    }
+    
+    if(!TypesCompatible(t, src, dst))
+    {
+        SemanticError(t, exprSrc->where, StrLit("Could not implicitly convert type "));
+        return false;
+    }
+    
     return true;
 }
 
@@ -237,10 +317,12 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
     return strBuilder.ToString(dest);
 }
 
-void Semantics_Expr(Typer* t, Ast_Expr* expr, Ast_Block* block)
+void CheckExpression(Typer* t, Ast_Expr* expr, Ast_Block* block)
 {
     ProfileFunc(prof);
     ScratchArena scratch;
+    
+    // Have i visited this already?
     
     switch(expr->kind)
     {
@@ -249,24 +331,71 @@ void Semantics_Expr(Typer* t, Ast_Expr* expr, Ast_Block* block)
         case AstKind_BinaryExpr:
         {
             auto bin = (Ast_BinaryExpr*)expr;
-            Semantics_Expr(t, bin->lhs, block);
-            Semantics_Expr(t, bin->rhs, block);
-            auto type1 = bin->lhs->typeInfo;
-            auto type2 = bin->rhs->typeInfo;
-            if(type1 && type2)
+            CheckExpression(t, bin->lhs, block);
+            CheckExpression(t, bin->rhs, block);
+            
+            auto ltype = bin->lhs->type;
+            auto rtype = bin->rhs->type;
+            
+            if(!ltype || !rtype)
+                break;
+            
+            if((bin->binaryOp == '+' || bin->binaryOp == '-') &&
+               (IsTypeDereferenceable(ltype) || IsTypeDereferenceable(rtype)))  // Pointer arithmetic
             {
-                if(!TypesIdentical(t, type1, type2))
-                    InvalidConversionError(t, bin->where, type1, type2);
-                else
-                    bin->typeInfo = type1;
+                if(bin->binaryOp == '+' && (rtype->typeId == Typeid_Ptr || rtype->typeId == Typeid_Arr))
+                {
+                    // Swap 
+                    Swap(TypeInfo*, ltype, rtype);
+                    Swap(Ast_Expr*, bin->lhs, bin->rhs);
+                }
+                
+                if(IsTypeDereferenceable(rtype))
+                {
+                    if(bin->binaryOp == '-')  // Pointer difference is allowed, ...
+                    {
+                        bin->lhs->castType = bin->lhs->type;
+                        bin->rhs->castType = bin->rhs->type;
+                        bin->type = ltype;
+                    }
+                    else  // ... unlike pointer addition
+                    {
+                        SemanticError(t, bin->where, StrLit("Pointer addition is not allowed, one must be integral"));
+                    }
+                }
+                else  // Ptr + integral
+                {
+                    bin->lhs->castType = bin->lhs->type;
+                    bin->rhs->castType = &primitiveTypes[Typeid_Uint64];
+                    
+                    // Need to know the size of lhs!!! (and potentially wait until you get it)
+                    // Maybe not right now... I just need it later in code generation
+                    
+                    bin->type = bin->lhs->type;
+                }
             }
-            else
+            else  // Any other binary operation
             {
-                if(!type1)
-                    printf("type1 null ");
-                if(!type2)
-                    printf("type2 null ");
-                printf("\n");
+                if(!(ltype->typeId >= Typeid_Bool && ltype->typeId <= Typeid_Double &&
+                     rtype->typeId >= Typeid_Bool && rtype->typeId <= Typeid_Double))
+                {
+                    // NOTE: This is where you would wait for an operator to be overloaded, maybe
+                    
+                    String ltypeStr = TypeInfo2String(ltype, scratch);
+                    String rtypeStr = TypeInfo2String(rtype, scratch);
+                    StringBuilder b;
+                    b.Append(scratch, 4, StrLit("Cannot apply binary operator to "), ltypeStr, StrLit(" and "), rtypeStr);
+                    SemanticError(t, bin->where, b.string);
+                    break;
+                }
+                
+                TypeInfo* commonType = GetCommonType(t, ltype, rtype);
+                ImplicitConversion(t, bin->lhs, ltype, commonType);
+                ImplicitConversion(t, bin->rhs, rtype, commonType);
+                
+                bin->lhs->castType = commonType;
+                bin->rhs->castType = commonType;
+                bin->type = commonType;
             }
             
             break;
@@ -282,14 +411,14 @@ void Semantics_Expr(Typer* t, Ast_Expr* expr, Ast_Block* block)
             if(!decl)
                 SemanticError(t, expr->where, StrLit("Undeclared identifier"));
             else
-                expr->typeInfo = decl->typeInfo;
+                expr->type = decl->type;
             
             break;
         }
     }
 }
 
-void Semantics_Block(Typer* t, Ast_Block* ast)
+void CheckBlock(Typer* t, Ast_Block* ast)
 {
     ProfileFunc(prof);
     ScratchArena scratch;
@@ -303,20 +432,20 @@ void Semantics_Block(Typer* t, Ast_Block* ast)
             AddDeclaration(t, ast, decl);
             if(decl->initExpr)
             {
-                Semantics_Expr(t, decl->initExpr, ast);
-                if(decl->initExpr->typeInfo)
+                CheckExpression(t, decl->initExpr, ast);
+                if(decl->initExpr->type)
                 {
                     // Check that they're the same type here
-                    if(!TypesIdentical(t, decl->typeInfo, decl->initExpr->typeInfo))
+                    if(!TypesIdentical(t, decl->type, decl->initExpr->type))
                     {
-                        InvalidConversionError(t, decl->where, decl->typeInfo, decl->initExpr->typeInfo);
+                        InvalidConversionError(t, decl->where, decl->type, decl->initExpr->type);
                     }
                 }
             }
         }
         else if(Ast_IsExpr(node))
         {
-            Semantics_Expr(t, (Ast_Expr*)node, ast);
+            CheckExpression(t, (Ast_Expr*)node, ast);
         }
     }
 }
@@ -344,13 +473,13 @@ void TypingStage(Typer* t, Ast_Node* ast, Ast_Block* curScope)
             AddDeclaration(t, curScope, &func->decl);
             
             // Definition
-            Semantics_Block(t, &func->block);
+            CheckBlock(t, &func->block);
             
             break;
         }
         case AstKind_Block:
         {
-            Semantics_Block(t, (Ast_Block*)ast);
+            CheckBlock(t, (Ast_Block*)ast);
             break;
         }
     }

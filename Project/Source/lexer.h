@@ -6,6 +6,7 @@
 // NOTE(Leo): ASCII characters are reserved in the enum
 // space, so that they can be used as token types. For instance,
 // the plus operator's token type is the ASCII code for '+'.
+// NOTE(Leo): This and TypeId depend on each other (fix??)
 enum TokenType
 {
     // Ascii types
@@ -42,14 +43,14 @@ enum TokenType
     Tok_PrimitiveTypesBegin = Tok_IdentBegin,
     Tok_Bool = Tok_PrimitiveTypesBegin,
     Tok_Char,
-    Tok_Int8,
-    Tok_Int16,
-    Tok_Int32,
-    Tok_Int64,
     Tok_Uint8,
     Tok_Uint16,
     Tok_Uint32,
     Tok_Uint64,
+    Tok_Int8,
+    Tok_Int16,
+    Tok_Int32,
+    Tok_Int64,
     Tok_Float,
     Tok_Double,
     Tok_PrimitiveTypesEnd = Tok_Double,
@@ -76,7 +77,6 @@ enum TokenType
     // Type qualifiers
     Tok_Const,
     Tok_Volatile,
-    
     
     // Literals
     Tok_Num,

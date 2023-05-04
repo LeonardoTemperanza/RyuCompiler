@@ -21,14 +21,17 @@
 #define Assert(expression)
 #endif
 
+// Common utility functions
 #define KB(num) (num)*1024LLU
 #define MB(num) KB(num)*1024LLU
 #define GB(num) MB(num)*1024LLU
 
 #define StArraySize(array) sizeof(array) / sizeof(array[0])
 
-// TODO: bad type conversion here???
-#define StrLit(string) String { (string), (int64)strlen(string) }
+#define StrLit(string) String { (string), sizeof(string)-1 }
+
+#define Swap(type, var1, var2) do { type tmp = var1; var1 = var2; var2 = tmp; } while(0)
+#define SwapIntegral(type, var1, var2) do { var1 += var2; var2 = var1 - var2; var1 -= var2; } while(0)
 
 typedef int8_t  int8;
 typedef int16_t int16;
@@ -107,8 +110,9 @@ struct Array
 template<typename t>
 struct DynArray
 {
-    std::vector<t> vec;
+    t* ptr = 0;
     int64 length = 0;
+    int64 capacity = 0;
     
     void AddElement(t element);
     //Array<t> CopyToArena(Arena* to);
@@ -120,9 +124,9 @@ struct DynArray
     inline t& operator [](int idx) { Assert(idx < length); return vec[idx]; };
 #else
     // For reading the value
-    inline t  operator [](int idx) const { return vec[idx]; };
+    inline t  operator [](int idx) const { return ptr[idx]; };
     // For writing to the value (this returns a left-value)
-    inline t& operator [](int idx) { return vec[idx]; };
+    inline t& operator [](int idx) { return ptr[idx]; };
 #endif
 };
 

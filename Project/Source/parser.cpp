@@ -164,13 +164,13 @@ Ast_Node* ParseDeclOrExpr(Parser* p, bool forceInit)
 Ast_Declaration ParseDeclaration(Parser* p, bool forceInit, bool preventInit)
 {
     Token* t = 0;
-    auto typeInfo = ParseType(p, &t);
+    auto type = ParseType(p, &t);
     if(!IsTokIdent(t->type))
         ExpectedTokenError(p, t, Tok_Ident);
     
     auto decl     = Ast_InitNode<Ast_Declaration>(t);
     decl.name     = t->ident;
-    decl.typeInfo = typeInfo;
+    decl.type = type;
     
     if(!preventInit)
     {
@@ -360,7 +360,7 @@ Ast_Expr* ParseExpression(Parser* p, int prec)
                 
                 EatRequiredToken(p, '(');
                 Token* ident = 0;
-                tmp->typeInfo = ParseType(p, &ident);
+                tmp->type = ParseType(p, &ident);
                 EatRequiredToken(p, ')');
                 
                 *baseExpr = tmp;
@@ -369,7 +369,7 @@ Ast_Expr* ParseExpression(Parser* p, int prec)
             else  // Other prefix operators
             {
                 auto tmp = Ast_MakeNode<Ast_UnaryExpr>(p->arena, p->at);
-                tmp->unaryOperator = p->at->type;
+                tmp->unaryOp = p->at->type;
                 
                 *baseExpr = tmp;
                 baseExpr = &tmp->expr;
@@ -403,7 +403,7 @@ Ast_Expr* ParseExpression(Parser* p, int prec)
         
         // Recurse
         auto binOp = Ast_MakeNode<Ast_BinaryExpr>(p->arena, p->at);
-        binOp->binaryOperator = p->at->type;
+        binOp->binaryOp = p->at->type;
         binOp->lhs = lhs;
         ++p->at;
         
@@ -478,7 +478,7 @@ Ast_Expr* ParsePostfixExpression(Parser* p)
             default:  // The rest of the post-fix unary operators
             {
                 auto unary = Ast_MakeNode<Ast_UnaryExpr>(p->arena, p->at);
-                // TODO: Fill in the unary operator!!
+                unary->unaryOp = p->at->type;
                 
                 unary->expr = curExpr;
                 curExpr = unary;
@@ -505,7 +505,7 @@ Ast_Expr* ParsePrimaryExpression(Parser* p)
     else if(p->at->type == Tok_Num)
     {
         auto literalExpr = Ast_MakeNode<Ast_NumLiteral>(p->arena, p->at);
-        literalExpr->typeInfo = &primitiveTypes[Typeid_Float];
+        literalExpr->type = &primitiveTypes[Typeid_Float];
         ++p->at;
         return literalExpr;
     }
@@ -531,8 +531,8 @@ TypeInfo* ParseType(Parser* p, Token** outIdent)
     
     ScratchArena scratch;
     
-    TypeInfo* typeInfo = 0;
-    TypeInfo** baseType = &typeInfo;
+    TypeInfo* type = 0;
+    TypeInfo** baseType = &type;
     
     bool loop = true;
     while(loop)
@@ -618,7 +618,7 @@ TypeInfo* ParseType(Parser* p, Token** outIdent)
     
     if(IsTokIdent(p->at->type)) ++p->at;
     
-    return typeInfo;
+    return type;
 }
 
 Ast_DeclaratorProc ParseDeclProc(Parser* p, Token** outIdent, bool forceArgNames)
@@ -764,6 +764,7 @@ Ast_DeclaratorStruct ParseDeclStruct(Parser* p, Token** outIdent)
     return decl;
 }
 
+// A table could be used for this information
 // These are binary operators only
 int GetOperatorPrec(TokenType tokType)
 {

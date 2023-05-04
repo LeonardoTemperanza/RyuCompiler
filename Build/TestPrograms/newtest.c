@@ -1,6 +1,13 @@
 
 proc main()->(int, float)
 {
+    ^int test;
+    ^float testfloat;
+    test + 2;
+    2 + test;
+    testfloat - test;
+    testfloat + test;
+
     int provaint;
     float prova = 2 + provaint + 5;
 

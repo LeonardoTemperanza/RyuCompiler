@@ -99,7 +99,7 @@ uint64 GetRdtscFreq()
 void SetErrorColor()
 {
     GetConsoleScreenBufferInfo(win32ConsoleHandle, &win32SavedScreenBufferInfo);
-    SetConsoleTextAttribute(win32ConsoleHandle, 4);  // Dark red color
+    SetConsoleTextAttribute(win32ConsoleHandle, 12);  // Bright red color
 }
 
 void ResetColor()

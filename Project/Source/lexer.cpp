@@ -26,15 +26,15 @@ X("cast", Tok_Cast) \
 /* Primitive types */ \
 X("bool", Tok_Bool) \
 X("char", Tok_Char) \
+X("uint8", Tok_Uint8) \
+X("uint16", Tok_Uint16) \
+X("uint32", Tok_Uint32) \
+X("uint64", Tok_Uint64) \
 X("int8", Tok_Int8) \
 X("int16", Tok_Int16) \
 X("int32", Tok_Int32) \
 X("int", Tok_Int32) \
 X("int64", Tok_Int64) \
-X("uint8", Tok_Uint8) \
-X("uint16", Tok_Uint16) \
-X("uint32", Tok_Uint32) \
-X("uint64", Tok_Uint64) \
 X("float", Tok_Float) \
 X("double", Tok_Double)
 

@@ -6,7 +6,7 @@ pushd ..\Build
 set debug_flags=/DDebug /MDd /Zi
 set profile_flags=/DProfile
 
-set common=/FC /FeConstellate.exe /std:c++20 /permissive /wd4530 /nologo ..\Project\Source\unity_build.cpp /link ..\Project\Libs\LLVM-C.lib
+set common=/FC /FeRyu.exe /std:c++20 /permissive /wd4530 /nologo ..\Project\Source\unity_build.cpp /link ..\Project\Libs\LLVM-C.lib
 
 set opt=/Od
 
