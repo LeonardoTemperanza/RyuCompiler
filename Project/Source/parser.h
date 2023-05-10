@@ -96,8 +96,8 @@ enum Ast_NodeKind : uint8
 enum TypeId
 {
     Typeid_BasicTypesBegin = 0,
-    Typeid_Bool     = Tok_Bool - Tok_IdentBegin,
-    Typeid_Char     = Tok_Char - Tok_IdentBegin,  // Scalar values
+    Typeid_Bool     = Tok_Bool   - Tok_IdentBegin,
+    Typeid_Char     = Tok_Char   - Tok_IdentBegin,  // Scalar values
     Typeid_Uint8    = Tok_Uint8  - Tok_IdentBegin,
     Typeid_Uint16   = Tok_Uint16 - Tok_IdentBegin,
     Typeid_Uint32   = Tok_Uint32 - Tok_IdentBegin,
@@ -219,17 +219,23 @@ struct Ast_Block : public Ast_Stmt
     Ast_While* inWhileStmt = 0;
     Ast_DoWhile* inDoWhileStmt = 0;
     Ast_Switch* inSwitchStmt = 0;
+    Ast_FunctionDef* inFunction = 0;
     
     Array<Ast_Node*> stmts = { 0, 0 };
 };
 
 // Statements
+
+// Some of the control structures have blocks, because
+// they might implicitly have declarations that will be associated
+// to the internal block for identifier lookup
+
 struct Ast_If : public Ast_Stmt
 {
     Ast_If() { kind = AstKind_If; };
     
     Ast_Node* condition;  // Declaration or expression
-    Ast_Stmt* thenStmt;
+    Ast_Block* thenBlock;  // This needs to be a block because the condition might possibly have a declaration
     Ast_Stmt* elseStmt = 0;
 };
 
@@ -240,7 +246,7 @@ struct Ast_For : public Ast_Stmt
     Ast_Node* initialization = 0;  // Declaration or expression
     Ast_Node* condition = 0;  // Declaration or expression
     Ast_Expr* update = 0;
-    Ast_Stmt* body;
+    Ast_Block* body;
 };
 
 struct Ast_While : public Ast_Stmt
@@ -248,7 +254,7 @@ struct Ast_While : public Ast_Stmt
     Ast_While() { kind = AstKind_While; };
     
     Ast_Node* condition;  // Declaration or expression
-    Ast_Stmt* doStmt;
+    Ast_Block* doBlock;
 };
 
 struct Ast_DoWhile : public Ast_Stmt
@@ -362,7 +368,7 @@ struct Ast_BinaryExpr : public Ast_Expr
 {
     Ast_BinaryExpr() { kind = AstKind_BinaryExpr; };
     
-    uint16 binaryOp;  // I guess this can just be the token type value for now
+    uint16 op;  // I guess this can just be the token type value for now
     Ast_Expr* lhs;
     Ast_Expr* rhs;
     
@@ -374,7 +380,7 @@ struct Ast_UnaryExpr : public Ast_Expr
 {
     Ast_UnaryExpr() { kind = AstKind_UnaryExpr; };
     
-    uint16 unaryOp;
+    uint16 op;
     Ast_Expr* expr;
     
     // Filled in by the overload resolver (if needed/possible)
@@ -445,6 +451,22 @@ struct Ast_NumLiteral : public Ast_Expr
     Ast_NumLiteral() { kind = AstKind_NumLiteral; };
 };
 
+inline bool Ast_IsExprArithmetic(Ast_BinaryExpr* expr)
+{
+    if(!expr)
+        return false;
+    switch(expr->op)
+    {
+        default: return false;
+        case '+': case '-':
+        case '*': case '/':
+        case '%':
+        return true;
+    }
+    
+    return false;
+}
+
 struct OverloadSet
 {
     String funcName;
@@ -480,6 +502,7 @@ Ast_DoWhile* ParseDoWhile(Parser* p);
 Ast_Defer* ParseDefer(Parser* p);
 Ast_Return* ParseReturn(Parser* p);
 Ast_Block* ParseBlock(Parser* p);
+Ast_Block* ParseOneOrMoreStmtBlock(Parser* p);
 
 Ast_Expr* ParseExpression(Parser* p, int prec = INT_MIN);
 Ast_Expr* ParsePostfixExpression(Parser* p);
@@ -495,7 +518,6 @@ inline bool IsTokStartOfDecl(TokenType tokType)
 };
 
 int GetOperatorPrec(TokenType tokType);
-// TODO: These two should not exist, unary operators do not have precedence in general.
 bool IsOpPrefix(TokenType tokType);
 bool IsOpPostfix(TokenType tokType);
 bool IsOperatorLToR(TokenType tokType);

@@ -3,29 +3,396 @@
 
 // Primitive types
 
-Typer InitTyper(Arena* astArena, Parser* parser)
+Typer InitTyper(Arena* arena, Parser* parser)
 {
     Typer t;
     t.tokenizer = parser->tokenizer;
     t.parser = parser;
-    t.arena = astArena;
+    t.arena = arena;
     
     return t;
 }
 
-void SemanticError(Typer* t, Token* token, String message)
+Ast_DeclaratorPtr* Typer_MakePtr(Typer* t, TypeInfo* base)
 {
-    CompileError(t->parser->tokenizer, token, message);
+    auto ptr = Arena_AllocAndInitPack(t->arena, Ast_DeclaratorPtr);
+    ptr->baseType = base;
+    return ptr;
 }
 
-void InvalidConversionError(Typer* t, Token* token, TypeInfo* type1, TypeInfo* type2)
+void TypingStage(Typer* t, Ast_Block* fileScope)
+{
+    for(int i = 0; i < fileScope->stmts.length; ++i)
+        TypingStage(t, fileScope->stmts[i], fileScope);
+}
+
+// Perform typing stage for a single "compilation unit",
+// walks through the entire tree and fills in the type info
+void TypingStage(Typer* t, Ast_Node* ast, Ast_Block* curScope)
+{
+    ProfileFunc(prof);
+    
+    switch(ast->kind)
+    {
+        default: Assert(false && "Not implemented yet"); break;
+        case AstKind_StructDef:
+        {
+            // This could be stopped by ctfe
+            AddDeclaration(t, curScope, (Ast_Declaration*)ast);
+            break;
+        }
+        case AstKind_FunctionDef:
+        {
+            auto func = (Ast_FunctionDef*)ast;
+            
+            // Declaration (could be stopped here by ctfe or by types)
+            AddDeclaration(t, curScope, &func->decl);
+            
+            // Definition
+            CheckBlock(t, &func->block);
+            
+            break;
+        }
+        case AstKind_Block:
+        {
+            CheckBlock(t, (Ast_Block*)ast);
+            break;
+        }
+    }
+}
+
+TypeInfo* CheckArithmeticExpr(Typer* t, Ast_BinaryExpr* bin, Ast_Block* block)
 {
     ScratchArena scratch;
-    String str1 = TypeInfo2String(type1, scratch);
-    String str2 = TypeInfo2String(type2, scratch);
-    StringBuilder strBuilder;
-    strBuilder.Append(scratch, 5, StrLit("Mismatching types: '"), str1, StrLit("' and '"), str2, StrLit("'"));
-    SemanticError(t, token, strBuilder.string);
+    
+    CheckExpression(t, bin->lhs, block);
+    CheckExpression(t, bin->rhs, block);
+    
+    auto lhs = bin->lhs;
+    auto rhs = bin->rhs;
+    auto ltype = lhs->type;
+    auto rtype = rhs->type;
+    
+    if(!ltype || !rtype)
+        return bin->type;
+    
+    if((bin->op == '+' || bin->op == '-') &&
+       (IsTypeDereferenceable(ltype) || IsTypeDereferenceable(rtype)))  // Pointer arithmetic
+    {
+        if(IsTypeDereferenceable(rtype))
+        {
+            // Swap 
+            Swap(TypeInfo*, ltype, rtype);
+            Swap(Ast_Expr*, lhs, rhs);
+        }
+        
+        if(IsTypeDereferenceable(rtype))
+        {
+            if(bin->op == '-')  // Pointer difference is allowed, ...
+            {
+                if(!TypesIdentical(t, ltype, rtype))
+                {
+                    String ltypeStr = TypeInfo2String(ltype, scratch);
+                    String rtypeStr = TypeInfo2String(rtype, scratch);
+                    StringBuilder builder;
+                    builder.Append(StrLit("Pointer difference disallowed for pointers of different base types ('"), scratch);
+                    builder.Append(scratch, 4, ltypeStr, StrLit("' and '"), rtypeStr, StrLit("')"));
+                    SemanticError(t, bin->where, builder.string);
+                    bin->type = 0;
+                    return bin->type;
+                }
+                else
+                {
+                    lhs->castType = lhs->type;
+                    rhs->castType = rhs->type;
+                    bin->type = ltype;
+                }
+            }
+            else  // ... unlike pointer addition
+            {
+                SemanticError(t, bin->where, StrLit("Pointer addition is not allowed, one must be integral"));
+            }
+        }
+        else  // Ptr + integral
+        {
+            lhs->castType = lhs->type;
+            rhs->castType = &primitiveTypes[Typeid_Uint64];
+            
+            if(!IsTypeIntegral(rtype))
+            {
+                String ltypeStr = TypeInfo2String(ltype, scratch);
+                String rtypeStr = TypeInfo2String(rtype, scratch);
+                StringBuilder b;
+                b.Append(scratch, 5, StrLit("Cannot apply binary operator to '"), ltypeStr,
+                         StrLit("' and '"), rtypeStr, StrLit("'"));
+                SemanticError(t, bin->where, b.string);
+            }
+            
+            // Need to know the size of lhs!!! (and potentially wait until you get it)
+            // Maybe not right now... I just need it later in code generation
+            
+            bin->type = lhs->type;
+        }
+    }
+    else  // Any other binary operation
+    {
+        if(!(ltype->typeId >= Typeid_Bool && ltype->typeId <= Typeid_Double &&
+             rtype->typeId >= Typeid_Bool && rtype->typeId <= Typeid_Double))
+        {
+            // NOTE: This is where you would wait for an operator to be overloaded, maybe
+            
+            String ltypeStr = TypeInfo2String(ltype, scratch);
+            String rtypeStr = TypeInfo2String(rtype, scratch);
+            StringBuilder b;
+            b.Append(scratch, 5, StrLit("Cannot apply binary operator to '"), ltypeStr,
+                     StrLit("' and '"), rtypeStr, StrLit("'"));
+            SemanticError(t, bin->where, b.string);
+            return bin->type;
+        }
+        
+        TypeInfo* commonType = GetCommonType(t, ltype, rtype);
+        ImplicitConversion(t, lhs, ltype, commonType);
+        ImplicitConversion(t, rhs, rtype, commonType);
+        
+        bin->lhs->castType = commonType;
+        bin->rhs->castType = commonType;
+        bin->type = commonType;
+    }
+    
+    return bin->type;
+}
+
+TypeInfo* CheckBinExpr(Typer* t, Ast_BinaryExpr* bin, Ast_Block* block)
+{
+    switch(bin->op)
+    {
+        // Arithmetic expressions
+        default: Assert(false && "Invalid expression"); break;
+        case '+': case '-':
+        case '*': case '/':
+        case '%':
+        case Tok_And: case Tok_Or:
+        case '^':
+        case Tok_LShift: case Tok_RShift:
+        {
+            CheckArithmeticExpr(t, bin, block);
+            break;
+        }
+        // Comparisons
+        case Tok_EQ: case Tok_NEQ:
+        case Tok_GE: case Tok_LE:
+        case '>': case '<':
+        {
+            CheckExpression(t, bin->lhs, block);
+            CheckExpression(t, bin->rhs, block);
+            if(TypesCompatible(t, bin->lhs->type, bin->rhs->type))
+            {
+                TypeInfo* commonType = GetCommonType(t, bin->lhs->type, bin->rhs->type);
+                //bin->type = commonType; // ??
+                bin->type = &primitiveTypes[Typeid_Bool];
+            }
+            else
+            {
+                IncompatibleTypesError(t, bin->lhs->type, bin->rhs->type, bin->where);
+            }
+        }
+        // Assign
+        case '=': 
+        case Tok_PlusEquals: case Tok_MinusEquals:
+        case Tok_MulEquals: case Tok_DivEquals:
+        case Tok_ModEquals: case Tok_AndEquals:
+        case Tok_OrEquals: case Tok_XorEquals:
+        case Tok_LShiftEquals: case Tok_RShiftEquals:
+        {
+            if(!IsExprAssignable(bin->lhs))
+            {
+                SemanticError(t, bin->lhs->where, StrLit("Left-hand side of assignment is not assignable"));
+                
+                bin->type = 0;
+            }
+            else
+                bin->type = &primitiveTypes[Typeid_Bool];
+        }
+    }
+    
+    return bin->type;
+}
+
+TypeInfo* CheckExpression(Typer* t, Ast_Expr* expr, Ast_Block* block)
+{
+    ProfileFunc(prof);
+    ScratchArena scratch;
+    
+    // Have i visited this already?
+    
+    switch(expr->kind)
+    {
+        default: printf("Not supported\n"); break;
+        case AstKind_BinaryExpr: CheckBinExpr(t, (Ast_BinaryExpr*)expr, block); break;
+        case AstKind_NumLiteral: break;
+        case AstKind_Ident:
+        {
+            auto decl = IdentResolution(t, block, expr->where->ident);
+            
+            if(!decl)
+                SemanticError(t, expr->where, StrLit("Undeclared identifier"));
+            else
+            {
+                expr->type = decl->type;
+                auto identExpr = (Ast_IdentExpr*)expr;
+                identExpr->declaration = decl;
+            }
+            
+            break;
+        }
+        case AstKind_UnaryExpr:
+        {
+            
+            Assert(false);
+            break;
+        }
+        case AstKind_Subscript:
+        {
+            auto subscriptExpr = (Ast_Subscript*)expr;
+            CheckExpression(t, subscriptExpr->array, block);
+            
+            if(!IsTypeDereferenceable(subscriptExpr->array->type))
+            {
+                CannotDereferenceTypeError(t, subscriptExpr->array->type, subscriptExpr->array->where);
+                expr->type = 0;
+            }
+            else
+            {
+                
+            }
+            
+            // Static bounds-checking if it's an array?
+            break;
+        }
+    }
+    
+    return expr->type;
+}
+
+TypeInfo* CheckStmt(Typer* t, Ast_Stmt* stmt, Ast_Block* block)
+{
+    if(Ast_IsExpr(stmt))
+        return CheckExpression(t, (Ast_Expr*)stmt, block);
+    else switch(stmt->kind)
+    {
+        default: printf("Not supported\n"); break;
+        case AstKind_EmptyStmt: break;
+        case AstKind_Block: CheckBlock(t, (Ast_Block*)stmt); break;
+        case AstKind_Declaration:
+        {
+            auto decl = (Ast_Declaration*)stmt;
+            AddDeclaration(t, block, decl);
+            if(decl->initExpr)
+            {
+                CheckExpression(t, decl->initExpr, block);
+                if(decl->initExpr->type)
+                {
+                    // Check that they're the same type here
+                    /*
+                    if(!TypesIdentical(t, decl->type, decl->initExpr->type))
+                    {
+                        InvalidConversionError(t, decl->where, decl->type, decl->initExpr->type);
+                    }*/
+                }
+            }
+            
+            return ((Ast_Declaration*) stmt)->type;
+        }
+        case AstKind_Return:
+        {
+            auto retStmt = (Ast_Return*)stmt;
+            if(retStmt->expr)
+            {
+                // TODO: add this
+                //TypeInfo* exprType = retStmt->expr->type;
+                //TypeInfo* retType  = 
+            }
+            else  // Check if this function is supposed to have one or more ret types
+            {
+                
+            }
+            
+            break;
+        }
+        case AstKind_If:
+        {
+            auto ifStmt = (Ast_If*)stmt;
+            
+            // CheckStmt is performed because it might be a declaration
+            TypeInfo* condType = CheckStmt(t, (Ast_Stmt*)ifStmt->condition, ifStmt->thenBlock);
+            if(condType)
+            {
+                if(!IsTypeScalar(condType))
+                    CannotConvertToScalarTypeError(t, condType, ifStmt->condition->where);
+                else
+                {
+                    CheckBlock(t, ifStmt->thenBlock);
+                    
+                    if(ifStmt->elseStmt)
+                        CheckStmt(t, ifStmt->elseStmt, block);
+                }
+            }
+            
+            break;
+        }
+        case AstKind_While:
+        {
+            auto whileStmt = (Ast_While*)stmt;
+            
+            // CheckStmt is performed because it might be a declaration
+            TypeInfo* condType = CheckStmt(t, (Ast_Stmt*)whileStmt->condition, whileStmt->doBlock);
+            if(condType)
+            {
+                if(!IsTypeScalar(condType))
+                    CannotConvertToScalarTypeError(t, condType, whileStmt->condition->where);
+                else
+                    CheckBlock(t, whileStmt->doBlock);
+            }
+            
+            break;
+        }
+        case AstKind_DoWhile:
+        {
+            auto doWhileStmt = (Ast_DoWhile*)stmt;
+            
+            CheckStmt(t, doWhileStmt->doStmt, block);
+            TypeInfo* condType = CheckExpression(t, doWhileStmt->condition, block);
+            if(condType)
+            {
+                if(!IsTypeScalar(condType))
+                    CannotConvertToScalarTypeError(t, condType, doWhileStmt->condition->where);
+            }
+            
+            break;
+        }
+        case AstKind_For:
+        {
+            
+            break;
+        }
+        // Missing: Switch, case, default, continue, break.
+    }
+    
+    return 0;
+}
+
+void CheckBlock(Typer* t, Ast_Block* ast)
+{
+    ProfileFunc(prof);
+    ScratchArena scratch;
+    
+    for(int i = 0; i < ast->stmts.length; ++i)
+    {
+        Ast_Node* node = ast->stmts[i];
+        if(Ast_IsStmt(node))
+            CheckStmt(t, (Ast_Stmt*)node, ast);
+        else Assert(false);
+    }
 }
 
 // This will later use a hash-table.
@@ -52,7 +419,8 @@ bool CheckRedefinition(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
     {
         if(scope->decls[i]->name == decl->name)
         {
-            SemanticError(t, decl->where, StrLit("Redefinition, this was defined more than once"));
+            SemanticError(t, decl->where, StrLit("Redefinition, this variable was already defined in this scope, ..."));
+            SemanticErrorContinue(t, scope->decls[i]->where, StrLit("... here"));
             return false;
         }
     }
@@ -85,55 +453,80 @@ TypeInfo* GetBaseType(TypeInfo* type)
     return 0;
 }
 
-bool TypesCompatible(Typer* t, TypeInfo* type1, TypeInfo* type2)
+bool TypesCompatible(Typer* t, TypeInfo* src, TypeInfo* dst)
 {
     ProfileFunc(prof);
     
-    if(type1 == type2)
+    if(src == dst)
         return true;
     
-    // Pointers can be explicitly casted to pointers to other types
-    if(type1->typeId == type2->typeId)
-        return true;
+    // Zero can convert into anything
     
-    
-    while(true)
+    // Implicitly convert arrays into pointers
+    if(src->typeId == Typeid_Arr && dst->typeId == Typeid_Ptr)
     {
-        if(type1->typeId != type2->typeId)
+        auto arrayOf = ((Ast_DeclaratorArr*)src)->baseType;
+        src = Typer_MakePtr(t, arrayOf);
+    }
+    
+    if(src->typeId != dst->typeId)
+    {
+        if(IsTypeIntegral(src) && IsTypeIntegral(dst))
+            return true;
+        
+        if(IsTypeIntegral(src) && dst->typeId == Typeid_Ptr)
+        {
+            // Only if src is 0
+        }
+        else if(IsTypeScalar(src) && IsTypeScalar(dst))
         {
             return true;
         }
-        
-        switch(type1->typeId)
+        else if(src->typeId == Typeid_Proc && dst->typeId == Typeid_Ptr)
         {
-            default: return 0;
-            case AstKind_DeclaratorIdent: return true;  // Check if same ident
-            case AstKind_DeclaratorPtr:
+            auto dstPtrTo = ((Ast_DeclaratorPtr*) dst)->baseType;
+            if(dstPtrTo->typeId == Typeid_Proc)
             {
-                if(type1->typeId != type2->typeId)
-                    return false;
-                type1 = ((Ast_DeclaratorPtr*)type1)->baseType;
-                type2 = ((Ast_DeclaratorPtr*)type2)->baseType;
-                break;
-            }
-            case AstKind_DeclaratorArr:
-            {
-                if(type1->typeId != type2->typeId)
-                    return false;
-                type1 = ((Ast_DeclaratorArr*)type1)->baseType;
-                type2 = ((Ast_DeclaratorArr*)type2)->baseType;
-                break;
+                return TypesIdentical(t, dstPtrTo, src);
             }
         }
+        
+        // In all other cases, not compatible
+        return false;
     }
     
-    return false;
+    // src and dst are superficially the same type
+    if(src->typeId == Typeid_Proc)
+    {
+        
+        return TypesIdentical(t, src, dst);
+    }
+    else if(src->typeId == Typeid_Ptr)
+    {
+        // If void*, everything is ok.
+        
+        return TypesIdentical(t, src, dst);
+    }
+    
+    // Allow kind matching for most things (bool, int, float, etc.)
+    return true;
 }
 
 TypeInfo* GetCommonType(Typer* t, TypeInfo* type1, TypeInfo* type2)
 {
     // Implicitly convert arrays into pointers
-    if(type1->typeId == Typeid_Arr) return 0;  // TODO TODO TODO Return pointer here
+    if(type1->typeId == Typeid_Arr)
+    {
+        auto arrayOf = ((Ast_DeclaratorArr*)type1)->baseType;
+        type1 = Typer_MakePtr(t, arrayOf);
+    }
+    
+    // Implicitly convert arrays into pointers
+    if(type2->typeId == Typeid_Arr)
+    {
+        auto arrayOf = ((Ast_DeclaratorArr*)type2)->baseType;
+        type2 = Typer_MakePtr(t, arrayOf);
+    }
     
     // Implicitly convert functions into function pointers
     
@@ -196,26 +589,6 @@ bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2)
     return true;
 }
 
-inline bool IsTypeFloat(TypeInfo* type)
-{
-    return type->typeId == Typeid_Float || type->typeId == Typeid_Double;
-}
-
-inline bool IsTypeSigned(TypeInfo* type)
-{
-    // Floating point types are automatically signed
-    if(IsTypeFloat(type)) return true;
-    
-    if(type->typeId >= Typeid_Char && type->typeId <= Typeid_Int64) return true;
-    
-    return false;
-}
-
-inline bool IsTypeDereferenceable(TypeInfo* type)
-{
-    return type->typeId == Typeid_Ptr || type->typeId == Typeid_Arr;
-}
-
 bool ImplicitConversion(Typer* t, Ast_Expr* exprSrc, TypeInfo* src, TypeInfo* dst)
 {
     ProfileFunc(prof);
@@ -226,7 +599,7 @@ bool ImplicitConversion(Typer* t, Ast_Expr* exprSrc, TypeInfo* src, TypeInfo* ds
     else if(dst->typeId == Typeid_Arr)
         dst = Ast_MakeNode<Ast_DeclaratorArr>(t->arena, 0);
     
-    if(true)  // Data loss warnings
+    if(false)  // Data loss warnings
     {
         // Int and float conversions
         if(src->typeId >= Typeid_Char && src->typeId <= Typeid_Double &&
@@ -253,20 +626,16 @@ bool ImplicitConversion(Typer* t, Ast_Expr* exprSrc, TypeInfo* src, TypeInfo* ds
     
     if(!TypesCompatible(t, src, dst))
     {
-        SemanticError(t, exprSrc->where, StrLit("Could not implicitly convert type "));
+        ScratchArena scratch;
+        String type1Str = TypeInfo2String(src, scratch);
+        String type2Str = TypeInfo2String(dst, scratch);
+        StringBuilder builder;
+        builder.Append(scratch, 5, StrLit("Could not implicitly convert type '"), type1Str, StrLit("' and '"), type2Str, StrLit("'"));
+        SemanticError(t, exprSrc->where, builder.string);
         return false;
     }
     
     return true;
-}
-
-// @incomplete
-bool TypesImplicitlyCompatible(Typer* t, TypeInfo* type1, TypeInfo* type2)
-{
-    if(type1 == type2)
-        return true;
-    
-    return false;
 }
 
 String TypeInfo2String(TypeInfo* type, Arena* dest)
@@ -295,7 +664,7 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
             default: Assert(false); break;
             case Typeid_Ident:
             {
-                strBuilder.Append(StrLit("ident"), scratch);
+                strBuilder.Append(((Ast_DeclaratorIdent*)type)->ident, scratch);
                 quit = true;
                 break;
             }
@@ -317,176 +686,43 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
     return strBuilder.ToString(dest);
 }
 
-void CheckExpression(Typer* t, Ast_Expr* expr, Ast_Block* block)
+void SemanticError(Typer* t, Token* token, String message)
 {
-    ProfileFunc(prof);
+    CompileError(t->tokenizer, token, message);
+}
+
+void SemanticErrorContinue(Typer* t, Token* token, String message)
+{
+    CompileErrorContinue(t->tokenizer, token, message);
+}
+
+void CannotConvertToScalarTypeError(Typer* t, TypeInfo* type, Token* where)
+{
     ScratchArena scratch;
+    String typeStr = TypeInfo2String(type, scratch);
     
-    // Have i visited this already?
-    
-    switch(expr->kind)
-    {
-        //default: Assert(false); break;
-        default: printf("not supported\n"); break;
-        case AstKind_BinaryExpr:
-        {
-            auto bin = (Ast_BinaryExpr*)expr;
-            CheckExpression(t, bin->lhs, block);
-            CheckExpression(t, bin->rhs, block);
-            
-            auto ltype = bin->lhs->type;
-            auto rtype = bin->rhs->type;
-            
-            if(!ltype || !rtype)
-                break;
-            
-            if((bin->binaryOp == '+' || bin->binaryOp == '-') &&
-               (IsTypeDereferenceable(ltype) || IsTypeDereferenceable(rtype)))  // Pointer arithmetic
-            {
-                if(bin->binaryOp == '+' && (rtype->typeId == Typeid_Ptr || rtype->typeId == Typeid_Arr))
-                {
-                    // Swap 
-                    Swap(TypeInfo*, ltype, rtype);
-                    Swap(Ast_Expr*, bin->lhs, bin->rhs);
-                }
-                
-                if(IsTypeDereferenceable(rtype))
-                {
-                    if(bin->binaryOp == '-')  // Pointer difference is allowed, ...
-                    {
-                        bin->lhs->castType = bin->lhs->type;
-                        bin->rhs->castType = bin->rhs->type;
-                        bin->type = ltype;
-                    }
-                    else  // ... unlike pointer addition
-                    {
-                        SemanticError(t, bin->where, StrLit("Pointer addition is not allowed, one must be integral"));
-                    }
-                }
-                else  // Ptr + integral
-                {
-                    bin->lhs->castType = bin->lhs->type;
-                    bin->rhs->castType = &primitiveTypes[Typeid_Uint64];
-                    
-                    // Need to know the size of lhs!!! (and potentially wait until you get it)
-                    // Maybe not right now... I just need it later in code generation
-                    
-                    bin->type = bin->lhs->type;
-                }
-            }
-            else  // Any other binary operation
-            {
-                if(!(ltype->typeId >= Typeid_Bool && ltype->typeId <= Typeid_Double &&
-                     rtype->typeId >= Typeid_Bool && rtype->typeId <= Typeid_Double))
-                {
-                    // NOTE: This is where you would wait for an operator to be overloaded, maybe
-                    
-                    String ltypeStr = TypeInfo2String(ltype, scratch);
-                    String rtypeStr = TypeInfo2String(rtype, scratch);
-                    StringBuilder b;
-                    b.Append(scratch, 4, StrLit("Cannot apply binary operator to "), ltypeStr, StrLit(" and "), rtypeStr);
-                    SemanticError(t, bin->where, b.string);
-                    break;
-                }
-                
-                TypeInfo* commonType = GetCommonType(t, ltype, rtype);
-                ImplicitConversion(t, bin->lhs, ltype, commonType);
-                ImplicitConversion(t, bin->rhs, rtype, commonType);
-                
-                bin->lhs->castType = commonType;
-                bin->rhs->castType = commonType;
-                bin->type = commonType;
-            }
-            
-            break;
-        }
-        case AstKind_NumLiteral:
-        {
-            break;
-        }
-        case AstKind_Ident:
-        {
-            auto decl = IdentResolution(t, block, expr->where->ident);
-            
-            if(!decl)
-                SemanticError(t, expr->where, StrLit("Undeclared identifier"));
-            else
-                expr->type = decl->type;
-            
-            break;
-        }
-    }
+    StringBuilder builder;
+    builder.Append(scratch, 3, StrLit("Cannot convert type '"), typeStr, StrLit("' to any scalar type"));
+    SemanticError(t, where, builder.string);
 }
 
-void CheckBlock(Typer* t, Ast_Block* ast)
+void CannotDereferenceTypeError(Typer* t, TypeInfo* type, Token* where)
 {
-    ProfileFunc(prof);
     ScratchArena scratch;
-    
-    for(int i = 0; i < ast->stmts.length; ++i)
-    {
-        Ast_Node* node = ast->stmts[i];
-        if(node->kind == AstKind_Declaration)
-        {
-            auto decl = (Ast_Declaration*)node;
-            AddDeclaration(t, ast, decl);
-            if(decl->initExpr)
-            {
-                CheckExpression(t, decl->initExpr, ast);
-                if(decl->initExpr->type)
-                {
-                    // Check that they're the same type here
-                    if(!TypesIdentical(t, decl->type, decl->initExpr->type))
-                    {
-                        InvalidConversionError(t, decl->where, decl->type, decl->initExpr->type);
-                    }
-                }
-            }
-        }
-        else if(Ast_IsExpr(node))
-        {
-            CheckExpression(t, (Ast_Expr*)node, ast);
-        }
-    }
+    String typeStr = TypeInfo2String(type, scratch);
+    StringBuilder builder;
+    builder.Append(scratch, 3, StrLit("Cannot dereference type '"), typeStr, StrLit("'"));
+    SemanticError(t, where, builder.string);
 }
 
-// Perform typing stage for a single "compilation unit",
-// walks through the entire tree and fills in the type info
-void TypingStage(Typer* t, Ast_Node* ast, Ast_Block* curScope)
+void IncompatibleTypesError(Typer* t, TypeInfo* type1, TypeInfo* type2, Token* where)
 {
-    ProfileFunc(prof);
+    ScratchArena scratch;
+    String type1Str = TypeInfo2String(type1, scratch);
+    String type2Str = TypeInfo2String(type2, scratch);
     
-    switch(ast->kind)
-    {
-        default: Assert(false && "Not implemented yet"); break;
-        case AstKind_StructDef:
-        {
-            // This could be stopped by ctfe
-            AddDeclaration(t, curScope, (Ast_Declaration*)ast);
-            break;
-        }
-        case AstKind_FunctionDef:
-        {
-            auto func = (Ast_FunctionDef*)ast;
-            
-            // Declaration (could be stopped here by ctfe or by types)
-            AddDeclaration(t, curScope, &func->decl);
-            
-            // Definition
-            CheckBlock(t, &func->block);
-            
-            break;
-        }
-        case AstKind_Block:
-        {
-            CheckBlock(t, (Ast_Block*)ast);
-            break;
-        }
-    }
-}
-
-void TypingStage(Typer* t, Ast_Block* fileScope)
-{
-    for(int i = 0; i < fileScope->stmts.length; ++i)
-        TypingStage(t, fileScope->stmts[i], fileScope);
+    StringBuilder builder;
+    builder.Append(scratch, 5, StrLit("The following types are incompatible: '"),
+                   type1Str, StrLit("' and '"), type2Str, StrLit("'"));
+    SemanticError(t, where, builder.string);
 }

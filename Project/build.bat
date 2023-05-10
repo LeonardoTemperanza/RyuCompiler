@@ -13,6 +13,8 @@ set opt=/Od
 REM Development build, debug is enabled, profiling and optimization disabled
 cl /Od %debug_flags% %common%
 
+Ryu.exe TestPrograms\newtest.c
+
 REM Optimized build with debug information
 REM cl /O2 %debug_flags% %common%
 

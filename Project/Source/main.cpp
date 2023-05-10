@@ -49,10 +49,15 @@ int main(int argCount, char** argValue)
     Assert(astStorage);
     Arena_Init(&astArena, astStorage, size, commitSize);
     
+    Arena typeArena;
+    void* typeStorage = ReserveMemory(size);
+    Assert(typeStorage);
+    Arena_Init(&typeArena, typeStorage, size, commitSize);
+    
     Tokenizer tokenizer = { fileContents, fileContents };
     tokenizer.arena = &astArena;
     Parser parser = { &astArena, &tokenizer };
-    Typer typer = InitTyper(&astArena, &parser);
+    Typer typer = InitTyper(&typeArena, &parser);
     
     int result = MainDriver(&tokenizer, &parser, &typer);
     
@@ -86,6 +91,8 @@ int MainDriver(Tokenizer* tokenizer, Parser* parser, Typer* typer)
         printf("Typechecking was successful\n");
     else
         printf("There were semantic errors!\n");
+    
+    
     
     //InterpretTestCode();
     //int errorCode = GenerateIR(ctx, &(parser->root));

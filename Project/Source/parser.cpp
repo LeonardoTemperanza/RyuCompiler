@@ -1,7 +1,12 @@
 
 #include "parser.h"
 
-// TODO: the operator type is still not being inserted in the expression node
+// @architecture Do we want to do a conversion between syntactic declarators
+// and typeinfo? You need AST nodes for declarators etc., but you also need that
+// for the typeinfo stuff. I can imagine in some cases a reallocation might be
+// beneficial, i'm just not sure if I should do it or not. The overall structure
+// seems the same to me for both syntax and semantics. Let's just put these in 2 different
+// places, in the ast arena initially and then in the 
 
 template<typename t>
 t* Ast_MakeNode(Arena* arena, Token* token)
@@ -21,7 +26,7 @@ Ast_Node* Ast_MakeNode(Arena* arena, Token* token, Ast_NodeKind kind)
     result->where = token;
     //result->tokenHotData = token->tokenHotData;
     
-    return 0;
+    return result;
 }
 
 template<typename t>
@@ -69,7 +74,7 @@ Ast_Block* ParseFile(Parser* p)
         Assert(Ast_IsTopLevel(node));
         
         if(!quit && node)
-            result.AddElement(scratch.arena, node);
+            result.AddElement(scratch, node);
     }
     
     result = result.CopyToArena(p->arena);
@@ -96,7 +101,7 @@ Ast_FunctionDef* ParseFunctionDef(Parser* p)
     while(p->at->type != '}' && p->at->type != Tok_EOF)
     {
         Ast_Stmt* stmt = ParseStatement(p);
-        block.stmts.AddElement(scratch.arena, (Ast_Node*)stmt);
+        block.stmts.AddElement(scratch, (Ast_Node*)stmt);
     }
     
     block.stmts = block.stmts.CopyToArena(p->arena);
@@ -225,7 +230,7 @@ Ast_If* ParseIf(Parser* p)
     stmt->condition = ParseDeclOrExpr(p);
     EatRequiredToken(p, ')');
     
-    stmt->thenStmt = ParseStatement(p);
+    stmt->thenBlock = ParseOneOrMoreStmtBlock(p);
     
     if(p->at->type == Tok_Else)
     {
@@ -257,7 +262,7 @@ Ast_For* ParseFor(Parser* p)
     
     EatRequiredToken(p, ')');
     
-    stmt->body = ParseStatement(p);
+    stmt->body = ParseOneOrMoreStmtBlock(p);
     return stmt;
 }
 
@@ -271,7 +276,7 @@ Ast_While* ParseWhile(Parser* p)
     stmt->condition = ParseDeclOrExpr(p);
     EatRequiredToken(p, ')');
     
-    stmt->doStmt = ParseStatement(p);
+    stmt->doBlock = ParseOneOrMoreStmtBlock(p);
     return stmt;
 }
 
@@ -305,7 +310,8 @@ Ast_Return* ParseReturn(Parser* p)
     auto stmt = Ast_MakeNode<Ast_Return>(p->arena, p->at);
     EatRequiredToken(p, Tok_Return);
     
-    stmt->expr = ParseExpression(p);
+    if(p->at->type != ';')
+        stmt->expr = ParseExpression(p);
     EatRequiredToken(p, ';');
     return stmt;
 }
@@ -324,13 +330,46 @@ Ast_Block* ParseBlock(Parser* p)
     while(p->at->type != '}' && p->at->type != Tok_EOF)
     {
         Ast_Node* stmt = ParseStatement(p);
-        block->stmts.AddElement(scratch.arena, stmt);
+        block->stmts.AddElement(scratch, stmt);
     }
     
     block->stmts = block->stmts.CopyToArena(p->arena);
     
     EatRequiredToken(p, '}');
     return block;
+}
+
+Ast_Block* ParseOneOrMoreStmtBlock(Parser* p)
+{
+    auto thenBlock = Ast_MakeNode<Ast_Block>(p->arena, p->at);
+    thenBlock->enclosing = p->scope;
+    p->scope = thenBlock;
+    defer(p->scope = p->scope->enclosing);
+    
+    if(p->at->type == '{')  // Multiple statements
+    {
+        ++p->at;
+        
+        ScratchArena scratch;
+        while(p->at->type != '}' && p->at->type != Tok_EOF)
+        {
+            Ast_Node* stmt = ParseStatement(p);
+            thenBlock->stmts.AddElement(scratch, stmt);
+        }
+        
+        thenBlock->stmts = thenBlock->stmts.CopyToArena(p->arena);
+        
+        EatRequiredToken(p, '}');
+    }
+    else  // Only one statement
+    {
+        thenBlock->stmts = { 0, 1 };
+        auto stmtPtr = Arena_AllocVarPack(p->arena, Ast_Node*);
+        *stmtPtr = ParseStatement(p);
+        thenBlock->stmts.ptr = stmtPtr;
+    }
+    
+    return thenBlock;
 }
 
 // NOTE: All unary operators always have precedence over
@@ -369,7 +408,7 @@ Ast_Expr* ParseExpression(Parser* p, int prec)
             else  // Other prefix operators
             {
                 auto tmp = Ast_MakeNode<Ast_UnaryExpr>(p->arena, p->at);
-                tmp->unaryOp = p->at->type;
+                tmp->op = p->at->type;
                 
                 *baseExpr = tmp;
                 baseExpr = &tmp->expr;
@@ -403,7 +442,7 @@ Ast_Expr* ParseExpression(Parser* p, int prec)
         
         // Recurse
         auto binOp = Ast_MakeNode<Ast_BinaryExpr>(p->arena, p->at);
-        binOp->binaryOp = p->at->type;
+        binOp->op = p->at->type;
         binOp->lhs = lhs;
         ++p->at;
         
@@ -447,7 +486,7 @@ Ast_Expr* ParsePostfixExpression(Parser* p)
                     while(true)
                     {
                         auto argExpr = ParseExpression(p);
-                        call->args.AddElement(scratch.arena, argExpr);
+                        call->args.AddElement(scratch, argExpr);
                         
                         if(p->at->type == ',') ++p->at;
                         else break;
@@ -478,7 +517,7 @@ Ast_Expr* ParsePostfixExpression(Parser* p)
             default:  // The rest of the post-fix unary operators
             {
                 auto unary = Ast_MakeNode<Ast_UnaryExpr>(p->arena, p->at);
-                unary->unaryOp = p->at->type;
+                unary->op = p->at->type;
                 
                 unary->expr = curExpr;
                 curExpr = unary;
@@ -511,13 +550,13 @@ Ast_Expr* ParsePrimaryExpression(Parser* p)
     }
     
     ScratchArena scratch;
-    String tokType = TokTypeToString(p->at->type, scratch.arena);
+    String tokType = TokTypeToString(p->at->type, scratch);
     
     StringBuilder strBuilder;
     
-    strBuilder.Append(StrLit("Unexpected '"), scratch.arena);
-    strBuilder.Append(tokType, scratch.arena);
-    strBuilder.Append(StrLit("', expecting identifier or constant literal"), scratch.arena);
+    strBuilder.Append(StrLit("Unexpected '"), scratch);
+    strBuilder.Append(tokType, scratch);
+    strBuilder.Append(StrLit("', expecting identifier or constant literal"), scratch);
     ParseError(p, p->at, strBuilder.string);
     
     return 0;
@@ -750,7 +789,7 @@ Ast_DeclaratorStruct ParseDeclStruct(Parser* p, Token** outIdent)
             ExpectedTokenError(p, argName, Tok_Ident);
         
         Member member = { type, argName };
-        members.AddElement(scratch.arena, member);
+        members.AddElement(scratch, member);
         
         EatRequiredToken(p, ';');
     }
@@ -941,12 +980,10 @@ inline void ExpectedTokenError(Parser* p, Token* tok, TokenType tokType)
     else
     {
         ScratchArena scratch;
-        String tokTypeStr = TokTypeToString(tokType, scratch.arena);
+        String tokTypeStr = TokTypeToString(tokType, scratch);
         
         StringBuilder strBuilder;
-        strBuilder.Append(StrLit("Expecting '"), scratch);
-        strBuilder.Append(tokTypeStr, scratch);
-        strBuilder.Append(StrLit("'"), scratch);
+        strBuilder.Append(scratch, 3, StrLit("Expecting '"), tokTypeStr, StrLit("'"));
         ParseError(p, tok, strBuilder.string);
     }
 }

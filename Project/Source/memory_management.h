@@ -10,11 +10,10 @@
 
 // NOTE(Leo): The first helper macros are for smallest alignment
 // (good for cache locality, but bad for SSE?),
-// while the second helper macros (pack) are for 18-byte alignment
+// while the second helper macros (pack) are for 16-byte alignment
 // (good for SSE, bad for cache locality?)
 // The second one seems to be better because when good
-// cache locality is needed things are stored in an array
-// anyway, usually.
+// cache locality is needed, things are usually stored in an array anyway.
 
 
 #define Arena_FromStack(arenaPtr, stackVar) \
@@ -88,17 +87,6 @@ inline void Arena_TempEnd(TempArenaMemory tmp)
     tmp.arena->prevOffset = tmp.prevOffset;
 }
 
-/*
-struct Arena_TempGuard
-{
-    Arena_TempGuard() = delete;
-    Arena_TempGuard(Arena* arena) { savepoint = Arena_TempBegin(arena); };
-    ~Arena_TempGuard() { Arena_TempEnd(savepoint); };
-    
-    TempArenaMemory savepoint;
-};
-*/
-
 // Serves as a helper for obtaining a scratch
 // arena. It also resets the arena's state upon
 // destruction.
@@ -112,11 +100,10 @@ struct ScratchArena
     ScratchArena(Arena* a1);
     ScratchArena(Arena* a1, Arena* a2);
     ScratchArena(Arena* a1, Arena* a2, Arena* a3);
-    inline ~ScratchArena() { Arena_TempEnd(tempGuard); };
-    inline void Reset() { Arena_TempEnd(tempGuard); };
-    inline operator Arena*() { return arena; };
+    __forceinline ~ScratchArena() { Arena_TempEnd(tempGuard); };
+    __forceinline void Reset() { Arena_TempEnd(tempGuard); };
+    __forceinline operator Arena*() { return tempGuard.arena; };
     
-    Arena* arena;
     TempArenaMemory tempGuard;
 };
 

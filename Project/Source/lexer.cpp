@@ -338,12 +338,70 @@ void CompileError(Tokenizer* t, Token* token, String message)
     char* fileContents = t->startOfFile;
     
     SetErrorColor();
-    fprintf(stderr, "Error ");
+    t->lastCompileErrorNumChars = fprintf(stderr, "Error ");
     ResetColor();
-    fprintf(stderr, "(%d,%d): %.*s\n",
+    fprintf(stderr, "(%d,%d): ",
             token->lineNum,
-            token->sc - token->sl + 1,
-            (int)message.length, message.ptr);
+            token->sc - token->sl + 1);
+    
+    fprintf(stderr, "%.*s\n", (int)message.length, message.ptr);
+    
+    // Print line in file
+    fprintf(stderr, "    > ");
+    bool endOfLine = false;
+    int i = token->sl;
+    while(!endOfLine)
+    {
+        if(fileContents[i] == '\t')
+            fprintf(stderr, "    ");
+        else
+            fprintf(stderr, "%c", fileContents[i]);
+        
+        ++i;
+        endOfLine = fileContents[i] == '\r' ||
+            fileContents[i] == '\n' ||
+            fileContents[i] == 0;
+    }
+    
+    int length = i - token->sl;
+    
+    fprintf(stderr, "\n    > ");
+    
+    for(int i = token->sl; i < token->sc; ++i)
+    {
+        if(fileContents[i] == '\t')
+            fprintf(stderr, "----");
+        else
+            fprintf(stderr, "-");
+    }
+    
+    fprintf(stderr, "^\n");
+    t->compileErrorPrinted = true;
+}
+
+void CompileErrorContinue(Tokenizer* t, Token* token, String message)
+{
+    t->status = CompStatus_Error;
+    if(!t->compileErrorPrinted)
+        return;
+    t->compileErrorPrinted = false;
+    
+    if(token->type == Tok_EOF || token->type == Tok_Error)
+    {
+        printf("Reached unexpected EOF\n");
+        return;
+    }
+    
+    char* fileContents = t->startOfFile;
+    
+    for(int i = 0; i < t->lastCompileErrorNumChars; ++i)
+        fprintf(stderr, " ");
+    
+    fprintf(stderr, "(%d,%d): ",
+            token->lineNum,
+            token->sc - token->sl + 1);
+    
+    fprintf(stderr, "%.*s\n", (int)message.length, message.ptr);
     
     // Print line in file
     fprintf(stderr, "    > ");
@@ -397,7 +455,7 @@ String TokTypeToString(TokenType tokType, Arena* dest)
     if(tokType == Tok_Error) return StrLit("error");
     
     // If it's just the ASCII code, then an arena
-    // allocation is needed
+    // allocation is needed as tokType is stack allocated
     String result { 0, 1 };
     result.ptr = Arena_FromStackPack(dest, (char)tokType);
     return result;

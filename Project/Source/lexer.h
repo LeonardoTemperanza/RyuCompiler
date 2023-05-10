@@ -144,6 +144,8 @@ struct Tokenizer
     ParseStatus status = CompStatus_Success;
     
     String fullFilePath = { 0, 0 };
+    bool compileErrorPrinted = false;
+    int lastCompileErrorNumChars = 0;
 };
 
 static Token GetToken(Tokenizer* t);
@@ -165,5 +167,4 @@ Token* PeekToken(Tokenizer* t, int lookahead);
 inline Token* PeekNextToken(Tokenizer* t) { return PeekToken(t, 1); }
 
 void CompileError(Tokenizer* t, Token* token, String message);
-//void CompileError(Tokenizer* t, Token* token, char* message);
-//void CompileError(Tokenizer* t, Token* token, int numStrings, char* message1, ...);
+void CompileErrorContinue(Tokenizer* t, Token* token, String message);
