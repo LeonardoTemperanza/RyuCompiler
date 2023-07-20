@@ -1,60 +1,135 @@
 
-struct prova
+struct String
 {
-    // Qua ci vanno varie dichiarazioni
-    int info;
-    ^prova next;
+    ^char ptr;
+    uint64 length;
 }
 
-proc main()->(int, float)
+struct Person
 {
-    prova testprova;
+    String name;
+    String lastName;
+    
+    uint8 age;
+    
+    ^Group belongsTo;
+}
 
-    ^int iptr;
-    ^float fptr;
-    iptr = fptr;
+proc SwapNames(^Person p)->Person res
+{
+    String tmp = p.name;
+    p.name = p.lastName;
+    p.lastName = tmp;
+}
 
-    ^int testintptr;
-    ^float testfloatptr;
-    float testfloat;
-    int testint;
-    testintptr + testint;
-    testint + testintptr;
-    testfloat - testint;
-    3 + 4 * 2 / 2 % 3;
-    //p + 2;
+struct Group
+{
+    ^Person pArray;
+    int numPeople;
+}
 
-    //int prova;  // first
-    //int prova;  // second
+struct Node
+{
+    int info;
+    ^Node next;
+}
 
-    int provaint;
-    //float prova = 2 + provaint + 5;
+struct LinkedList
+{
+    ^Node first;
+    ^Node last;
+}
 
-    prova testprova2;
+operator +(Person p1, Person p2)->int
+{
+    return p1.age + p2.age;
+}
 
-    while(int p);
+int prova2;
 
-    prova p;
+proc main(int argCount, ^^char argValue)->int
+{
+    Society society;
+    
+    ^Person p;
+    p.name.length = p.name.length++;
+    p.belongsTo = &society;
+    
+    for(int i = 0; i < p.name.length; ++i)
+    {
+        
+    }
+    
+    p.name.length++;
+    
+    int i = 0;
+    
+    if(argCount > 0);
+    
+    return argCount;
+}
 
-    //do; while(p);
+proc test2(int num)
+{
+    num + 2;
+}
 
-    if(2);
+proc test(int num)->int
+{
+    LinkedList testprova;
+    ^int testint = 0;
+    testprova.first = cast(^Node)testint;
+    testprova.last = testprova.first;
+    
+    //^int testint2 = testprova;
+    
+    int a;
+    ^int aptr;
+    int b;
+    int c;
+    
+    [3]^int arrayofintptrs;
+    
+    a = b = 2;
+    
+    //testprova = testint;
+    
+    //for(int i = 0; i < *aptr; ++i);
+    
+    //if(testprova);
+    
+    //testprova.next = testprova + 5 - prova2;
+    
+    //test(testprova) + testprova;
+    
+    //test2(num) + test2(num);  // Error: operation between 2 'none' types
+    
+    return 0;
+    
+    //return testprova;
+}
 
-    //if(prova p);
+proc Fibonacci(int num)->int
+{
+    if(num <= 0) return 0;
+    if(num <= 1) return 1;
+    return Fibonacci(num - 1) + Fibonacci(num - 2);
+    
+    float b;
+    return b;
+}
 
-    if(float f = 3.0)
-	f + 4;
-
-    if(int i = 0) { testprova.info + i; }
-
-    //if(prova);
-
-    if(int i) { i + 2; }
-
-    //if(prova) {}
-
-    float prova2 = provaint;
-    float32 prova3;
-    float prova4;
-    //float prova4;
+proc FibonacciIterative(int num)->int
+{
+    //int num;
+    int last = 1;
+    int secondLast = 0;
+    for(int i = 1; i <= num; i = i+1)
+    {
+        int current = last + secondLast;
+        secondLast = last;
+        last = current;
+    }
+    
+    return last;
 }

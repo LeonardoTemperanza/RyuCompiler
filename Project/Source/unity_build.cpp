@@ -30,7 +30,6 @@
 #include "memory_management.cpp"
 #include "parser.cpp"
 #include "semantics.cpp"
+#include "atom.cpp"
 
-#ifdef Debug
-#include "debug.cpp"
-#endif
+#include "test.cpp"

@@ -3,15 +3,13 @@
 
 char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName)
 {
+    ProfileFunc(prof);
+    
     char* result = NULL;
     
     FILE* file = fopen(fileName, "rb");
     if(file)
     {
-        // Get the file size by fseeking
-        // to the end and then calling
-        // ftell, proceed to reset the
-        // pointer with fseek(0)
         fseek(file, 0, SEEK_END);
         size_t fileSize = ftell(file);
         fseek(file, 0, SEEK_SET);
@@ -34,7 +32,7 @@ char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName)
 
 // Array utilities
 template<typename t>
-void Array<t>::AddElement(Arena* a, t element)
+void Array<t>::Append(Arena* a, t element)
 {
     // If empty, allocate a new array
     if(this->length == 0)
@@ -60,10 +58,35 @@ Array<t> Array<t>::CopyToArena(Arena* to)
     return result;
 }
 
+void String::Append(Arena* a, char element)
+{
+    // If empty, allocate a new array
+    if(this->length == 0)
+        this->ptr = Arena_FromStack(a, element);
+    else
+    {
+        auto ptr = (char*)Arena_ResizeLastAlloc(a, this->ptr,
+                                                sizeof(char) * this->length,
+                                                sizeof(char) * (this->length + 1));
+        Assert(ptr == this->ptr && "Adding an element to an array that was not the last allocation performed in the linear arena is not allowed");
+        this->ptr = ptr;
+        this->ptr[this->length] = element;
+    }
+    
+    ++this->length;
+}
+
+String String::CopyToArena(Arena* to)
+{
+    String result = *this;
+    result.ptr = (char*)Arena_AllocAndCopy(to, this->ptr, sizeof(char) * this->length);
+    return result;
+}
+
 // Array utilities
 #define DynArray_MinCapacity 10
 template<typename t>
-void DynArray<t>::AddElement(t element)
+void DynArray<t>::Append(t element)
 {
     ++this->length;
     if(this->capacity < this->length)
@@ -77,6 +100,12 @@ void DynArray<t>::AddElement(t element)
     }
     
     this->ptr[this->length - 1] = element;
+}
+
+template<typename t>
+Array<t> DynArray<t>::ConvertToArray()
+{
+    return (Array<t>) { this->ptr, this->length };
 }
 
 void StringBuilder::Append(String str, Arena* dest)
@@ -217,12 +246,18 @@ Arena* GetScratchArena(ThreadContext* threadCtx, Arena** conflictArray, int coun
     return result;
 }
 
+Arena* GetScratchArena(ThreadContext* threadCtx, int idx)
+{
+    Assert(idx < ThreadCtx_NumScratchArenas && idx >= 0);
+    return &threadCtx->scratchPool[idx];
+}
+
 #ifdef Profile
 void InitSpall()
 {
     spallCtx = spall_init_file("constellate.spall", 1000000.0 / GetRdtscFreq());
     
-    size_t bufferSize = MB(100);
+    size_t bufferSize = GB(1);
     uchar* buffer = (uchar*)malloc(bufferSize);
     memset(buffer, 1, bufferSize);
     
@@ -236,9 +271,9 @@ void QuitSpall()
     spall_quit(&spallCtx);
 }
 
-ProfileFuncGuard::ProfileFuncGuard(char* funcName)
+ProfileFuncGuard::ProfileFuncGuard(char* funcName, uint64 stringLength)
 {
-    spall_buffer_begin(&spallCtx, &spallBuffer, funcName, sizeof(funcName), __rdtsc());
+    spall_buffer_begin(&spallCtx, &spallBuffer, funcName, stringLength, __rdtsc());
 }
 
 ProfileFuncGuard::~ProfileFuncGuard()

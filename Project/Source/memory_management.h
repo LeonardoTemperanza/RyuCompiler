@@ -56,13 +56,15 @@ struct Arena
     size_t offset;
     size_t prevOffset;
     
-    // NOTE(Leo): Commit memory in
-    // blocks of size commitSize,
-    // if == 0, then it never commits
-    // (useful for stack-allocated arenas)
+    // Commit memory in blocks of size
+    // commitSize, if == 0, then it never
+    // commits (useful for stack-allocated arenas)
     size_t commitSize;
 };
 
+// Can be used like:
+// TempArenaMemory tempGaurd = Arena_TempBegin(arena);
+// defer(Arena_TempEnd(tempGuard);
 struct TempArenaMemory
 {
     Arena* arena;
@@ -92,19 +94,35 @@ inline void Arena_TempEnd(TempArenaMemory tmp)
 // destruction.
 struct ScratchArena
 {
+    TempArenaMemory tempGuard;
+    
+    // NOTE(Leo): In case a ScratchArena is passed to the
+    // constructor with the intent to do an implicit cast to
+    // Arena*, the actual result is the copy constructor is called
+    // which is not expected. This makes an error appear instead of
+    // silently failing.
+    ScratchArena(ScratchArena& scratch) = delete;
+    
     // This could be templatized, but...
     // we're not going to need more than
     // 4 scratch arenas anyway, and you could
     // always add more constructors
-    ScratchArena();
-    ScratchArena(Arena* a1);
-    ScratchArena(Arena* a1, Arena* a2);
-    ScratchArena(Arena* a1, Arena* a2, Arena* a3);
-    __forceinline ~ScratchArena() { Arena_TempEnd(tempGuard); };
-    __forceinline void Reset() { Arena_TempEnd(tempGuard); };
-    __forceinline operator Arena*() { return tempGuard.arena; };
+    cforceinline ScratchArena();
+    cforceinline ScratchArena(Arena* a1);
+    cforceinline ScratchArena(Arena* a1, Arena* a2);
+    cforceinline ScratchArena(Arena* a1, Arena* a2, Arena* a3);
     
-    TempArenaMemory tempGuard;
+    // This constructor is used to get a certain scratch arena,
+    // without handling potential conflicts. It can be used when
+    // using multiple scratch arenas in a single function which
+    // doesn't allocate anything to be used by the caller (so,
+    // it doesn't accept an Arena* as parameter)
+    cforceinline ScratchArena(int idx);
+    
+    cforceinline ~ScratchArena() { Arena_TempEnd(tempGuard); };
+    cforceinline void Reset() { Arena_TempEnd(tempGuard); };
+    cforceinline Arena* arena() { return tempGuard.arena; };
+    cforceinline operator Arena*() { return tempGuard.arena; };
 };
 
 uintptr AlignForward(uintptr ptr, size_t align);

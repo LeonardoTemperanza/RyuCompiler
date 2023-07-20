@@ -12,9 +12,6 @@
 #include <assert.h>
 #include <stdarg.h>
 
-// @temporary
-#include <vector>
-
 #ifdef Debug
 #define Assert(expression) assert(expression)
 #else
@@ -32,6 +29,47 @@
 
 #define Swap(type, var1, var2) do { type tmp = var1; var1 = var2; var2 = tmp; } while(0)
 #define SwapIntegral(type, var1, var2) do { var1 += var2; var2 = var1 - var2; var1 -= var2; } while(0)
+
+#ifdef Debug
+#define cforceinline 
+#else
+#define cforceinline __forceinline
+#endif
+
+// Switch statement that disables the
+// "switch statements should cover all cases"
+// warning for enums.
+#define switch_nocheck(expression) \
+switch(expression) \
+_Pragma("warning(push)") \
+_Pragma("warning(disable : 4062)") \
+_Pragma("warning(disable : 4061)")
+
+#define switch_nocheck_end _Pragma("warning(pop)")
+
+// For testing that switch_nocheck actually works
+#if 0
+void switch_nocheck_test()
+{
+    enum testenum
+    {
+        test1,
+        test2,
+        test3
+    };
+    
+    testenum e = test1;
+    switch(e)
+#pragma warning(push)
+#pragma warning(disable : 4062)
+    {
+        case test1: break;
+        case test2: break;
+        //case test3: break;
+    }
+#pragma warning(pop)
+}
+#endif
 
 typedef int8_t  int8;
 typedef int16_t int16;
@@ -59,7 +97,6 @@ struct ThreadContext
 void ThreadCtx_Init(ThreadContext* threadCtx, size_t scratchReserveSize, size_t scratchCommitSize);
 Arena* GetScratchArena(ThreadContext* threadCtx, Arena** conflictArray, int count);
 
-
 #ifdef Profile
 #include "spall/spall.h"
 
@@ -69,12 +106,12 @@ static SpallBuffer spallBuffer;
 void InitSpall();
 void QuitSpall();
 
-#define ProfileFunc(guardName) ProfileFuncGuard guardName(__FUNCTION__);
+#define ProfileFunc(guardName) ProfileFuncGuard guardName(__FUNCTION__, sizeof(__FUNCTION__));
 
 struct ProfileFuncGuard
 {
     ProfileFuncGuard() = delete;
-    ProfileFuncGuard(char* funcName);
+    ProfileFuncGuard(char* funcName, uint64 stringLength);
     ~ProfileFuncGuard();
 };
 
@@ -89,7 +126,7 @@ struct Array
     t* ptr;
     int64 length;
     
-    void AddElement(Arena* a, t element);
+    void Append(Arena* a, t element);
     Array<t> CopyToArena(Arena* to);
     
 #ifdef BoundsChecking
@@ -105,8 +142,7 @@ struct Array
 #endif
 };
 
-// Used for dynamic arrays allocated on the heap
-// @performance @temporary Improve implementation
+// Used for dynamic arrays with unknown/variable lifetimes
 template<typename t>
 struct DynArray
 {
@@ -114,7 +150,8 @@ struct DynArray
     int64 length = 0;
     int64 capacity = 0;
     
-    void AddElement(t element);
+    void Append(t element);
+    Array<t> ConvertToArray();  // Returns the array as a "slice" of the current DynArray
     //Array<t> CopyToArena(Arena* to);
     
 #ifdef BoundsChecking
@@ -134,8 +171,28 @@ struct DynArray
 // but in the case of strings allocated in a custom allocator,
 // it's better to keep the null terminator for C compatibility.
 // It's the same thing either way, the length shouldn't take the
-// null terminator into account, if present.
-typedef Array<char> String;
+// null terminator into account, if present. This is not just a typedef
+// of Array<char> because I'd like to treat them as different types
+struct String
+{
+    char* ptr;
+    int64 length;
+    
+    void Append(Arena* a, char element);
+    String CopyToArena(Arena* to);
+    
+#ifdef BoundsChecking
+    // For reading the value
+    inline char  operator [](int idx) const { Assert(idx < length); return ptr[idx]; };
+    // For writing to the value (this returns a left-value)
+    inline char& operator [](int idx) { Assert(idx < length); return ptr[idx]; };
+#else
+    // For reading the value
+    inline char  operator [](int idx) const { return ptr[idx]; };
+    // For writing to the value (this returns a left-value)
+    inline char& operator [](int idx) { return ptr[idx]; };
+#endif
+};
 
 // Math utilities
 inline bool IsPowerOf2(uintptr a)

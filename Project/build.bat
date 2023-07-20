@@ -6,14 +6,12 @@ pushd ..\Build
 set debug_flags=/DDebug /MDd /Zi
 set profile_flags=/DProfile
 
-set common=/FC /FeRyu.exe /std:c++20 /permissive /wd4530 /nologo ..\Project\Source\unity_build.cpp /link ..\Project\Libs\LLVM-C.lib
+set common=/FC /Feryu.exe /std:c++20 /permissive /we4061 /we4062 /wd4530 /nologo ..\Project\Source\unity_build.cpp /link ..\Project\Libs\LLVM-C.lib
 
 set opt=/Od
 
 REM Development build, debug is enabled, profiling and optimization disabled
 cl /Od %debug_flags% %common%
-
-Ryu.exe TestPrograms\newtest.c
 
 REM Optimized build with debug information
 REM cl /O2 %debug_flags% %common%
@@ -23,5 +21,14 @@ REM cl /O2 %profile_flags% %common%
 
 REM Final build
 REM cl /O2 %common%
+
+echo Done.
+
+IF %ERRORLEVEL%==0 ( 
+echo Running program:
+
+REM For quicker testing
+ryu.exe TestPrograms\newtest.c
+)
 
 popd

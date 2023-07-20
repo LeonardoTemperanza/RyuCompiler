@@ -59,6 +59,7 @@ enum TokenType
     
     // Keywords
     Tok_Proc,
+    Tok_Operator,
     Tok_Struct,
     //Tok_Extern,
     //TokenVar,  // TODO: use later for type inference

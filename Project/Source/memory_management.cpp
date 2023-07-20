@@ -1,3 +1,4 @@
+
 #include "memory_management.h"
 
 ScratchArena::ScratchArena()
@@ -30,6 +31,13 @@ ScratchArena::ScratchArena(Arena* a1, Arena* a2, Arena* a3)
     this->tempGuard = Arena_TempBegin(scratch);
 }
 
+ScratchArena::ScratchArena(int idx)
+{
+    auto threadCtx = (ThreadContext*)GetThreadContext();
+    Arena* scratch = GetScratchArena(threadCtx, idx);
+    this->tempGuard = Arena_TempBegin(scratch);
+}
+
 void Arena_Init(Arena* arena,
                 void* backingBuffer,
                 size_t backingBufferLength,
@@ -45,6 +53,7 @@ void Arena_Init(Arena* arena,
         CommitMemory(backingBuffer, commitSize);
 }
 
+// TODO: Handle buffer overflow
 void* Arena_Alloc(Arena* arena, size_t size, size_t align)
 {
     uintptr curPtr = (uintptr) arena->buffer + (uintptr) arena->offset;
@@ -74,7 +83,7 @@ void* Arena_Alloc(Arena* arena, size_t size, size_t align)
         arena->prevOffset = offset;
         
         // Zero new memory for debugging
-#ifdef DEBUG
+#ifdef Debug
         memset(ptr, 0, size);
 #endif
         
@@ -99,7 +108,7 @@ void* Arena_ResizeLastAlloc(Arena* arena, void* oldMemory, size_t oldSize, size_
             if(newSize > oldSize)
             {
                 // Zero new memory for debugging
-#ifdef DEBUG
+#ifdef Debug
                 memset(&arena->buffer[arena->offset], 0, newSize - oldSize);
 #endif
             }
@@ -116,12 +125,12 @@ void* Arena_ResizeLastAlloc(Arena* arena, void* oldMemory, size_t oldSize, size_
         }
     }
     
-    Assert(false && "Memory is out of bounds of the buffer in this arena");
+    Assert(false && "Arena exceeded memory limit");
     return 0;
 }
 
 template<typename t>
-inline void Arena_ResizeLastAllocatedArray(Arena* arena, Array<t>* array, size_t newLength, size_t align)
+cforceinline void Arena_ResizeLastAllocatedArray(Arena* arena, Array<t>* array, size_t newLength, size_t align)
 {
     array->ptr = (t*)Arena_ResizeLastAlloc(arena, array->ptr, sizeof(t) * array->length, sizeof(t) * newLength, align);
     array->length = newLength;
@@ -142,7 +151,7 @@ char* Arena_PushString(Arena* arena, void* toCopy, size_t size)
     return result;
 }
 
-static uintptr AlignForward(uintptr ptr, size_t align)
+cforceinline static uintptr AlignForward(uintptr ptr, size_t align)
 {
     Assert(IsPowerOf2(align));
     

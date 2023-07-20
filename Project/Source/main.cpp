@@ -27,6 +27,9 @@ int main(int argCount, char** argValue)
     ThreadCtx_Init(&threadCtx, GB(2), KB(32));
     SetThreadContext(&threadCtx);
     
+    // Start of application
+    ProfileFunc(prof2);
+    
     if(argCount == 1)
     {
         fprintf(stderr, "Incorrect Usage: source file not given\n");
@@ -60,8 +63,6 @@ int main(int argCount, char** argValue)
     Typer typer = InitTyper(&typeArena, &parser);
     
     int result = MainDriver(&tokenizer, &parser, &typer);
-    
-    // No need to free memory
     return result;
 }
 
@@ -75,26 +76,25 @@ int MainDriver(Tokenizer* tokenizer, Parser* parser, Typer* typer)
     LexFile(tokenizer);
     Ast_Block* fileAst = ParseFile(parser);
     
-    Assert(fileAst->kind = AstKind_Block);
+    Assert(fileAst->kind == AstKind_Block);
     
     if(tokenizer->status == CompStatus_Success)
         printf("Parsing was successful\n");
     else
     {
         printf("There were syntax errors!\n");
-        return 0;
+        return 1;
     }
     
-    TypingStage(typer, fileAst);
+    CheckBlock(typer, fileAst);
     
     if(tokenizer->status == CompStatus_Success)
         printf("Typechecking was successful\n");
     else
+    {
         printf("There were semantic errors!\n");
+        return 1;
+    }
     
-    
-    
-    //InterpretTestCode();
-    //int errorCode = GenerateIR(ctx, &(parser->root));
     return 0;
 }

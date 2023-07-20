@@ -5,6 +5,8 @@
 
 void* ReserveMemory(size_t size)
 {
+    ProfileFunc(prof);
+    
     void* result = mmap(0, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, (off_t)0);
     Assert(result != MAP_FAILED && "mmap failed!");
     if(result == MAP_FAILED)

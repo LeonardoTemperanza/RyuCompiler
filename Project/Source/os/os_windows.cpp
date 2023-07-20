@@ -23,6 +23,8 @@ void OS_Init()
 // Memory utilities
 void* ReserveMemory(size_t size)
 {
+    ProfileFunc(prof);
+    
     void* result = VirtualAlloc(0, size, MEM_RESERVE, PAGE_READWRITE);
     Assert(result && "VirtualAlloc failed!");
     return result;
@@ -30,6 +32,8 @@ void* ReserveMemory(size_t size)
 
 void CommitMemory(void* mem, size_t size)
 {
+    ProfileFunc(prof);
+    
     void* result = VirtualAlloc(mem, size, MEM_COMMIT, PAGE_READWRITE);
     Assert(result && "VirtualAlloc failed!");
 }
