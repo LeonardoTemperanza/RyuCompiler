@@ -27,7 +27,6 @@ Ast_Node* Ast_MakeNode(Arena* arena, Token* token, Ast_NodeKind kind)
     auto result = Arena_AllocAndInitPack(arena, Ast_Node);
     result->kind  = kind;
     result->where = token;
-    //result->tokenHotData = token->tokenHotData;
     
     return result;
 }
@@ -40,14 +39,15 @@ t Ast_InitNode(Token* token)
     return result;
 }
 
-Ast_Block* ParseFile(Parser* p)
+Ast_FileScope* ParseFile(Parser* p)
 {
     ProfileFunc(prof);
     ScratchArena scratch;
     
-    auto root = Ast_MakeNode<Ast_Block>(p->arena, p->at);
-    root->enclosing = p->globalScope;
-    p->scope = root;
+    auto root = Arena_AllocAndInitPack(p->arena, Ast_FileScope);
+    //auto root = Ast_MakeNode<Ast_FileScope>(p->arena, p->at);
+    root->scope.enclosing = p->globalScope;
+    p->scope = &root->scope;
     defer(p->scope = p->scope->enclosing);
     
     Array<Ast_Node*> result = { 0, 0 };
@@ -75,15 +75,13 @@ Ast_Block* ParseFile(Parser* p)
             }
         } switch_nocheck_end;
         
-        Assert(Ast_IsTopLevel(node));
-        
         if(!quit && node)
             result.Append(scratch.arena(), node);
     }
     
     result = result.CopyToArena(p->arena);
     
-    root->stmts = result;
+    root->scope.stmts = result;
     return root;
 }
 
@@ -107,7 +105,7 @@ Ast_ProcDef* ParseProcDef(Parser* p)
         ParseError(p, ident, StrLit("Expecting operator"));
     
     func->type = typeInfo;
-    func->name = ident->ident;
+    DeferStringInterning(p, ident->ident, &func->name);
     
     Ast_Block block;
     block.stmts = { 0, 0 };
@@ -131,6 +129,8 @@ Ast_ProcDef* ParseProcDef(Parser* p)
     return func;
 }
 
+// TODO: Refactor the ast for the declarations.
+// Inheritance is not needed and actually poses a problem
 Ast_StructDef* ParseStructDef(Parser* p)
 {
     ProfileFunc(prof);
@@ -146,8 +146,7 @@ Ast_StructDef* ParseStructDef(Parser* p)
         ExpectedTokenError(p, ident, Tok_Ident);
     
     structDef->type = typeInfo;
-    structDef->name = ident->ident;
-    
+    DeferStringInterning(p, ident->ident, &structDef->name);
     return structDef;
 }
 
@@ -198,9 +197,9 @@ Ast_VarDecl* ParseVarDecl(Parser* p, bool forceInit, bool preventInit)
     if(!IsTokIdent(t->type))
         ExpectedTokenError(p, t, Tok_Ident);
     
-    auto decl = Ast_MakeNode<Ast_VarDecl>(p->arena, t);
-    decl->name = t->ident;
+    auto decl  = Ast_MakeNode<Ast_VarDecl>(p->arena, t);
     decl->type = type;
+    DeferStringInterning(p, t->ident, &decl->name);
     
     if(!preventInit)
     {
@@ -493,8 +492,8 @@ Ast_Expr* ParseExpression(Parser* p, int prec)
         int opPrec = GetOperatorPrec(p->at->type);
         
         bool undoRecurse = false;
-        undoRecurse |= opPrec == -1;
-        undoRecurse |= opPrec < prec;
+        undoRecurse |= (opPrec == -1);
+        undoRecurse |= (opPrec > prec);  // Is it's less important (=greater priority) don't recurse
         undoRecurse |= (opPrec == prec && IsOperatorLToR(p->at->type));
         if(undoRecurse)
         {
@@ -547,7 +546,8 @@ Ast_Expr* ParsePostfixExpression(Parser* p)
                 auto memberAccess = Ast_MakeNode<Ast_MemberAccess>(p->arena, p->at);
                 ++p->at;
                 
-                memberAccess->memberName = EatRequiredToken(p, Tok_Ident)->ident;
+                String ident = EatRequiredToken(p, Tok_Ident)->ident;
+                DeferStringInterning(p, ident, &memberAccess->memberName);
                 memberAccess->target = curExpr;
                 curExpr = memberAccess;
                 
@@ -624,6 +624,7 @@ Ast_Expr* ParsePrimaryExpression(Parser* p)
     else if(IsTokIdent(p->at->type))
     {
         auto ident = Ast_MakeNode<Ast_IdentExpr>(p->arena, p->at);
+        DeferStringInterning(p, p->at->ident, &ident->ident);
         ++p->at;
         return ident;
     }
@@ -666,7 +667,8 @@ TypeInfo* ParseType(Parser* p, Token** outIdent)
             if(p->at->type == Tok_Ident)  // Compound type
             {
                 auto tmp = Ast_MakeType<Ast_DeclaratorIdent>(p->arena);
-                tmp->ident = p->at->ident;
+                DeferStringInterning(p, p->at->ident, &tmp->ident);
+                
                 *baseType = tmp;
                 
                 // TODO: polymorphic parameters
@@ -869,10 +871,10 @@ Ast_DeclaratorStruct ParseDeclStruct(Parser* p, Token** outIdent)
     
     // Parse arguments
     ScratchArena typeScratch(0);
-    ScratchArena nameScratch(1);
+    ScratchArena tokenScratch(1);
     
     Array<TypeInfo*> types = { 0, 0 };
-    Array<Token*> names = { 0, 0 };
+    Array<Token*> tokens = { 0, 0 };
     
     while(p->at->type != '}' && p->at->type != Tok_EOF)
     {
@@ -888,16 +890,31 @@ Ast_DeclaratorStruct ParseDeclStruct(Parser* p, Token** outIdent)
             ExpectedTokenError(p, argName, Tok_Ident);
         
         types.Append(typeScratch.arena(), type);
-        names.Append(nameScratch.arena(), argName);
+        tokens.Append(tokenScratch.arena(), argName);
         
         EatRequiredToken(p, ';');
     }
     
-    decl.memberTypes = types.CopyToArena(p->arena);
-    decl.memberNames = names.CopyToArena(p->arena);
+    decl.memberTypes      = types.CopyToArena(p->arena);
+    decl.memberNameTokens = tokens.CopyToArena(p->arena);
+    
+    decl.memberNames.ptr = Arena_AllocArrayPack(p->arena, tokens.length, Atom*);
+    decl.memberNames.length = tokens.length;
+    
+    // Keep track of atom pointers so that they can later be patched
+    // with the correct value (during string interning, which is done
+    // on one thread for simplicity)
+    for_array(i, decl.memberNames)
+        DeferStringInterning(p, decl.memberNameTokens[i]->ident, &decl.memberNames[i]);
     
     EatRequiredToken(p, '}');
     return decl;
+}
+
+void DeferStringInterning(Parser* p, String string, Atom** atom)
+{
+    ToIntern toIntern = { string, atom };
+    p->internArray.Append(p->internArena, toIntern);
 }
 
 // A table could be used for this information

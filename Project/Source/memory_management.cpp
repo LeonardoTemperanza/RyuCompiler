@@ -53,6 +53,23 @@ void Arena_Init(Arena* arena,
         CommitMemory(backingBuffer, commitSize);
 }
 
+Arena Arena_VirtualMemInit(size_t reserveSize, size_t commitSize)
+{
+    Assert(commitSize > 0);
+    
+    Arena result;
+    result.buffer     = (uchar*)ReserveMemory(reserveSize);
+    result.length     = reserveSize;
+    result.offset     = 0;
+    result.prevOffset = 0;
+    result.commitSize = commitSize;
+    
+    Assert(result.buffer);
+    CommitMemory(result.buffer, commitSize);
+    
+    return result;
+}
+
 // TODO: Handle buffer overflow
 void* Arena_Alloc(Arena* arena, size_t size, size_t align)
 {
@@ -143,11 +160,19 @@ void* Arena_AllocAndCopy(Arena* arena, void* toCopy, size_t size, size_t align)
     return result;
 }
 
-char* Arena_PushString(Arena* arena, void* toCopy, size_t size)
+char* Arena_PushStringAndNullTerminate(Arena* arena, void* toCopy, size_t size)
 {
     char* result = (char*)Arena_Alloc(arena, size+1, 1);
     memcpy(result, toCopy, size);
     result[size] = 0;
+    return result;
+}
+
+char* Arena_PushStringAndNullTerminate(Arena* arena, String str)
+{
+    char* result = (char*)Arena_Alloc(arena, str.length+1, 1);
+    memcpy(result, str.ptr, str.length);
+    result[str.length] = 0;
     return result;
 }
 

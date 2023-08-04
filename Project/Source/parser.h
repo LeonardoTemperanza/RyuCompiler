@@ -11,9 +11,12 @@ struct Parser
     
     Ast_Block* scope = 0;  // Current scope
     Ast_Block* globalScope = 0;
+    
+    Arena* internArena;
+    Array<ToIntern> internArray = { 0, 0 };
 };
 
-Ast_Block* ParseFile(Parser* p);
+Ast_FileScope* ParseFile(Parser* p);
 Ast_ProcDef* ParseProcDef(Parser* p);
 Ast_StructDef* ParseStructDef(Parser* p);
 Ast_Node* ParseDeclOrExpr(Parser* p, bool forceInit = false);
@@ -30,13 +33,17 @@ Ast_Continue* ParseContinue(Parser* p);
 Ast_Block* ParseBlock(Parser* p);
 Ast_Block* ParseOneOrMoreStmtBlock(Parser* p);  // Used for blocks in i.e. if stmts
 
-Ast_Expr* ParseExpression(Parser* p, int prec = INT_MIN);
+Ast_Expr* ParseExpression(Parser* p, int prec = INT_MAX);
 Ast_Expr* ParsePostfixExpression(Parser* p);
 Ast_Expr* ParsePrimaryExpression(Parser* p);
 TypeInfo* ParseType(Parser* p, Token** outIdent);
 // Do i even need these to be values and not pointers anymore?
 Ast_DeclaratorProc ParseDeclProc(Parser* p, Token** outIdent, bool forceArgNames = true);
 Ast_DeclaratorStruct ParseDeclStruct(Parser* p, Token** outIdent);
+
+// Inserts the string and the associated atom address to patch later
+// in the parser array (internArray)
+void DeferStringInterning(Parser* p, String string, Atom** atom);
 
 // Operators
 

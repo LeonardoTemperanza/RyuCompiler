@@ -1,8 +1,33 @@
 
+struct teststruct { double d; float f; }
+struct teststruct2 { teststruct t; float f; }
+
+struct String2
+{
+    String2 str;
+}
+
 struct String
 {
     ^char ptr;
     uint64 length;
+}
+
+proc SumAges(^Person p1, ^Person p2)->int
+{
+    return p1.age + p2.age;
+}
+
+proc test3()->int
+{
+    Person p;
+    return p.age;
+}
+
+struct Group
+{
+    ^Person pArray;
+    int numPeople;
 }
 
 struct Person
@@ -12,6 +37,8 @@ struct Person
     
     uint8 age;
     
+    //Person p; // Cycle!!!
+    
     ^Group belongsTo;
 }
 
@@ -20,12 +47,7 @@ proc SwapNames(^Person p)->Person res
     String tmp = p.name;
     p.name = p.lastName;
     p.lastName = tmp;
-}
-
-struct Group
-{
-    ^Person pArray;
-    int numPeople;
+    return tmp;
 }
 
 struct Node
@@ -40,24 +62,21 @@ struct LinkedList
     ^Node last;
 }
 
-operator +(Person p1, Person p2)->int
-{
-    return p1.age + p2.age;
-}
-
 int prova2;
 
 proc main(int argCount, ^^char argValue)->int
 {
-    Society society;
+    Group group;
     
     ^Person p;
     p.name.length = p.name.length++;
-    p.belongsTo = &society;
+    p.belongsTo = &group;
     
-    for(int i = 0; i < p.name.length; ++i)
+    [5]int array;
+    int sum = 0;
+    for(int i = 0; i < 5; ++i)
     {
-        
+        sum += array[i];
     }
     
     p.name.length++;

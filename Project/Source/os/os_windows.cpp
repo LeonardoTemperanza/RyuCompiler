@@ -8,6 +8,11 @@
 
 #include "miniwindows.h"
 
+//#define MICROSOFT_CRAZINESS_IMPLEMENTATION
+//#include "microsoft_craziness.h"
+//#undef MICROSOFT_CRAZINESS_IMPLEMENTATION
+
+
 static DWORD win32ThreadContextIdx = 0;
 static HANDLE win32ConsoleHandle = 0;
 static CONSOLE_SCREEN_BUFFER_INFO win32SavedScreenBufferInfo;
@@ -109,4 +114,9 @@ void SetErrorColor()
 void ResetColor()
 {
     SetConsoleTextAttribute(win32ConsoleHandle, win32SavedScreenBufferInfo.wAttributes);
+}
+
+void LaunchPlatformSpecificLinker()
+{
+    
 }

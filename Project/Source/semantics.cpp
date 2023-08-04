@@ -1,6 +1,8 @@
 
 #include "lexer.h"
 #include "ast.h"
+#include "dependency_graph.h"
+
 #include "semantics.h"
 
 // Primitive types
@@ -9,7 +11,7 @@ Typer InitTyper(Arena* arena, Parser* parser)
 {
     Typer t;
     t.tokenizer = parser->tokenizer;
-    t.parser = parser;
+    //t.parser = parser;
     t.arena = arena;
     
     return t;
@@ -112,7 +114,14 @@ bool CheckProcDef(Typer* t, Ast_ProcDef* proc)
 
 bool CheckStructDef(Typer* t, Ast_StructDef* structDef)
 {
-    return AddDeclaration(t, t->curScope, structDef); 
+    auto structType = Ast_GetDeclStruct(structDef);
+    for_array(i, structType->memberTypes)
+    {
+        if(!CheckType(t, structType->memberTypes[i], structDef->where))
+            return false;
+    }
+    
+    return true;
 }
 
 bool CheckVarDecl(Typer* t, Ast_VarDecl* decl)
@@ -337,7 +346,7 @@ Ast_Declaration* CheckIdent(Typer* t, Ast_IdentExpr* expr)
 {
     ProfileFunc(prof);
     
-    auto node = IdentResolution(t, t->curScope, expr->where->ident);
+    auto node = IdentResolution(t, t->curScope, expr->ident);
     if(!node)
     {
         SemanticError(t, expr->where, StrLit("Undeclared identifier."));
@@ -491,8 +500,7 @@ bool CheckBinExpr(Typer* t, Ast_BinaryExpr* bin)
                 {
                     // NOTE: This is where you would wait for an operator to be overloaded
                     // Look for overloaded operators (they're procs with certain names) and
-                    // yield if none are found. The dependency graph codepath will then print
-                    // an error if all code is found/compiled. 
+                    // yield if none are found.
                     
                     ScratchArena scratch;
                     String ltypeStr = TypeInfo2String(ltype, scratch.arena());
@@ -545,7 +553,7 @@ bool CheckBinExpr(Typer* t, Ast_BinaryExpr* bin)
         case Tok_OrEquals: case Tok_XorEquals:
         case Tok_LShiftEquals: case Tok_RShiftEquals:
         {
-            if(!IsExprLValue(bin->lhs))
+            if(!IsExprLValue(bin->lhs) || bin->lhs->type->typeId == Typeid_Proc)
             {
                 SemanticError(t, bin->lhs->where, StrLit("Left-hand side of assignment is not assignable"));
                 return false;
@@ -643,7 +651,7 @@ bool CheckTypecast(Typer* t, Ast_Typecast* expr)
     if(!CheckType(t, expr->type, Ast_GetTypecastTypeToken(expr))) return false;
     if(!CheckNode(t, expr->expr)) return false;
     
-    // Warnings for some casts
+    // TODO: Warnings for some casts
     
     // Implicitly convert arrays to pointers
     if(expr->expr->type->typeId == Typeid_Arr)
@@ -746,7 +754,7 @@ bool CheckMemberAccess(Typer* t, Ast_MemberAccess* expr)
     int idx = -1;
     for(int i = 0; i < structDecl->memberNames.length; ++i)
     {
-        if(structDecl->memberNames[i]->ident == expr->memberName)
+        if(structDecl->memberNames[i] == expr->memberName)
         {
             idx = i;
             break;
@@ -760,21 +768,9 @@ bool CheckMemberAccess(Typer* t, Ast_MemberAccess* expr)
     }
     
     // Get the type corresponding to the member in the struct
-    TypeInfo* baseType = GetBaseType(structDecl->memberTypes[idx]);
-    if(baseType->typeId == Typeid_Ident)
+    if(!CheckType(t, structDecl->memberTypes[idx], expr->where))
     {
-        Ast_DeclaratorIdent* identType = (Ast_DeclaratorIdent*)baseType;
-        if(!identType->structDef)
-        {
-            auto node = IdentResolution(t, t->curScope, identType->ident);
-            if(!node)
-            {
-                SemanticError(t, expr->where, StrLit("Could not find type for this struct member"));
-                return false;
-            }
-            
-            identType->structDef = (Ast_StructDef*)node;
-        }
+        return false;
     }
     
     expr->type = structDecl->memberTypes[idx];
@@ -807,6 +803,9 @@ TypeInfo* CheckDeclOrExpr(Typer* t, Ast_Node* node)
 
 bool CheckType(Typer* t, TypeInfo* type, Token* where)
 {
+    // TODO: this should be modified in the future to yield
+    // in particular cases (#run directive for instance, or #type_of)
+    
     // Check type
     TypeInfo* baseType = GetBaseType(type);
     if(baseType->typeId == Typeid_Ident)
@@ -827,15 +826,107 @@ bool CheckType(Typer* t, TypeInfo* type, Token* where)
 
 bool ComputeSize(Typer* t, Ast_StructDef* structDef)
 {
+    bool outcome = true;
+    auto declStruct = Ast_GetDeclStruct(structDef);
+    ComputeSize_Ret ret = ComputeSize(t, declStruct, structDef->where, &outcome);
     
+    if(outcome)
+    {
+        structDef->size = ret.size;
+        structDef->align = ret.align;
+        printf("Outcome = true, Size: %d\n", ret.size);
+    }
+    else
+    {
+        printf("Outcome = false\n");
+    }
     
-    return false;
+    return outcome;
+}
+
+ComputeSize_Ret ComputeSize(Typer* t, Ast_DeclaratorStruct* declStruct, Token* errTok, bool* outcome)
+{
+    struct Funcs
+    {
+        static uint32 GetNextSize(uint32 curSize, uint32 elSize, uint32 elAlign)
+        {
+            Assert(IsPowerOf2(elAlign));
+            
+            uint32 modulo = curSize & (elAlign - 1);  // (curSize % align)
+            if(modulo != 0)
+                curSize += elAlign - modulo;
+            
+            curSize += elSize;
+            return curSize;
+        }
+    };
+    
+    Assert(outcome);
+    *outcome = true;
+    uint32 sizeResult = 0;
+    uint32 alignResult = 0;
+    
+    for_array(i, declStruct->memberTypes)
+    {
+        auto it = declStruct->memberTypes[i];
+        
+        if(it->typeId == Typeid_Struct)
+        {
+            auto itStruct = (Ast_DeclaratorStruct*)it;
+            bool outcomeSubStruct = true;
+            ComputeSize_Ret ret = ComputeSize(t, itStruct, errTok, &outcomeSubStruct);
+            uint32 sizeSubStruct = ret.size;
+            uint32 alignSubStruct = ret.align;
+            
+            if(!outcomeSubStruct)
+            {
+                *outcome = false;
+                continue;
+            }
+            
+            sizeResult = Funcs::GetNextSize(sizeResult, sizeSubStruct, alignSubStruct);
+            alignResult = max(alignResult, alignSubStruct);
+        }
+        else if(it->typeId == Typeid_Ident)
+        {
+            auto itIdent = (Ast_DeclaratorIdent*)it;
+            auto structDef = itIdent->structDef;
+            if(structDef->phase < CompPhase_ComputeSize)
+            {
+                Dg_Yield(t->graph, structDef, CompPhase_ComputeSize);
+                *outcome = false;
+                continue;
+            }
+            
+            sizeResult = Funcs::GetNextSize(sizeResult, structDef->size, structDef->align);
+            alignResult = max(alignResult, structDef->align);
+        }
+        else if(it->typeId == Typeid_Ptr)
+        {
+            // TODO: when 32-bit is supported, this should be changed
+            sizeResult = Funcs::GetNextSize(sizeResult, 8, 8);
+            alignResult = max(alignResult, (uint32)8);
+        }
+        else  // Primitive types are trivial
+        {
+            if(it->typeId < StArraySize(typeSize))
+            {
+                uint32 curTypeSize = typeSize[it->typeId];
+                sizeResult = Funcs::GetNextSize(sizeResult, curTypeSize, curTypeSize);
+                alignResult = max(alignResult, curTypeSize);
+            }
+        }
+    }
+    
+    // Final size needs to be aligned
+    sizeResult = Funcs::GetNextSize(sizeResult, 0, alignResult);
+    return { sizeResult, alignResult };
 }
 
 // This will later use a hash-table.
 // Each scope will have its own hash-table, and the search will just be
 // a linked-list traversal of hash-tables (or arrays if the number of decls is low)
-Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, String ident)
+Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Atom* ident)
 {
     ProfileFunc(prof);
     
@@ -851,30 +942,32 @@ Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, String ident)
     return 0;
 }
 
-bool CheckRedefinition(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
+bool AddDeclaration(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
 {
-    ProfileFunc(prof);
-    
+    // Check redefinition
+    bool redefinition = false;
+    bool alreadyDefined = false;
     for(int i = 0; i < scope->decls.length; ++i)
     {
+        // Doesn't count as redefinition if we just find ourselves,
+        // somebody could have added us earlier to the symbol table
         if(scope->decls[i]->name == decl->name)
         {
-            SemanticError(t, decl->where, StrLit("Redefinition, this symbol was already defined in this scope, ..."));
-            SemanticErrorContinue(t, scope->decls[i]->where, StrLit("... here"));
-            return false;
+            if(scope->decls[i] != decl)
+            {
+                SemanticError(t, decl->where, StrLit("Redefinition, this symbol was already defined in this scope, ..."));
+                SemanticErrorContinue(t, scope->decls[i]->where, StrLit("... here"));
+                redefinition = true;
+            }
+            else
+                alreadyDefined = true;
         }
     }
     
-    return true;
-}
-
-bool AddDeclaration(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
-{
-    if(!CheckRedefinition(t, scope, decl))
-        return false;
+    if(!redefinition && !alreadyDefined)
+        scope->decls.Append(decl);
     
-    scope->decls.Append(decl);
-    return true;
+    return !redefinition;
 }
 
 // TODO: I actually assumed that this was a shallow check only, which is not true
@@ -920,11 +1013,25 @@ bool TypesCompatible(Typer* t, TypeInfo* src, TypeInfo* dst)
     // Zero can convert into anything
     
     
+    // @cleanup This should just get cleaned up
+    
     // Implicitly convert arrays into pointers
     if(src->typeId == Typeid_Arr && dst->typeId == Typeid_Ptr)
     {
         auto arrayOf = ((Ast_DeclaratorArr*)src)->baseType;
         src = Typer_MakePtr(t, arrayOf);
+    }
+    
+    // Implicitly convert procs into pointers
+    if(src->typeId == Typeid_Ptr && dst->typeId == Typeid_Proc)
+    {
+        auto base = (Ast_DeclaratorProc*)dst;
+        dst = Typer_MakePtr(t, base);
+    }
+    else if(src->typeId == Typeid_Proc && dst->typeId == Typeid_Ptr)
+    {
+        auto base = (Ast_DeclaratorProc*)src;
+        src = Typer_MakePtr(t, base);
     }
     
     if(src->typeId != dst->typeId)
@@ -989,6 +1096,10 @@ TypeInfo* GetCommonType(Typer* t, TypeInfo* type1, TypeInfo* type2)
     }
     
     // Implicitly convert functions into function pointers
+    if(type1->typeId == Typeid_Proc)
+        type1 = Typer_MakePtr(t, type1);
+    if(type2->typeId == Typeid_Proc)
+        type2 = Typer_MakePtr(t, type2);
     
     // Operations with floats promote up to floats
     if(type1->typeId == Typeid_Double || type2->typeId == Typeid_Double)
@@ -1018,7 +1129,7 @@ bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2)
         
         switch_nocheck(type1->typeId)
         {
-            default: return false;
+            default: return true;
             case Typeid_Ident:
             {
                 auto ident1 = (Ast_DeclaratorIdent*)type1;
@@ -1043,6 +1154,29 @@ bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2)
                 type2 = ((Ast_DeclaratorArr*)type2)->baseType;
                 break;
             }
+            case Typeid_Proc:
+            {
+                auto proc1 = (Ast_DeclaratorProc*)type1;
+                auto proc2 = (Ast_DeclaratorProc*)type2;
+                if(proc1->args.length != proc2->args.length)
+                    return false;
+                if(proc1->retTypes.length != proc2->retTypes.length)
+                    return false;
+                
+                for_array(i, proc1->args)
+                {
+                    if(!TypesIdentical(t, proc1->args[i]->type, proc2->args[i]->type))
+                        return false;
+                }
+                for_array(i, proc1->retTypes)
+                {
+                    if(!TypesIdentical(t, proc1->retTypes[i], proc2->retTypes[i]))
+                        return false;
+                }
+                
+                return true; // Nothing else to check
+                break;
+            }
         } switch_nocheck_end;
     }
     
@@ -1057,16 +1191,11 @@ bool ImplicitConversion(Typer* t, Ast_Expr* exprSrc, TypeInfo* src, TypeInfo* ds
     
     // Implicitly convert functions & arrays into pointers
     if(dst->typeId == Typeid_Proc)
-    {
-        auto newType = Ast_MakeType<Ast_DeclaratorPtr>(t->arena);
-        newType->baseType = GetBaseTypeShallow(dst);
-        dst = newType;
-    }
+        dst = Typer_MakePtr(t, dst);
     else if(dst->typeId == Typeid_Arr)
     {
-        auto newType = Ast_MakeType<Ast_DeclaratorArr>(t->arena);
-        newType->baseType = GetBaseTypeShallow(dst);
-        dst = newType;
+        auto arrType = Ast_MakeType<Ast_DeclaratorArr>(t->arena);
+        dst = Typer_MakePtr(t, arrType->baseType);
     }
     
     if(false)  // Data loss warnings
@@ -1140,7 +1269,9 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
             }
             case Typeid_Ident:
             {
-                strBuilder.Append(((Ast_DeclaratorIdent*)type)->ident, scratch);
+                char* nullTerminated = ((Ast_DeclaratorIdent*)type)->ident->string;
+                String ident = { nullTerminated, (int64)strlen(nullTerminated) };
+                strBuilder.Append(ident, scratch);
                 quit = true;
                 break;
             }
@@ -1154,6 +1285,41 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
             {
                 strBuilder.Append(StrLit("[]"), scratch);
                 type = ((Ast_DeclaratorArr*)type)->baseType;
+                break;
+            }
+            case Typeid_Proc:
+            {
+                auto procType = (Ast_DeclaratorProc*)type;
+                auto argTypesStr = Arena_AllocArray(scratch2, procType->args.length, String);
+                auto retTypesStr = Arena_AllocArray(scratch2, procType->retTypes.length, String);
+                
+                for_array(i, procType->args)
+                    argTypesStr[i] = TypeInfo2String(procType->args[i]->type, scratch2);
+                
+                for_array(i, procType->retTypes)
+                    retTypesStr[i] = TypeInfo2String(procType->retTypes[i], scratch2);
+                
+                strBuilder.Append(StrLit("proc ("), scratch);
+                
+                for_array(i, procType->args)
+                {
+                    strBuilder.Append(argTypesStr[i], scratch);
+                    if(i != procType->args.length - 1)
+                        strBuilder.Append(StrLit(", "), scratch);
+                }
+                
+                strBuilder.Append(StrLit(")->"), scratch);
+                
+                if(procType->retTypes.length > 1)
+                    strBuilder.Append(StrLit("("), scratch);
+                
+                for_array(i, procType->retTypes)
+                    strBuilder.Append(retTypesStr[i], scratch);
+                
+                if(procType->retTypes.length > 1)
+                    strBuilder.Append(StrLit(")"), scratch);
+                
+                quit = true;
                 break;
             }
         } switch_nocheck_end;

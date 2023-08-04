@@ -51,6 +51,35 @@ void Array<t>::Append(Arena* a, t element)
 }
 
 template<typename t>
+void Array<t>::Resize(Arena* a, uint32 newSize)
+{
+    // If empty, allocate a new array
+    if(this->length == 0)
+        this->ptr = (t*)Arena_Alloc(a, sizeof(t) * newSize, alignof(t));
+    else
+    {
+        auto ptr = (t*)Arena_ResizeLastAlloc(a, this->ptr,
+                                             sizeof(t) * this->length,
+                                             sizeof(t) * (newSize));
+        Assert(ptr == this->ptr && "Adding an element to an array that was not the last allocation performed in the linear arena is not allowed");
+        this->ptr = ptr;
+    }
+    
+    this->length = newSize;
+}
+
+template<typename t>
+void Array<t>::ResizeAndInit(Arena* a, uint32 newSize)
+{
+    uint32 oldLength = this->length;
+    this->Resize(a, newSize);
+    
+    // Call default constructor on new elements
+    for(int i = oldLength; i < newSize; ++i)
+        new (&this->ptr[i]) t;
+}
+
+template<typename t>
 Array<t> Array<t>::CopyToArena(Arena* to)
 {
     Array<t> result = *this;
@@ -88,7 +117,14 @@ String String::CopyToArena(Arena* to)
 template<typename t>
 void DynArray<t>::Append(t element)
 {
-    ++this->length;
+    this->Resize(this->length + 1);
+    this->ptr[this->length - 1] = element;
+}
+
+template<typename t>
+void DynArray<t>::Resize(uint32 newSize)
+{
+    this->length = newSize;
     if(this->capacity < this->length)
     {
         if(this->capacity < DynArray_MinCapacity)
@@ -98,14 +134,32 @@ void DynArray<t>::Append(t element)
         
         this->ptr = (t*)realloc(this->ptr, sizeof(t) * this->capacity);
     }
+}
+
+template<typename t>
+void DynArray<t>::ResizeAndInit(uint32 newSize)
+{
+    uint32 oldLength = this->length;
+    this->Resize(numElements);
     
-    this->ptr[this->length - 1] = element;
+    // Call default constructor for new elements
+    for(int i = oldLength; i < newSize; ++i)
+        new (&this->ptr[i]) t;
 }
 
 template<typename t>
 Array<t> DynArray<t>::ConvertToArray()
 {
     return (Array<t>) { this->ptr, this->length };
+}
+
+template<typename t>
+void DynArray<t>::FreeAll()
+{
+    free(this->ptr);
+    this->ptr      = 0;
+    this->capacity = 0;
+    this->length   = 0;
 }
 
 void StringBuilder::Append(String str, Arena* dest)
@@ -164,13 +218,15 @@ bool operator ==(String s1, String s2)
 // char* strings are null-terminated strings.
 bool operator ==(String s1, char* s2)
 {
-    for(int i = 0; i < s1.length; ++i)
+    int i = 0;
+    while(i < s1.length)
     {
         if(s2[i] == 0 || s1[i] != s2[i])
             return false;
+        ++i;
     }
     
-    return true;
+    return s2[i] == 0;
 }
 
 // Copied from the operator above because another
@@ -178,13 +234,15 @@ bool operator ==(String s1, char* s2)
 // of string compares are being performed
 bool operator ==(char* s1, String s2)
 {
-    for(int i = 0; i < s2.length; ++i)
+    int i = 0;
+    while(i < s2.length)
     {
         if(s1[i] == 0 || s2[i] != s1[i])
             return false;
+        ++i;
     }
     
-    return true;
+    return s1[i] == 0;
 }
 
 // Exits if it sees a null terminator

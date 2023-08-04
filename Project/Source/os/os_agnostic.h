@@ -20,3 +20,6 @@ static inline uint64 GetRdtscFreq();
 // Printing utilities
 void SetErrorColor();
 void ResetColor();
+
+// Linker
+void LaunchPlatformSpecificLinker();

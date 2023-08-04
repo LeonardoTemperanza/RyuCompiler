@@ -97,10 +97,10 @@ struct ScratchArena
     TempArenaMemory tempGuard;
     
     // NOTE(Leo): In case a ScratchArena is passed to the
-    // constructor with the intent to do an implicit cast to
+    // constructor with the intent to do a user implemented cast to
     // Arena*, the actual result is the copy constructor is called
     // which is not expected. This makes an error appear instead of
-    // silently failing.
+    // causing a bug.
     ScratchArena(ScratchArena& scratch) = delete;
     
     // This could be templatized, but...
@@ -130,6 +130,7 @@ uintptr AlignForward(uintptr ptr, size_t align);
 // Initialize the arena with a pre-allocated buffer
 void Arena_Init(Arena* arena, void* backingBuffer,
                 size_t backingBufferLength, size_t commitSize);
+Arena Arena_VirtualMemInit(size_t reserveSize, size_t commitSize);
 void* Arena_Alloc(Arena* arena,
                   size_t size, size_t align = Default_Alignment);
 void* Arena_ResizeLastAlloc(Arena* arena, void* oldMemory,

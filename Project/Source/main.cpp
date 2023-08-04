@@ -2,12 +2,12 @@
 #include "base.h"
 #include "lexer.h"
 #include "parser.h"
+#include "dependency_graph.h"
 //#include "llvm_ir_generation.h"
 #include "semantics.h"
+#include "interpreter.h"
 
-int MainDriver(Tokenizer* tokenizer,
-               Parser* parser,
-               Typer* typer);
+#include "tilde_codegen.h"
 
 int main(int argCount, char** argValue)
 {
@@ -21,6 +21,9 @@ int main(int argCount, char** argValue)
     
     // Start of application
     ProfileFunc(prof);
+    
+    // TODO: Command-line argument parsing
+    
     
     // Main thread context
     ThreadContext threadCtx;
@@ -47,38 +50,22 @@ int main(int argCount, char** argValue)
     size_t size = GB(1);
     size_t commitSize = MB(2);
     
-    Arena astArena;
-    void* astStorage = ReserveMemory(size);
-    Assert(astStorage);
-    Arena_Init(&astArena, astStorage, size, commitSize);
-    
-    Arena typeArena;
-    void* typeStorage = ReserveMemory(size);
-    Assert(typeStorage);
-    Arena_Init(&typeArena, typeStorage, size, commitSize);
+    Arena astArena = Arena_VirtualMemInit(size, commitSize);
+    Arena internArena = Arena_VirtualMemInit(size, commitSize);
     
     Tokenizer tokenizer = { fileContents, fileContents };
     tokenizer.arena = &astArena;
     Parser parser = { &astArena, &tokenizer };
-    Typer typer = InitTyper(&typeArena, &parser);
+    parser.internArena = &internArena;
     
-    int result = MainDriver(&tokenizer, &parser, &typer);
-    return result;
-}
-
-int MainDriver(Tokenizer* tokenizer, Parser* parser, Typer* typer)
-{
-    ProfileFunc(prof);
-    
+    // Main stuff
     Ast_Block globalScope;
-    parser->globalScope = &globalScope;
+    parser.globalScope = &globalScope;
     
-    LexFile(tokenizer);
-    Ast_Block* fileAst = ParseFile(parser);
+    LexFile(&tokenizer);
+    Ast_FileScope* fileAst = ParseFile(&parser);
     
-    Assert(fileAst->kind == AstKind_Block);
-    
-    if(tokenizer->status == CompStatus_Success)
+    if(tokenizer.status == CompStatus_Success)
         printf("Parsing was successful\n");
     else
     {
@@ -86,15 +73,25 @@ int MainDriver(Tokenizer* tokenizer, Parser* parser, Typer* typer)
         return 1;
     }
     
-    CheckBlock(typer, fileAst);
+    // Interning
+    Array<Array<ToIntern>> intern = { &parser.internArray, 1 };
+    Atom_InternStrings(intern);
     
-    if(tokenizer->status == CompStatus_Success)
-        printf("Typechecking was successful\n");
+    // Main program loop
+    int outcome = MainDriver(&parser, fileAst);
+    
+    if(outcome == 0)
+        printf("Compilation was successful\n");
     else
     {
         printf("There were semantic errors!\n");
         return 1;
     }
     
-    return 0;
+    printf("Tilde codegen test:\n");
+    
+    Tc_TestCode(fileAst);
+    
+    return outcome;
 }
+

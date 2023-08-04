@@ -161,6 +161,8 @@ static void EatAllWhitespace(Tokenizer* t);
 static bool FindStringInStream(char* stream, char* string);
 static float String2Float(char* string, int length);
 
+static void LexFile(Tokenizer* t);
+
 inline bool IsTokIdent(TokenType tokType) { return tokType >= Tok_IdentBegin && tokType <= Tok_IdentEnd; }
 
 void EatToken(Tokenizer* t);

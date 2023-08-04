@@ -4,18 +4,22 @@
 #include "lexer.h"
 #include "parser.h"
 
+struct DepGraph;
+
 struct Typer
 {
-    Tokenizer* tokenizer;
-    Parser* parser;
+    Tokenizer* tokenizer;  // This will be an array of tokenizers I assume?
     
     Arena* arena;  // Arena where the types are stored
     
     Ast_Block* globalScope = 0;
-    Ast_Block* curScope = 0;
+    Ast_Block* curScope    = 0;
+    Ast_FileScope* fileScope = 0;
     
     Ast_ProcDef* currentProc = 0;
     bool checkedReturnStmt = false;
+    
+    DepGraph* graph;
 };
 
 Typer InitTyper(Arena* arena, Parser* parser);
@@ -71,10 +75,11 @@ TypeInfo* CheckDeclOrExpr(Typer* t, Ast_Node* node);
 TypeInfo* CheckDeclOrExpr(Typer* t, Ast_Node* node, Ast_Block* curScope);
 bool CheckType(Typer* t, TypeInfo* type, Token* where);
 bool ComputeSize(Typer* t, Ast_StructDef* structDef);
+struct ComputeSize_Ret { uint32 size; uint32 align; };
+ComputeSize_Ret ComputeSize(Typer* t, Ast_DeclaratorStruct* declStruct, Token* errTok, bool* outcome);
 
 // Identifier resolution
-Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, String ident);
-bool CheckRedefinition(Typer* t, Ast_Block* scope, Ast_Declaration* decl);
+Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Atom* ident);
 bool AddDeclaration(Typer* t, Ast_Block* scope, Ast_Declaration* decl);
 
 // Types
@@ -98,13 +103,75 @@ cforceinline bool IsTypeSigned(TypeInfo* type)
     // Floating point types are automatically signed
     if(IsTypeFloat(type)) return true;
     
-    return type->typeId >= Typeid_Char && type->typeId <= Typeid_Int64
-        && type->typeId < Typeid_Uint8 && type->typeId > Typeid_Uint64;
+    return type->typeId == Typeid_Char || (type->typeId >= Typeid_Int8 &&
+                                           type->typeId <= Typeid_Int64);
 }
 
 cforceinline bool IsTypeDereferenceable(TypeInfo* type)
 {
     return type->typeId == Typeid_Ptr || type->typeId == Typeid_Arr;
+}
+
+cforceinline int GetTypeSizeBits(TypeInfo* type)
+{
+    int result = -1;
+    if(type->typeId == Typeid_Bool ||
+       type->typeId == Typeid_Char ||
+       type->typeId == Typeid_Uint8 ||
+       type->typeId == Typeid_Int8)
+        result = 8;
+    else if(type->typeId == Typeid_Uint16 ||
+            type->typeId == Typeid_Int16)
+        result = 16;
+    else if(type->typeId == Typeid_Uint32 ||
+            type->typeId == Typeid_Int32 ||
+            type->typeId == Typeid_Float)
+        result = 32;
+    else if(type->typeId == Typeid_Uint64 ||
+            type->typeId == Typeid_Int64 ||
+            type->typeId == Typeid_Double)
+        result = 64;
+    
+    return result;
+}
+
+// @temporary What do we do with structs??? (not idents)
+cforceinline int GetTypeSize(TypeInfo* type)
+{
+    if(type->typeId >= 0 && type->typeId < StArraySize(typeSize))
+        return typeSize[type->typeId];
+    
+    if(type->typeId == Typeid_Ptr ||
+       type->typeId == Typeid_Proc)
+        return 8;
+    
+    if(type->typeId == Typeid_Ident)
+    {
+        auto structDef = ((Ast_DeclaratorIdent*)type)->structDef;
+        return structDef->size;
+    }
+    
+    Assert(false && "not implemented");
+    return -1;
+}
+
+cforceinline int GetTypeAlign(TypeInfo* type)
+{
+    if(type->typeId >= 0 && type->typeId < StArraySize(typeSize))
+        return typeSize[type->typeId];
+    
+    if(type->typeId == Typeid_Ptr ||
+       type->typeId == Typeid_Proc)
+        return 8;
+    
+    if(type->typeId == Typeid_Ident)
+    {
+        auto structDef = ((Ast_DeclaratorIdent*)type)->structDef;
+        return structDef->align;
+    }
+    
+    Assert(false && "not implemented");
+    return -1;
 }
 
 TypeInfo* GetBaseType(TypeInfo* type);

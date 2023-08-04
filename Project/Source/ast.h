@@ -2,12 +2,19 @@
 #pragma once
 
 #include "base.h"
-#include "lexer.h"
-#include "memory_management.h"
+//#include "lexer.h"
+#include "dependency_graph.h"
+//#include "memory_management.h"
 #include "atom.h"
+
+struct TB_Node;  //@temporary
+struct TB_Function;
+struct TB_FunctionPrototype;
 
 // @cleanup Maybe the names for these should be changed...
 // Perhaps Ast_PtrType and Ast_ArrayType?
+
+struct Ast_FileScope;
 
 struct Ast_Expr;
 struct Ast_Stmt;
@@ -51,12 +58,10 @@ struct Ast_NumLiteral;
 // Ast node types
 enum Ast_NodeKind : uint8
 {
-    // Toplevel
-    AstKind_ProcDef,
-    AstKind_StructDef,
-    
-    // Declarators
+    // Declarations
     AstKind_DeclBegin,
+    AstKind_StructDef,
+    AstKind_ProcDef,
     AstKind_VarDecl,
     AstKind_EnumDecl,
     AstKind_DeclEnd,
@@ -134,31 +139,34 @@ struct TypeInfo
 // NOTE: This has to be in the exact same order as the typeid enum
 TypeInfo primitiveTypes[] =
 {
-    { Typeid_Bool },  { Typeid_Char },
+    { Typeid_Bool  }, { Typeid_Char   },
     { Typeid_Uint8 }, { Typeid_Uint16 }, { Typeid_Uint32 }, { Typeid_Uint64 },
-    { Typeid_Int8 },  { Typeid_Int16 },  { Typeid_Int32 },  { Typeid_Int64 },
+    { Typeid_Int8  }, { Typeid_Int16  }, { Typeid_Int32  }, { Typeid_Int64  },
     { Typeid_Float }, { Typeid_Double }
+};
+
+// Size in bytes of all primitive types
+// NOTE: This has to be in the exact same order as the typeid enum
+const uint32 typeSize[] =
+{
+    // Bool,  Char,
+    1,        1,
+    // Uint8, Uint16, Uint32, Uint64,
+    1,        2,      4,      8,
+    // Int8,  Int16,  Int32,  Int64,
+    1,        2,      4,      8,
+    // Float, Double
+    4,        8
 };
 
 TypeInfo noneType = { Typeid_None };
 
-// Indicates at which point a specific compilation entity
-// is at in the compilation process. For example, a compilation
-// entity at phase CompPhase_Typecheck means that it finished
-// typechecking but has not finished the CompPhase_ComputeSize yet.
-enum CompPhase : uint8
-{
-    CompPhase_Parse = 0,
-    CompPhase_Typecheck,
-    CompPhase_ComputeSize,
-    CompPhase_Codegen
-};
-
+// @cleanup the same function is in typer (should just be in typer)
 template<typename t>
 t* Ast_MakeType(Arena* arena)
 {
     // Call the constructor for the type,
-    // Pack the types for better cache locality
+    // pack the types for better cache locality
     t* result = Arena_AllocAndInitPack(arena, t);
     return result;
 }
@@ -173,14 +181,14 @@ TokenType PrimitiveTypeidToTokType(TypeId typeId)
     return (TokenType)(typeId + Tok_IdentBegin);
 }
 
-// Some of the token data is used frequently (like the token string)
-// so it's beneficial to store it directly here
 struct Ast_Node
 {
     // Primary token representing this node
     // (e.g. 'if' token for if statement)
     Token* where;
     Ast_NodeKind kind;
+    
+    Dg_Idx entityIdx = Dg_Null;
     CompPhase phase = CompPhase_Parse;
 };
 
@@ -210,17 +218,6 @@ inline bool Ast_IsDecl(Ast_Node* node)
     return node->kind >= AstKind_DeclBegin && node->kind <= AstKind_DeclEnd;
 }
 
-inline bool Ast_IsTopLevel(Ast_Node* node)
-{
-    if(!node)
-        return true;
-    
-    return true;
-    
-    //return (node->kind >= AstKind_ToplevelBegin && node->kind <= AstKind_ToplevelEnd) ||
-    //node->kind == AstKind_ProcDef || Ast_IsDecl(node);
-}
-
 // These are like typesafe typedefs (for pointers)
 struct Ast_Expr : public Ast_Node
 {
@@ -237,6 +234,13 @@ struct Ast_Block : public Ast_Stmt
     
     Ast_Block* enclosing = 0;
     Array<Ast_Node*> stmts = { 0, 0 };
+};
+
+struct Ast_FileScope
+{
+    // Stuff about which files are imported here
+    
+    Ast_Block scope;
 };
 
 // Statements
@@ -342,16 +346,19 @@ struct Ast_DeclaratorProc : public TypeInfo
     
     Array<Ast_Declaration*> args = { 0, 0 };
     Array<TypeInfo*> retTypes = { 0, 0 };
+    
+    // Codegen
+    TB_FunctionPrototype* tildeProto = 0;
 };
 
 struct Ast_DeclaratorIdent : public TypeInfo
 {
     Ast_DeclaratorIdent() { typeId = Typeid_Ident; };
     
-    String ident;
+    //String ident;
     
     // Later this will be used
-    Atom* identA;
+    Atom* ident;
     
     Array<Ast_Expr*> polyParams = { 0, 0 };
     
@@ -364,8 +371,13 @@ struct Ast_DeclaratorStruct : public TypeInfo
     Ast_DeclaratorStruct() { typeId = Typeid_Struct; };
     
     Array<TypeInfo*> memberTypes = { 0, 0 };
-    Array<Token*> memberNames = { 0, 0 };
+    Array<Atom*>     memberNames = { 0, 0 };
+    
+    // For errors?
+    Array<Token*> memberNameTokens = { 0, 0 };
     //Array<Ast_Declaration*> decls;
+    
+    //uint32 size = -1;
 };
 
 // Declarations
@@ -373,12 +385,16 @@ struct Ast_DeclaratorStruct : public TypeInfo
 struct Ast_Declaration : public Ast_Node
 {
     TypeInfo* type;
-    String name;
+    //String name;
     
     // In the future this will be used
-    Atom* nameA;
+    Atom* name;
+    
     
     Ast_Expr* initExpr = 0;
+    
+    // Codegen
+    TB_Node* tildeNode;
 };
 
 struct Ast_VarDecl : public Ast_Declaration
@@ -393,6 +409,8 @@ struct Ast_ProcDef : public Ast_Declaration
     Ast_ProcDef() { kind = AstKind_ProcDef; };
     
     Ast_Block block;
+    
+    TB_Function* tildeProc = 0;
 };
 
 struct Ast_StructDef : public Ast_Declaration
@@ -400,7 +418,8 @@ struct Ast_StructDef : public Ast_Declaration
     Ast_StructDef() { kind = AstKind_StructDef; };
     
     // Filled in later in the sizing stage 
-    uint16 size;
+    uint32 size = -1;
+    uint32 align = -1;
 };
 
 // Expressions
@@ -466,10 +485,10 @@ struct Ast_IdentExpr : public Ast_Expr
 {
     Ast_IdentExpr() { kind = AstKind_Ident; };
     
-    String ident;
+    //String ident;
     
     // Later will be
-    Atom* identA;
+    Atom* ident;
     
     // Filled in by the typechecker
     Ast_Declaration* declaration = 0;
@@ -480,10 +499,10 @@ struct Ast_MemberAccess : public Ast_Expr
     Ast_MemberAccess() { kind = AstKind_MemberAccess; };
     
     Ast_Expr* target;
-    String memberName;
+    //String memberName;
     
     // Later will be
-    Atom* memberNameA;
+    Atom* memberName;
     
     // Filled in by the typechecker
     Ast_StructDef* structDef = 0;
@@ -532,6 +551,11 @@ t Ast_InitNode(Token* token);
 cforceinline Ast_DeclaratorProc* Ast_GetDeclProc(Ast_ProcDef* procDef)
 {
     return (Ast_DeclaratorProc*)procDef->type;
+}
+
+cforceinline Ast_DeclaratorStruct* Ast_GetDeclStruct(Ast_StructDef* structDef)
+{
+    return (Ast_DeclaratorStruct*)structDef->type;
 }
 
 cforceinline Token* Ast_GetVarDeclTypeToken(Ast_VarDecl* decl)
