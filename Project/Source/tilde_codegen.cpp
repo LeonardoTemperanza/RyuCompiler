@@ -19,8 +19,6 @@ void Tc_TestCode(Ast_FileScope* file)
     Tc_Context ctx;
     ctx.module = module;
     ctx.emitAsm = true;
-    ctx.outputAsmFile = fopen("output.asm", "w");
-    defer(fclose(ctx.outputAsmFile));
     
     for_array(i, file->scope.stmts)
     {
@@ -46,6 +44,10 @@ void Tc_TestCode(Ast_FileScope* file)
     
     if(useTbLinker)
     {
+        // TB Linker is still extremely early in development,
+        // does not seem to work at this moment. (It generates
+        // wrong executables)
+        
         TB_Linker* linker = tb_linker_create(exeType, arch);
         defer(tb_linker_destroy(linker));
         
@@ -81,6 +83,7 @@ void Tc_TestCode(Ast_FileScope* file)
         
         printf("Tilde Backend: Successfully created object file!\n");
         
+        // Pass object file to linker
         //LaunchPlatformSpecificLinker();
     }
 }
@@ -129,6 +132,7 @@ TB_Node* Tc_GenNode(Tc_Context* ctx, Ast_Node* node)
 void Tc_GenProcDef(Tc_Context* ctx, Ast_ProcDef* proc)
 {
     // Create the debug type, for debugging but also so that tilde can handle the ABI
+    // Automatically
     tb_arena_create(&ctx->procArena, MB(1));
     
     auto procDecl = Ast_GetDeclProc(proc);
@@ -166,11 +170,7 @@ void Tc_GenProcDef(Tc_Context* ctx, Ast_ProcDef* proc)
     
     if(ctx->emitAsm)
     {
-        FILE* outputFile = fopen("output.asm", "w");
-        tb_output_print_asm(output, outputFile);
-        fclose(outputFile);
-        
-        printf("Printed asm to file\n");
+        tb_output_print_asm(output, stdout);
     }
 }
 
@@ -204,7 +204,29 @@ void Tc_GenBlock(Tc_Context* ctx, Ast_Block* block)
 
 void Tc_GenIf(Tc_Context* ctx, Ast_If* stmt)
 {
+    TB_Node* thenNode = tb_inst_region(ctx->proc);
+    TB_Node* endNode  = tb_inst_region(ctx->proc);
+    TB_Node* elseNode = endNode;
+    if(stmt->elseStmt)
+        elseNode = tb_inst_region(ctx->proc);
     
+    auto condNode = Tc_GenNode(ctx, stmt->condition);
+    tb_inst_if(ctx->proc, condNode, thenNode, elseNode);
+    
+    // Then
+    tb_inst_set_control(ctx->proc, thenNode);
+    Tc_GenBlock(ctx, stmt->thenBlock);
+    tb_inst_goto(ctx->proc, endNode);
+    
+    // Else
+    if(stmt->elseStmt)
+    {
+        tb_inst_set_control(ctx->proc, elseNode);
+        Tc_GenNode(ctx, stmt->elseStmt);
+        tb_inst_goto(ctx->proc, endNode);
+    }
+    
+    tb_inst_set_control(ctx->proc, endNode);
 }
 
 void Tc_GenFor(Tc_Context* ctx, Ast_For* stmt) {}
@@ -238,11 +260,16 @@ TB_Node* Tc_GenIdent(Tc_Context* ctx, Ast_IdentExpr* expr)
     {
         auto procDef = (Ast_ProcDef*)expr->declaration;
         auto address = tb_inst_get_symbol_address(ctx->proc, (TB_Symbol*)procDef->tildeProc);
-        return tb_inst_load(ctx->proc, Tc_ConvertToTildeType(procDef->type), address, GetTypeAlign(procDef->type), false);
+        
+        return address;
+        //return tb_inst_load(ctx->proc, Tc_ConvertToTildeType(procDef->type), address, GetTypeAlign(procDef->type), false);
     }
     
     // Variable declaration (global or local)
-    return tb_inst_load(ctx->proc, Tc_ConvertToTildeType(expr->type), expr->declaration->tildeNode, GetTypeAlign(expr->type), false);
+    if(ctx->needValue)
+        return tb_inst_load(ctx->proc, Tc_ConvertToTildeType(expr->type), expr->declaration->tildeNode, GetTypeAlign(expr->type), false);
+    else
+        return expr->declaration->tildeNode;
 }
 
 // Only works for single return value
@@ -274,8 +301,13 @@ TB_Node* Tc_GenFuncCall(Tc_Context* ctx, Ast_FuncCall* call)
 
 TB_Node* Tc_GenBinExpr(Tc_Context* ctx, Ast_BinaryExpr* expr)
 {
+    if(expr->op == '=')
+        ctx->needValue = false;
     TB_Node* lhs = Tc_GenNode(ctx, expr->lhs);
+    ctx->needValue = true;
     TB_Node* rhs = Tc_GenNode(ctx, expr->rhs);
+    ctx->needValue = true;
+    
     Assert(lhs && rhs);
     
     // @temporary assuming integer operands

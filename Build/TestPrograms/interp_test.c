@@ -1,7 +1,21 @@
 
 proc add()->int
 {
-    return 2 + 2;
+    int a = 2;
+    int b = 2+2;
+    
+    a = 2 + 2;
+    b = 2*(2+2);
+    
+    if(a)
+    {
+        b = 2*(2+2)+2;
+        2*(2+2);
+    }
+    else
+        2*2;
+    
+    return a+b;
 }
 
 /*
@@ -23,5 +37,5 @@ proc add(int i, int j)->int
 
 proc main()->int
 {
-    return 2;
+    return add() + add();
 }

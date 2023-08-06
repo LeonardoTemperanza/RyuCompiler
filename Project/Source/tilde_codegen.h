@@ -13,7 +13,9 @@ struct Tc_Context
     
     TB_Function* mainProc = 0;
     bool emitAsm = false;
-    FILE* outputAsmFile = 0;
+    
+    // Need address if false
+    bool needValue = true;
 };
 
 void Tc_TestCode(Ast_FileScope* file);
