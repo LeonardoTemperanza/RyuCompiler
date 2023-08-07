@@ -124,42 +124,49 @@ enum Interp_OpCodeEnum
     // stuff is not needed, and the other instructions could
     // simply be added later.
 };
-typedef uint8 Interp_OpCode;
 
-struct Interp_Type
-{
-    union
-    {
-        struct
-        {
-            uint8 type;
-            uint8 width;
-            uint16 data;
-        };
-        uint32 raw;
-    };
-};
+typedef uint8 Interp_OpCode;
 
 typedef uint16 RegIdx;
 typedef uint8 TypeIdx;
+typedef uint32 InstrIdx;
+
+enum Interp_InstrBitfield
+{
+    // ...
+};
 
 struct Interp_Instr
 {
     Interp_OpCode op;
-    TypeIdx typeIdx;  // To save space only the type is stored here
+    RegIdx dst, src1, src2;
     
-    // How much stuff can be crammed here?
+    // For some instructions
+    Array<RegIdx> array1;
+    Array<RegIdx> array2;
+    
     uint8 bitfield;
     
-    uint8 type;  // Is this not just included in the instruction?
+    // Type stuff
+    uint8 type;
     uint8 width;
-    uint16 data;  // Bitwidth? Does that need to be
+    uint16 data;
+};
+
+struct Interp_Proc
+{
+    DynArray<Interp_Instr> instrs;
 };
 
 struct Interp
 {
+    Typer* typer;
+    DepGraph* graph;
+    
     Arena arena;
-    uchar* instrData;
+    DynArray<Ast_DeclaratorStruct*> structs;
+    DynArray<Ast_DeclaratorProc*> procHeaders;
+    DynArray<Interp_Proc> procs;
 };
 
 struct VirtualMachine
@@ -169,8 +176,94 @@ struct VirtualMachine
     uchar* retStack;
     size_t stackFrameAddress;
     size_t programCounter;
-    
-    Interp_Type types[256];
 };
 
-void Interp_PrintInstr();
+// Bytecode instruction generation
+void Interp_Region(Interp_Proc* proc);
+void Interp_Unreachable(Interp_Proc* proc);
+void Interp_DebugBreak(Interp_Proc* proc);
+void Interp_Trap(Interp_Proc* proc);
+void Interp_Poison(Interp_Proc* proc);
+// void Interp_Param(Interp_Proc* proc);
+void Interp_FPExt(Interp_Proc* proc);
+void Interp_SExt(Interp_Proc* proc);
+void Interp_ZExt(Interp_Proc* proc);
+void Interp_Trunc(Interp_Proc* proc);
+void Interp_Int2Ptr(Interp_Proc* proc);
+void Interp_Ptr2Int(Interp_Proc* proc);
+void Interp_Int2Float(Interp_Proc* proc);
+void Interp_Float2Int(Interp_Proc* proc);
+void Interp_Bitcast(Interp_Proc* proc);
+void Interp_Local(Interp_Proc* proc);
+void Interp_Load(Interp_Proc* proc);
+void Interp_Store(Interp_Proc* proc);
+void Interp_ImmBool(Interp_Proc* proc);
+void Interp_ImmSInt(Interp_Proc* proc);
+void Interp_ImmUInt(Interp_Proc* proc);
+void Interp_Float32(Interp_Proc* proc);
+void Interp_Float64(Interp_Proc* proc);
+// void Interp_CString(Interp_Proc* proc);
+// void Interp_String(Interp_Proc* proc);
+void Interp_MemSet(Interp_Proc* proc);
+void Interp_MemZero(Interp_Proc* proc);
+void Interp_MemZero(Interp_Proc* proc);
+void Interp_ArrayAccess(Interp_Proc* proc);
+void Interp_MemberAccess(Interp_Proc* proc);
+void Interp_GetSymbolAddress(Interp_Proc* proc);
+void Interp_Select(Interp_Proc* proc);
+void Interp_Add(Interp_Proc* proc);
+void Interp_Sub(Interp_Proc* proc);
+void Interp_Mul(Interp_Proc* proc);
+void Interp_Div(Interp_Proc* proc);
+void Interp_Mod(Interp_Proc* proc);
+void Interp_BSwap(Interp_Proc* proc);
+//void Interp_CLZ(Interp_Proc* proc);
+//void Interp_CTZ(Interp_Proc* proc);
+//void Interp_PopCount(Interp_Proc* proc);
+void Interp_Not(Interp_Proc* proc);
+void Interp_Neg(Interp_Proc* proc);
+void Interp_And(Interp_Proc* proc);
+void Interp_Or(Interp_Proc* proc);
+void Interp_Xor(Interp_Proc* proc);
+void Interp_Sar(Interp_Proc* proc);
+void Interp_ShL(Interp_Proc* proc);
+void Interp_ShR(Interp_Proc* proc);
+void Interp_RoL(Interp_Proc* proc);
+void Interp_RoR(Interp_Proc* proc);
+void Interp_AtomicLoad(Interp_Proc* proc);
+void Interp_AtomicExchange(Interp_Proc* proc);
+void Interp_AtomicAdd(Interp_Proc* proc);
+void Interp_AtomicSub(Interp_Proc* proc);
+void Interp_AtomicAnd(Interp_Proc* proc);
+void Interp_AtomicXor(Interp_Proc* proc);
+void Interp_AtomicOr(Interp_Proc* proc);
+void Interp_AtomicCmpExchange(Interp_Proc* proc);
+void Interp_FAdd(Interp_Proc* proc);
+void Interp_FSub(Interp_Proc* proc);
+void Interp_FMul(Interp_Proc* proc);
+void Interp_FDiv(Interp_Proc* proc);
+void Interp_CmpEq(Interp_Proc* proc);
+void Interp_CmpNe(Interp_Proc* proc);
+void Interp_CmpILT(Interp_Proc* proc);
+void Interp_CmpILE(Interp_Proc* proc);
+void Interp_CmpIGT(Interp_Proc* proc);
+void Interp_CmpIGE(Interp_Proc* proc);
+void Interp_CmpFLT(Interp_Proc* proc);
+void Interp_CmpFLE(Interp_Proc* proc);
+void Interp_CmpFGT(Interp_Proc* proc);
+void Interp_CmpFGE(Interp_Proc* proc);
+// Intrinsics... Not supporting those for now
+void Interp_SysCall(Interp_Proc* proc);
+void Interp_Call(Interp_Proc* proc);
+void Interp_Safepoint(Interp_Proc* proc);
+void Interp_Goto(Interp_Proc* proc);
+void Interp_If(Interp_Proc* proc);
+void Interp_Branch(Interp_Proc* proc);
+
+// AST -> bytecode conversion
+void Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node);
+void Interp_ConvertProc(Interp_Proc* proc, Ast_Node* node);
+// ...
+
+// Code execution
+void Interp_ExecProc(Interp_Proc* proc);
