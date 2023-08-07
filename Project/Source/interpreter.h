@@ -45,7 +45,9 @@ enum Interp_OpCodeEnum
     
     // Basic block terminators
     
-    Op_Branch,  // Works like a switch (so, any number of cases)
+    // Works like a switch (so, any number of cases),
+    // Can also be used as a goto (no condition and one case)
+    Op_Branch,
     Op_Ret,
     Op_Unreachable,  // Do I need this?
     Op_Trap,
@@ -127,35 +129,119 @@ enum Interp_OpCodeEnum
 
 typedef uint8 Interp_OpCode;
 
+// A 16-bit register means that you can use 65536 temporary registers,
+// which means that an expression can only be so long. That seams pretty
+// reasonable to me, as it means that a sum can only be 65536 operands long,
+// for example. If I don't want to impose a limit, I guess in the extreme
+// case a form of register spilling could be implemented?
 typedef uint16 RegIdx;
 typedef uint8 TypeIdx;
-typedef uint32 InstrIdx;
+typedef uint32 InstrIdx;  // 32-bits for a single function are enough imo
+
+// Smaller than regular array (64-bits instead of 128)
+struct Interp_InstrArray
+{
+    InstrIdx idx = 0;
+    InstrIdx length;  // The number of instructions can't be greater than the max amount
+};
+
+// 32-bits instead of 128
+struct Interp_RegArray
+{
+    RegIdx idx = 0;
+    RegIdx length;  // The number of registers can't be greater than the max amount
+};
 
 enum Interp_InstrBitfield
 {
     // ...
 };
 
-struct Interp_Instr
+// Same as tilde type for now...
+struct Interp_Type
 {
-    Interp_OpCode op;
-    RegIdx dst, src1, src2;
-    
-    // For some instructions
-    Array<RegIdx> array1;
-    Array<RegIdx> array2;
-    
-    uint8 bitfield;
-    
-    // Type stuff
     uint8 type;
     uint8 width;
     uint16 data;
 };
 
+// Maybe just doing variable size instructions is better??
+// Or just do a tagged union, probably more readable
+struct Interp_Instr
+{
+    Interp_OpCode op;
+    uint8 bitfield;
+    Interp_Type type;
+    
+    union
+    {
+        struct
+        {
+            RegIdx dst, src1, src2;
+        } bin;
+        struct
+        {
+            RegIdx dst;
+            int64 val;
+        } imm;
+        struct
+        {
+            RegIdx dst;
+            uint64 size, align;
+        } local;
+        struct
+        {
+            RegIdx dst;
+            RegIdx addr;
+            uint64 align;
+        } load;
+        struct
+        {
+            RegIdx addr;
+            RegIdx val;
+            uint64 align;
+        } store;
+        struct
+        {
+            Interp_RegArray args;
+            Interp_RegArray rets;
+        } call;
+        struct
+        {
+            Interp_RegArray keys;
+            Interp_InstrArray cases;
+            InstrIdx defaultCase;  // Goto only has this
+        } branch;
+    };
+};
+
 struct Interp_Proc
 {
+    // This could be per-proc or global
+    // (per-proc for parallelism?)
+    Arena* arena;  // Where to store arrays
+    
+    // Tells us which register to currently use.
+    // Must be reset after the end of an expression
+    int64 regCounter = 0;
+    
     DynArray<Interp_Instr> instrs;
+};
+
+// Registers are only used for temporaries,
+// for anything else stack operations are used
+struct Interp_Register
+{
+    union
+    {
+        int8 int8Value;
+        int16 int16Value;
+        int32 int32Value;
+        int64 int64Value;
+        int64 value;
+    };
+    
+    Interp_Type type;
 };
 
 struct Interp
@@ -172,6 +258,8 @@ struct Interp
 struct VirtualMachine
 {
     Arena stackArena;
+    
+    DynArray<Interp_Register> registers;
     
     uchar* retStack;
     size_t stackFrameAddress;
@@ -261,6 +349,7 @@ void Interp_If(Interp_Proc* proc);
 void Interp_Branch(Interp_Proc* proc);
 
 // AST -> bytecode conversion
+void Interp_EndOfExpression(Interp_Proc* proc);  // At this point registers can be reused
 void Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node);
 void Interp_ConvertProc(Interp_Proc* proc, Ast_Node* node);
 // ...

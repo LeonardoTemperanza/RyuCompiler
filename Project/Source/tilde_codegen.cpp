@@ -262,7 +262,7 @@ TB_Node* Tc_GenIdent(Tc_Context* ctx, Ast_IdentExpr* expr)
         auto address = tb_inst_get_symbol_address(ctx->proc, (TB_Symbol*)procDef->tildeProc);
         
         return address;
-        //return tb_inst_load(ctx->proc, Tc_ConvertToTildeType(procDef->type), address, GetTypeAlign(procDef->type), false);
+        return tb_inst_load(ctx->proc, Tc_ConvertToTildeType(procDef->type), address, GetTypeAlign(procDef->type), false);
     }
     
     // Variable declaration (global or local)
