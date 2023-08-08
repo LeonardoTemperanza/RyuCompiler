@@ -152,8 +152,6 @@ struct Interp_Type
     uint16 data;
 };
 
-// Maybe just doing variable size instructions is better??
-// Or just do a tagged union, probably more readable
 struct Interp_Instr
 {
     Interp_OpCode op;
@@ -222,6 +220,7 @@ struct Interp_Proc
     // Must be reset after the end of an expression
     int64 regCounter = 0;
     
+    DynArray<Interp_Instr> locals;
     DynArray<Interp_Instr> instrs;
 };
 
@@ -263,7 +262,7 @@ struct VirtualMachine
 };
 
 // Bytecode instruction generation
-void Interp_Region(Interp_Proc* proc);
+InstrIdx Interp_Region(Interp_Proc* proc);
 void Interp_Unreachable(Interp_Proc* proc);
 void Interp_DebugBreak(Interp_Proc* proc);
 void Interp_Trap(Interp_Proc* proc);
@@ -340,8 +339,10 @@ void Interp_CmpFGE(Interp_Proc* proc);
 void Interp_SysCall(Interp_Proc* proc);
 void Interp_Call(Interp_Proc* proc);
 void Interp_Safepoint(Interp_Proc* proc);
-void Interp_Goto(Interp_Proc* proc);
-void Interp_If(Interp_Proc* proc);
+Interp_Instr* Interp_Goto(Interp_Proc* proc, InstrIdx target);
+Interp_Instr* Interp_Goto(Interp_Proc* proc);
+Interp_Instr* Interp_If(Interp_Proc* proc, RegIdx value, InstrIdx ifInstr, InstrIdx elseInstr);
+Interp_Instr* Interp_If(Interp_Proc* proc, RegIdx value);
 void Interp_Branch(Interp_Proc* proc);
 
 // AST -> bytecode conversion
@@ -353,6 +354,7 @@ void Interp_ConvertBlock(Interp_Proc* proc, Ast_Block* block);
 
 // Utilities
 void Interp_PrintProc(Interp_Proc* proc);
+void Interp_PrintInstr(Interp_Instr* instr);
 
 // Code execution
 void Interp_ExecProc(Interp_Proc* proc);

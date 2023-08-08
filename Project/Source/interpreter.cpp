@@ -13,15 +13,45 @@ Interp_Proc* Interp_MakeProc(Interp* interp)
     newElement.instrArena = Arena_VirtualMemInit(GB(4), MB(2));
     newElement.regArena   = Arena_VirtualMemInit(GB(4), MB(2));
     newElement.instrs = { 0, 0, 0 };
+    newElement.locals = { 0, 0, 0 };
     return &newElement;
 }
 
-void Interp_Region(Interp_Proc* proc)
+uint32 Interp_AllocateRegIdxArray(Interp_Proc* proc, RegIdx* values, uint16 arrayCount)
+{
+    uint32 oldLength = (uint32)proc->instrArrays.length;
+    proc->regArrays.Resize(&proc->regArena, proc->regArrays.length + arrayCount);
+    
+    for(int i = oldLength; i < proc->regArrays.length; ++i)
+    {
+        int j = i - oldLength;
+        proc->regArrays[i] = values[j];
+    }
+    
+    return oldLength;
+}
+
+uint32 Interp_AllocateInstrIdxArray(Interp_Proc* proc, InstrIdx* values, uint32 arrayCount)
+{
+    uint32 oldLength = (uint32)proc->instrArrays.length;
+    proc->instrArrays.Resize(&proc->instrArena, proc->instrArrays.length + arrayCount);
+    
+    for(int i = oldLength; i < proc->instrArrays.length; ++i)
+    {
+        int j = i - oldLength;
+        proc->instrArrays[i] = values[j];
+    }
+    
+    return oldLength;
+}
+
+InstrIdx Interp_Region(Interp_Proc* proc)
 {
     proc->instrs.Resize(proc->instrs.length + 1);
     auto& newElement = proc->instrs[proc->instrs.length-1];
     
     newElement.op = Op_Region;
+    return proc->instrs.length - 1;
 }
 
 void Interp_Unreachable(Interp_Proc* proc)
@@ -101,8 +131,8 @@ void Interp_Bitcast(Interp_Proc* proc)
 // Dest is the resulting address
 RegIdx Interp_Local(Interp_Proc* proc, uint64 size, uint64 align)
 {
-    proc->instrs.Resize(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
+    proc->locals.Resize(proc->locals.length + 1);
+    auto& newElement = proc->locals[proc->locals.length-1];
     
     newElement.op          = Op_Local;
     newElement.local.dst   = proc->regCounter;
@@ -327,21 +357,65 @@ void Interp_Call(Interp_Proc* proc) {}
 
 void Interp_Safepoint(Interp_Proc* proc) {}
 
-// TODO: Continue work here
-void Interp_Goto(Interp_Proc* proc, InstrIdx target)
+Interp_Instr* Interp_Goto(Interp_Proc* proc, InstrIdx target)
 {
     proc->instrs.Resize(proc->instrs.length + 1);
     auto& newElement = proc->instrs[proc->instrs.length-1];
     
     newElement.op = Op_Branch;
     newElement.branch.defaultCase = target;
-    //newElement.dst  = proc->regCounter++;
-    //newElement.a.c;
-    //newElement.src1 = reg1;
-    //newElement.src2 = reg2;
+    newElement.branch.keyArrayStart = 0;
+    newElement.branch.keyArrayCount = 0;
+    newElement.branch.caseArrayStart = 0;
+    newElement.branch.caseArrayCount = 0;
+    return &newElement;
 }
 
-void Interp_If(Interp_Proc* proc) {}
+Interp_Instr* Interp_Goto(Interp_Proc* proc)
+{
+    proc->instrs.Resize(proc->instrs.length + 1);
+    auto& newElement = proc->instrs[proc->instrs.length-1];
+    
+    newElement.op = Op_Branch;
+    newElement.branch.defaultCase = 0;
+    newElement.branch.keyArrayStart = 0;
+    newElement.branch.keyArrayCount = 0;
+    newElement.branch.caseArrayStart = 0;
+    newElement.branch.caseArrayCount = 0;
+    return &newElement;
+}
+
+Interp_Instr* Interp_If(Interp_Proc* proc, RegIdx value, InstrIdx ifInstr, InstrIdx elseInstr)
+{
+    proc->instrs.Resize(proc->instrs.length + 1);
+    auto& newElement = proc->instrs[proc->instrs.length-1];
+    
+    uint32 instrIdx = Interp_AllocateInstrIdxArray(proc, &ifInstr, 1);
+    uint32 regIdx = Interp_AllocateRegIdxArray(proc, &value, 1);
+    
+    newElement.op = Op_Branch;
+    newElement.branch.defaultCase = elseInstr;
+    newElement.branch.keyArrayStart = value;
+    newElement.branch.keyArrayCount = 1;
+    newElement.branch.caseArrayStart = regIdx;
+    newElement.branch.caseArrayCount = 1;
+    return &newElement;
+}
+
+// Patch if and else instructions index later
+Interp_Instr* Interp_If(Interp_Proc* proc, RegIdx value)
+{
+    proc->instrs.Resize(proc->instrs.length + 1);
+    auto& newElement = proc->instrs[proc->instrs.length-1];
+    
+    newElement.op = Op_Branch;
+    newElement.branch.defaultCase = 0;
+    newElement.branch.keyArrayStart = 0;
+    newElement.branch.keyArrayCount = 0;
+    newElement.branch.caseArrayStart = 0;
+    newElement.branch.caseArrayCount = 0;
+    return &newElement;
+}
 
 void Interp_Branch(Interp_Proc* proc)
 {
@@ -395,7 +469,34 @@ RegIdx Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
         case AstKind_Block:         Interp_ConvertBlock(proc, (Ast_Block*)node); break;
         case AstKind_If:
         {
+            auto stmt = (Ast_If*)node;
+            RegIdx cond = Interp_ConvertNode(proc, stmt->condition);
+            Interp_EndOfExpression(proc);
             
+            // TODO: wrap this into a function
+            
+            auto ifInstr = Interp_If(proc, cond);
+            auto ifRegionIdx = Interp_Region(proc);
+            
+            uint32 regArrayStart = Interp_AllocateRegIdxArray(proc, &cond, 1);
+            uint32 instrArrayStart = Interp_AllocateInstrIdxArray(proc, &ifRegionIdx, 1);
+            
+            ifInstr->branch.keyArrayStart = regArrayStart;
+            ifInstr->branch.caseArrayStart = instrArrayStart;
+            
+            Interp_ConvertBlock(proc, stmt->thenBlock);
+            auto gotoInstr = Interp_Goto(proc);
+            
+            auto elseRegionIdx = Interp_Region(proc);
+            gotoInstr->branch.defaultCase = elseRegionIdx;
+            
+            if(stmt->elseStmt)
+            {
+                Interp_ConvertNode(proc, stmt->elseStmt);
+                auto elseGotoInstr = Interp_Goto(proc);
+                auto endRegionIdx = Interp_Region(proc);
+                elseGotoInstr->branch.defaultCase = endRegionIdx;
+            }
             
             break;
         }
@@ -418,6 +519,7 @@ RegIdx Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
         case AstKind_Literal:       break;
         case AstKind_NumLiteral:    break;
         {
+            
             
             break;
         }
@@ -480,174 +582,191 @@ void Interp_ConvertBlock(Interp_Proc* proc, Ast_Block* block)
 
 void Interp_PrintProc(Interp_Proc* proc)
 {
+    // Print proc name, etc.
     printf("Procedure:\n");
+    
+    int counter = 0;
+    
+    for_array(i, proc->locals)
+    {
+        printf("%d: ", counter++);
+        Interp_PrintInstr(&proc->locals[i]);
+    }
     
     for_array(i, proc->instrs)
     {
-        auto& instr = proc->instrs[i];
-        switch(instr.op)
-        {
-            case Op_Null: printf("Null"); break;
-            case Op_IntegerConst:
-            {
-                printf("IntConst ");
-                break;
-            }
-            case Op_Float32Const:
-            {
-                printf("Float32Const ");
-                break;
-            }
-            case Op_Float64Const:
-            {
-                printf("Float64Const ");
-                break;
-            }
-            case Op_Start: break;
-            case Op_Region:
-            {
-                printf("Region ");
-                break;
-            }
-            case Op_Call:
-            {
-                printf("Call ");
-                break;
-            }
-            case Op_SysCall:
-            {
-                printf("SysCall ");
-                break;
-            }
-            case Op_Store:
-            {
-                printf("Store ");
-                break;
-            }
-            case Op_MemCpy:
-            {
-                printf("MemCpy ");
-                break;
-            }
-            case Op_MemSet:
-            {
-                printf("MemSet ");
-                break;
-            }
-            case Op_AtomicTestAndSet:
-            {
-                printf("AtomicTestAndSet ");
-                break;
-            }
-            case Op_AtomicClear:
-            {
-                printf("AtomicClear ");
-                break;
-            }
-            case Op_AtomicLoad:
-            {
-                printf("AtomicLoad ");
-                break;
-            }
-            case Op_AtomicExchange:
-            {
-                printf("AtomicExchange ");
-                break;
-            }
-            case Op_AtomicAdd:
-            {
-                printf("AtomicAdd ");
-                break;
-            }
-            case Op_AtomicSub:
-            {
-                printf("AtomicSub ");
-                break;
-            }
-            case Op_AtomicAnd:
-            {
-                printf("AtomicAnd ");
-                break;
-            }
-            case Op_AtomicXor:
-            {
-                printf("AtomicXor ");
-                break;
-            }
-            case Op_AtomicOr:
-            {
-                printf("AtomicOr ");
-                break;
-            }
-            case Op_AtomicCompareExchange: break;
-            case Op_DebugBreak: break;
-            case Op_Branch: break;
-            case Op_Ret: break;
-            case Op_Unreachable: break;
-            case Op_Trap: break;
-            case Op_Poison: break;
-            case Op_Load: break;
-            case Op_Local:
-            {
-                printf("Local ");
-                break;
-            }
-            case Op_GetSymbolAddress: break;
-            case Op_MemberAccess: break;
-            case Op_ArrayAccess: break;
-            case Op_Truncate: break;
-            case Op_FloatExt: break;
-            case Op_SignExt: break;
-            case Op_ZeroExt: break;
-            case Op_Int2Ptr: break;
-            case Op_Uint2Float: break;
-            case Op_Float2Uint: break;
-            case Op_Int2Float: break;
-            case Op_Float2Int: break;
-            case Op_Bitcast: break;
-            case Op_Select: break;
-            case Op_BitSwap: break;
-            case Op_Clz: break;
-            case Op_Ctz: break;
-            case Op_PopCnt: break;
-            case Op_Not: break;
-            case Op_Negate: break;
-            case Op_And: break;
-            case Op_Or: break;
-            case Op_Xor: break;
-            case Op_Add:
-            {
-                printf("Add ");
-                break;
-            }
-            case Op_Sub: break;
-            case Op_Mul: break;
-            case Op_ShL: break;
-            case Op_ShR: break;
-            case Op_Sar: break;
-            case Op_Rol: break;
-            case Op_Ror: break;
-            case Op_UDiv: break;
-            case Op_SDiv: break;
-            case Op_UMod: break;
-            case Op_SMod: break;
-            case Op_FAdd: break;
-            case Op_FSub: break;
-            case Op_FMul: break;
-            case Op_FDiv: break;
-            case Op_CmpEq: break;
-            case Op_CmpNe: break;
-            case Op_CmpULT: break;
-            case Op_CmpULE: break;
-            case Op_CmpSLT: break;
-            case Op_CmpSLE: break;
-            case Op_CmpFLT: break;
-            case Op_CmpFLE: break;
-            default: printf("Unknown operation");
-        }
-        
-        printf("\n");
+        printf("%d: ", counter++);
+        Interp_PrintInstr(&proc->instrs[i]);
     }
+}
+
+void Interp_PrintInstr(Interp_Instr* instr)
+{
+    switch(instr->op)
+    {
+        case Op_Null: printf("Null"); break;
+        case Op_IntegerConst:
+        {
+            printf("IntConst ");
+            break;
+        }
+        case Op_Float32Const:
+        {
+            printf("Float32Const ");
+            break;
+        }
+        case Op_Float64Const:
+        {
+            printf("Float64Const ");
+            break;
+        }
+        case Op_Start: break;
+        case Op_Region:
+        {
+            printf("Region ");
+            break;
+        }
+        case Op_Call:
+        {
+            printf("Call ");
+            break;
+        }
+        case Op_SysCall:
+        {
+            printf("SysCall ");
+            break;
+        }
+        case Op_Store:
+        {
+            printf("Store %d: ", instr->store.addr);
+            printf("%d %I64u", instr->store.val, instr->store.align);
+            break;
+        }
+        case Op_MemCpy:
+        {
+            printf("MemCpy ");
+            break;
+        }
+        case Op_MemSet:
+        {
+            printf("MemSet ");
+            break;
+        }
+        case Op_AtomicTestAndSet:
+        {
+            printf("AtomicTestAndSet ");
+            break;
+        }
+        case Op_AtomicClear:
+        {
+            printf("AtomicClear ");
+            break;
+        }
+        case Op_AtomicLoad:
+        {
+            printf("AtomicLoad ");
+            break;
+        }
+        case Op_AtomicExchange:
+        {
+            printf("AtomicExchange ");
+            break;
+        }
+        case Op_AtomicAdd:
+        {
+            printf("AtomicAdd ");
+            break;
+        }
+        case Op_AtomicSub:
+        {
+            printf("AtomicSub ");
+            break;
+        }
+        case Op_AtomicAnd:
+        {
+            printf("AtomicAnd ");
+            break;
+        }
+        case Op_AtomicXor:
+        {
+            printf("AtomicXor ");
+            break;
+        }
+        case Op_AtomicOr:
+        {
+            printf("AtomicOr ");
+            break;
+        }
+        case Op_AtomicCompareExchange: break;
+        case Op_DebugBreak: break;
+        case Op_Branch: break;
+        case Op_Ret: break;
+        case Op_Unreachable: break;
+        case Op_Trap: break;
+        case Op_Poison: break;
+        case Op_Load: break;
+        case Op_Local:
+        {
+            printf("Local %d: ", instr->local.dst);
+            printf("%d, %d", instr->local.size, instr->local.align);
+            break;
+        }
+        case Op_GetSymbolAddress: break;
+        case Op_MemberAccess: break;
+        case Op_ArrayAccess: break;
+        case Op_Truncate: break;
+        case Op_FloatExt: break;
+        case Op_SignExt: break;
+        case Op_ZeroExt: break;
+        case Op_Int2Ptr: break;
+        case Op_Uint2Float: break;
+        case Op_Float2Uint: break;
+        case Op_Int2Float: break;
+        case Op_Float2Int: break;
+        case Op_Bitcast: break;
+        case Op_Select: break;
+        case Op_BitSwap: break;
+        case Op_Clz: break;
+        case Op_Ctz: break;
+        case Op_PopCnt: break;
+        case Op_Not: break;
+        case Op_Negate: break;
+        case Op_And: break;
+        case Op_Or: break;
+        case Op_Xor: break;
+        case Op_Add:
+        {
+            printf("Add %d:", instr->bin.dst);
+            printf("%d %d", instr->bin.src1, instr->bin.src2);
+            break;
+        }
+        case Op_Sub: break;
+        case Op_Mul: break;
+        case Op_ShL: break;
+        case Op_ShR: break;
+        case Op_Sar: break;
+        case Op_Rol: break;
+        case Op_Ror: break;
+        case Op_UDiv: break;
+        case Op_SDiv: break;
+        case Op_UMod: break;
+        case Op_SMod: break;
+        case Op_FAdd: break;
+        case Op_FSub: break;
+        case Op_FMul: break;
+        case Op_FDiv: break;
+        case Op_CmpEq: break;
+        case Op_CmpNe: break;
+        case Op_CmpULT: break;
+        case Op_CmpULE: break;
+        case Op_CmpSLT: break;
+        case Op_CmpSLE: break;
+        case Op_CmpFLT: break;
+        case Op_CmpFLE: break;
+        default: printf("Unknown operation");
+    }
+    
+    printf("\n");
 }
 
 void Interp_ExecProc(Interp_Proc* proc)
