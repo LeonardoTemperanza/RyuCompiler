@@ -9,11 +9,10 @@
 // stress the dependency system more... Like #size_of and #type_of
 // which are very simple to implement
 
-// @cleanup @cleanup @cleanup
-DepGraph Dg_InitGraph(Arena* arena, Arena* phaseArenas[CompPhase_EnumSize][2])
+DepGraph Dg_InitGraph(Arena* phaseArenas[CompPhase_EnumSize][2])
 {
     DepGraph graph;
-    graph.arena = arena;
+    graph.arena = Arena_VirtualMemInit(GB(1), MB(2));
     
     graph.queues[0].outputArena = phaseArenas[0][1];  // Input arena of stage 1
     for(int i = 1; i < CompPhase_EnumSize; ++i)
@@ -40,7 +39,6 @@ int MainDriver(Parser* p, Ast_FileScope* file)
     size_t commitSize = MB(2);
     
     Arena typeArena = Arena_VirtualMemInit(size, commitSize);
-    Arena graphArena = Arena_VirtualMemInit(size, commitSize);
     
     // Initialize the graph
     Arena  phaseArenas[CompPhase_EnumSize][2];
@@ -54,7 +52,7 @@ int MainDriver(Parser* p, Ast_FileScope* file)
         }
     }
     
-    DepGraph g = Dg_InitGraph(&graphArena, phaseArenaPtrs);
+    DepGraph g = Dg_InitGraph(phaseArenaPtrs);
     Typer t = InitTyper(&typeArena, p);
     t.graph = &g;
     g.typer = &t;
@@ -115,7 +113,8 @@ int MainDriver(Parser* p, Ast_FileScope* file)
     
     if(!exit)
     {
-        printf("There was an infinite loop in the program.\n");
+        // @temporary
+        printf("There likely was an infinite loop in the program.\n");
     }
     
     if(t.tokenizer->status != CompStatus_Success)
@@ -129,7 +128,7 @@ Dg_IdxGen Dg_NewNode(DepGraph* g, Ast_Node* node)
     Dg_IdxGen res = { 0, 0 };
     if(g->firstFree == Dg_Null)
     {
-        g->items.ResizeAndInit(g->arena, g->items.length+1);
+        g->items.ResizeAndInit(&g->arena, g->items.length+1);
         g->items[g->items.length-1].gen = 0;
         res = { (uint32)g->items.length-1, 0 };
     }

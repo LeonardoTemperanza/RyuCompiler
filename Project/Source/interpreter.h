@@ -136,21 +136,8 @@ typedef uint8 Interp_OpCode;
 // case a form of register spilling could be implemented?
 typedef uint16 RegIdx;
 typedef uint8 TypeIdx;
-typedef uint32 InstrIdx;  // 32-bits for a single function are enough imo
-
-// Smaller than regular array (64-bits instead of 128)
-struct Interp_InstrArray
-{
-    InstrIdx idx = 0;
-    InstrIdx length;  // The number of instructions can't be greater than the max amount
-};
-
-// 32-bits instead of 128
-struct Interp_RegArray
-{
-    RegIdx idx = 0;
-    RegIdx length;  // The number of registers can't be greater than the max amount
-};
+typedef uint32 InstrIdx;  // Max of 4 billion instructions per proc
+typedef uint32 ProcIdx;   // Max of 4 billion procedures
 
 enum Interp_InstrBitfield
 {
@@ -171,7 +158,6 @@ struct Interp_Instr
 {
     Interp_OpCode op;
     uint8 bitfield;
-    Interp_Type type;
     
     union
     {
@@ -181,16 +167,18 @@ struct Interp_Instr
         } bin;
         struct
         {
+            Interp_Type type;
             RegIdx dst;
             int64 val;
         } imm;
         struct
         {
             RegIdx dst;
-            uint64 size, align;
+            uint32 size, align;
         } local;
         struct
         {
+            Interp_Type type;
             RegIdx dst;
             RegIdx addr;
             uint64 align;
@@ -203,23 +191,32 @@ struct Interp_Instr
         } store;
         struct
         {
-            Interp_RegArray args;
-            Interp_RegArray rets;
+            RegIdx target;
+            uint32 argArrayStart;
+            uint32 retArrayStart;
+            uint16 argArrayCount;
+            uint16 retArrayCount;
         } call;
         struct
         {
-            Interp_RegArray keys;
-            Interp_InstrArray cases;
-            InstrIdx defaultCase;  // Goto only has this
+            uint32 keyArrayStart;
+            uint32 caseArrayStart;
+            uint32 caseArrayCount;
+            uint16 keyArrayCount;  // If-else only has one
+            
+            InstrIdx defaultCase;  // Goto only has this.
         } branch;
     };
 };
 
 struct Interp_Proc
 {
-    // This could be per-proc or global
-    // (per-proc for parallelism?)
-    Arena* arena;  // Where to store arrays
+    // These are per-proc for parallelism
+    // and also so that indices can be smaller
+    Arena instrArena;
+    Array<InstrIdx> instrArrays;
+    Arena regArena;
+    Array<RegIdx> regArrays;
     
     // Tells us which register to currently use.
     // Must be reset after the end of an expression
@@ -249,7 +246,6 @@ struct Interp
     Typer* typer;
     DepGraph* graph;
     
-    Arena arena;
     DynArray<Ast_DeclaratorStruct*> structs;
     DynArray<Ast_DeclaratorProc*> procHeaders;
     DynArray<Interp_Proc> procs;
@@ -282,9 +278,9 @@ void Interp_Ptr2Int(Interp_Proc* proc);
 void Interp_Int2Float(Interp_Proc* proc);
 void Interp_Float2Int(Interp_Proc* proc);
 void Interp_Bitcast(Interp_Proc* proc);
-void Interp_Local(Interp_Proc* proc);
-void Interp_Load(Interp_Proc* proc);
-void Interp_Store(Interp_Proc* proc);
+RegIdx Interp_Local(Interp_Proc* proc, uint64 size, uint64 align);
+RegIdx Interp_Load(Interp_Proc* proc);
+void Interp_Store(Interp_Proc* proc, Interp_Type type, RegIdx addr, RegIdx val, uint64 align, bool isVolatile);
 void Interp_ImmBool(Interp_Proc* proc);
 void Interp_ImmSInt(Interp_Proc* proc);
 void Interp_ImmUInt(Interp_Proc* proc);
@@ -350,9 +346,13 @@ void Interp_Branch(Interp_Proc* proc);
 
 // AST -> bytecode conversion
 void Interp_EndOfExpression(Interp_Proc* proc);  // At this point registers can be reused
-void Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node);
-void Interp_ConvertProc(Interp_Proc* proc, Ast_Node* node);
+RegIdx Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node);
+Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc);
+void Interp_ConvertBlock(Interp_Proc* proc, Ast_Block* block);
 // ...
+
+// Utilities
+void Interp_PrintProc(Interp_Proc* proc);
 
 // Code execution
 void Interp_ExecProc(Interp_Proc* proc);

@@ -2,6 +2,20 @@
 #include "base.h"
 #include "interpreter.h"
 
+////
+// Bytecode generation helper functions
+////
+
+Interp_Proc* Interp_MakeProc(Interp* interp)
+{
+    interp->procs.ResizeAndInit(interp->procs.length + 1);
+    auto& newElement = interp->procs[interp->procs.length - 1];
+    newElement.instrArena = Arena_VirtualMemInit(GB(4), MB(2));
+    newElement.regArena   = Arena_VirtualMemInit(GB(4), MB(2));
+    newElement.instrs = { 0, 0, 0 };
+    return &newElement;
+}
+
 void Interp_Region(Interp_Proc* proc)
 {
     proc->instrs.Resize(proc->instrs.length + 1);
@@ -28,28 +42,29 @@ void Interp_DebugBreak(Interp_Proc* proc)
 
 void Interp_Trap(Interp_Proc* proc)
 {
-    proc->instrs.Resize(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
     
-    newElement.op = Op_DebugBreak;
 }
 
 void Interp_Poison(Interp_Proc* proc)
 {
+    
 }
 
 // void Interp_Param(Interp_Proc* proc) {}
 
 void Interp_FPExt(Interp_Proc* proc)
 {
+    
 }
 
 void Interp_SExt(Interp_Proc* proc)
 {
+    
 }
 
 void Interp_ZExt(Interp_Proc* proc)
 {
+    
 }
 
 void Interp_Trunc(Interp_Proc* proc)
@@ -62,38 +77,54 @@ void Interp_Int2Ptr(Interp_Proc* proc)
     
 }
 
-void Interp_Ptr2Int(Interp_Proc* proc) {}
+void Interp_Ptr2Int(Interp_Proc* proc)
+{
+    
+}
 
-void Interp_Int2Float(Interp_Proc* proc) {}
+void Interp_Int2Float(Interp_Proc* proc)
+{
+    
+}
 
-void Interp_Float2Int(Interp_Proc* proc) {}
+void Interp_Float2Int(Interp_Proc* proc)
+{
+    
+}
 
-void Interp_Bitcast(Interp_Proc* proc) {}
+void Interp_Bitcast(Interp_Proc* proc)
+{
+    
+}
 
 // Local uses reg1 and reg2 to store size and alignment,
 // Dest is the resulting address
-void Interp_Local(Interp_Proc* proc, uint64 size, uint64 align)
+RegIdx Interp_Local(Interp_Proc* proc, uint64 size, uint64 align)
 {
     proc->instrs.Resize(proc->instrs.length + 1);
     auto& newElement = proc->instrs[proc->instrs.length-1];
     
-    newElement.op   = Op_Local;
-    newElement.local.dst  = proc->regCounter++;
-    newElement.local.size = size;
+    newElement.op          = Op_Local;
+    newElement.local.dst   = proc->regCounter;
+    newElement.local.size  = size;
     newElement.local.align = align;
+    
+    return proc->regCounter++;
 }
 
 // Ignoring atomics for now
-void Interp_Load(Interp_Proc* proc, Interp_Type type, RegIdx addr, uint64 align, bool isVolatile)
+RegIdx Interp_Load(Interp_Proc* proc, Interp_Type type, RegIdx addr, uint64 align, bool isVolatile)
 {
     proc->instrs.Resize(proc->instrs.length + 1);
     auto& newElement = proc->instrs[proc->instrs.length-1];
     
-    newElement.op   = Op_Load;
-    newElement.load.dst  = proc->regCounter++;
-    newElement.load.addr = addr;
+    newElement.op         = Op_Load;
+    newElement.load.dst   = proc->regCounter;
+    newElement.load.addr  = addr;
     newElement.load.align = align;
-    newElement.type = type;
+    newElement.load.type       = type;
+    
+    return proc->regCounter++;
 }
 
 void Interp_Store(Interp_Proc* proc, Interp_Type type, RegIdx addr, RegIdx val, uint64 align, bool isVolatile)
@@ -101,10 +132,9 @@ void Interp_Store(Interp_Proc* proc, Interp_Type type, RegIdx addr, RegIdx val, 
     proc->instrs.Resize(proc->instrs.length + 1);
     auto& newElement = proc->instrs[proc->instrs.length-1];
     
-    newElement.op   = Op_Store;
-    newElement.store.addr = addr;
+    newElement.op          = Op_Store;
+    newElement.store.addr  = addr;
     newElement.store.align = align;
-    newElement.type = type;
 }
 
 void Interp_ImmBool(Interp_Proc* proc) {}
@@ -116,24 +146,25 @@ void Interp_ImmSInt(Interp_Proc* proc, Interp_Type type, int64 imm)
     proc->instrs.Resize(proc->instrs.length + 1);
     auto& newElement = proc->instrs[proc->instrs.length-1];
     
-    newElement.op   = Op_IntegerConst;
+    newElement.op      = Op_IntegerConst;
     newElement.imm.dst = proc->regCounter++;
     newElement.imm.val = imm;
-    newElement.type = type;
+    newElement.imm.type    = type;
 }
 
-// @uncertain
-// Should I do something here? I don't think it even matters
-// well... maybe it does for execution
 void Interp_ImmUInt(Interp_Proc* proc, Interp_Type type, uint64 imm)
 {
+    // Zero out all bits which are not supposedly used
+    uint64 mask = ~0ULL >> (type.data);
+    imm &= mask;
+    
     proc->instrs.Resize(proc->instrs.length + 1);
     auto& newElement = proc->instrs[proc->instrs.length-1];
     
-    newElement.op   = Op_IntegerConst;
-    newElement.imm.dst  = proc->regCounter++;
+    newElement.op      = Op_IntegerConst;
+    newElement.imm.dst = proc->regCounter++;
     newElement.imm.val = imm;
-    newElement.type = type;
+    newElement.imm.type    = type;
 }
 
 void Interp_Float32(Interp_Proc* proc) {}
@@ -317,8 +348,309 @@ void Interp_Branch(Interp_Proc* proc)
     
 }
 
+////
+// AST -> bytecode conversion
+////
+
 // At this point the registers can be reused
 void Interp_EndOfExpression(Interp_Proc* proc)
 {
     proc->regCounter = 0;
+}
+
+void Interp_ConvertStmt(Interp_Proc* proc, Ast_Node* node)
+{
+    
+}
+
+RegIdx Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
+{
+    RegIdx result = 0;
+    
+    switch(node->kind)
+    {
+        case AstKind_ProcDef:       break;  // Not handled here
+        case AstKind_StructDef:     break;  // Not handled here
+        case AstKind_DeclBegin:     break;
+        case AstKind_VarDecl:
+        {
+            auto decl = (Ast_VarDecl*)node;
+            RegIdx reg = Interp_Local(proc, GetTypeSize(decl->type), GetTypeAlign(decl->type));
+            //decl->tildeNode = node;
+            
+            if(decl->initExpr)
+            {
+                auto exprReg = Interp_ConvertNode(proc, decl->initExpr);
+                Interp_EndOfExpression(proc);
+                Interp_Type interpType = { 0, 0, 0 };  // @incomplete
+                Interp_Store(proc, interpType, reg, exprReg, 0, false);
+            }
+            
+            result = reg;
+            break;
+        }
+        case AstKind_EnumDecl:      break;
+        case AstKind_DeclEnd:       break;
+        case AstKind_StmtBegin:     break;
+        case AstKind_Block:         Interp_ConvertBlock(proc, (Ast_Block*)node); break;
+        case AstKind_If:
+        {
+            
+            
+            break;
+        }
+        case AstKind_For:           break;
+        case AstKind_While:         break;
+        case AstKind_DoWhile:       break;
+        case AstKind_Switch:        break;
+        case AstKind_Defer:         break;
+        case AstKind_Return:
+        {
+            
+            
+            break;
+        }
+        case AstKind_Break:         break;
+        case AstKind_Continue:      break;
+        case AstKind_EmptyStmt:     break;
+        case AstKind_StmtEnd:       break;
+        case AstKind_ExprBegin:     break;
+        case AstKind_Literal:       break;
+        case AstKind_NumLiteral:    break;
+        {
+            
+            break;
+        }
+        case AstKind_Ident:
+        {
+            
+            
+            break;
+        }
+        case AstKind_FuncCall:
+        {
+            
+            
+            break;
+        }
+        case AstKind_BinaryExpr:
+        {
+            
+            
+            break;
+        }
+        case AstKind_UnaryExpr:     break;
+        case AstKind_TernaryExpr:   break;
+        case AstKind_Typecast:      break;
+        case AstKind_Subscript:     break;
+        case AstKind_MemberAccess:  break;
+        case AstKind_ExprEnd:       break;
+        default: Assert(false && "Enum value out of bounds");
+    }
+    
+    return result;
+}
+
+Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc)
+{
+    printf("Converting proc...\n");
+    
+    auto proc = Interp_MakeProc(interp);
+    
+    // Store some info about the procedure, argument types perhaps, etc.
+    
+    // Block
+    Interp_ConvertBlock(proc, &astProc->block);
+    
+    return proc;
+}
+
+void Interp_ConvertStruct(Interp_Proc* proc, Ast_StructDef* astStruct)
+{
+    
+}
+
+void Interp_ConvertBlock(Interp_Proc* proc, Ast_Block* block)
+{
+    for_array(i, block->stmts)
+        Interp_ConvertNode(proc, block->stmts[i]);
+    
+    // Handle scope stuff here
+}
+
+void Interp_PrintProc(Interp_Proc* proc)
+{
+    printf("Procedure:\n");
+    
+    for_array(i, proc->instrs)
+    {
+        auto& instr = proc->instrs[i];
+        switch(instr.op)
+        {
+            case Op_Null: printf("Null"); break;
+            case Op_IntegerConst:
+            {
+                printf("IntConst ");
+                break;
+            }
+            case Op_Float32Const:
+            {
+                printf("Float32Const ");
+                break;
+            }
+            case Op_Float64Const:
+            {
+                printf("Float64Const ");
+                break;
+            }
+            case Op_Start: break;
+            case Op_Region:
+            {
+                printf("Region ");
+                break;
+            }
+            case Op_Call:
+            {
+                printf("Call ");
+                break;
+            }
+            case Op_SysCall:
+            {
+                printf("SysCall ");
+                break;
+            }
+            case Op_Store:
+            {
+                printf("Store ");
+                break;
+            }
+            case Op_MemCpy:
+            {
+                printf("MemCpy ");
+                break;
+            }
+            case Op_MemSet:
+            {
+                printf("MemSet ");
+                break;
+            }
+            case Op_AtomicTestAndSet:
+            {
+                printf("AtomicTestAndSet ");
+                break;
+            }
+            case Op_AtomicClear:
+            {
+                printf("AtomicClear ");
+                break;
+            }
+            case Op_AtomicLoad:
+            {
+                printf("AtomicLoad ");
+                break;
+            }
+            case Op_AtomicExchange:
+            {
+                printf("AtomicExchange ");
+                break;
+            }
+            case Op_AtomicAdd:
+            {
+                printf("AtomicAdd ");
+                break;
+            }
+            case Op_AtomicSub:
+            {
+                printf("AtomicSub ");
+                break;
+            }
+            case Op_AtomicAnd:
+            {
+                printf("AtomicAnd ");
+                break;
+            }
+            case Op_AtomicXor:
+            {
+                printf("AtomicXor ");
+                break;
+            }
+            case Op_AtomicOr:
+            {
+                printf("AtomicOr ");
+                break;
+            }
+            case Op_AtomicCompareExchange: break;
+            case Op_DebugBreak: break;
+            case Op_Branch: break;
+            case Op_Ret: break;
+            case Op_Unreachable: break;
+            case Op_Trap: break;
+            case Op_Poison: break;
+            case Op_Load: break;
+            case Op_Local:
+            {
+                printf("Local ");
+                break;
+            }
+            case Op_GetSymbolAddress: break;
+            case Op_MemberAccess: break;
+            case Op_ArrayAccess: break;
+            case Op_Truncate: break;
+            case Op_FloatExt: break;
+            case Op_SignExt: break;
+            case Op_ZeroExt: break;
+            case Op_Int2Ptr: break;
+            case Op_Uint2Float: break;
+            case Op_Float2Uint: break;
+            case Op_Int2Float: break;
+            case Op_Float2Int: break;
+            case Op_Bitcast: break;
+            case Op_Select: break;
+            case Op_BitSwap: break;
+            case Op_Clz: break;
+            case Op_Ctz: break;
+            case Op_PopCnt: break;
+            case Op_Not: break;
+            case Op_Negate: break;
+            case Op_And: break;
+            case Op_Or: break;
+            case Op_Xor: break;
+            case Op_Add:
+            {
+                printf("Add ");
+                break;
+            }
+            case Op_Sub: break;
+            case Op_Mul: break;
+            case Op_ShL: break;
+            case Op_ShR: break;
+            case Op_Sar: break;
+            case Op_Rol: break;
+            case Op_Ror: break;
+            case Op_UDiv: break;
+            case Op_SDiv: break;
+            case Op_UMod: break;
+            case Op_SMod: break;
+            case Op_FAdd: break;
+            case Op_FSub: break;
+            case Op_FMul: break;
+            case Op_FDiv: break;
+            case Op_CmpEq: break;
+            case Op_CmpNe: break;
+            case Op_CmpULT: break;
+            case Op_CmpULE: break;
+            case Op_CmpSLT: break;
+            case Op_CmpSLE: break;
+            case Op_CmpFLT: break;
+            case Op_CmpFLE: break;
+            default: printf("Unknown operation");
+        }
+        
+        printf("\n");
+    }
+}
+
+void Interp_ExecProc(Interp_Proc* proc)
+{
+    
 }

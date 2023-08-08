@@ -28,5 +28,5 @@
 #include "semantics.cpp"
 #include "dependency_graph.cpp"
 #include "atom.cpp"
-#include "interpreter.cpp"
 #include "tilde_codegen.cpp"
+#include "interpreter.cpp"

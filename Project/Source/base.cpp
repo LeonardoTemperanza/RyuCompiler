@@ -140,7 +140,7 @@ template<typename t>
 void DynArray<t>::ResizeAndInit(uint32 newSize)
 {
     uint32 oldLength = this->length;
-    this->Resize(numElements);
+    this->Resize(newSize);
     
     // Call default constructor for new elements
     for(int i = oldLength; i < newSize; ++i)

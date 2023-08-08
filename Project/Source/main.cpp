@@ -88,6 +88,19 @@ int main(int argCount, char** argValue)
         return 1;
     }
     
+    printf("Interpreter codegen test:\n");
+    
+    Interp interp;
+    for_array(i, fileAst->scope.stmts)
+    {
+        auto node = fileAst->scope.stmts[i];
+        if(node->kind == AstKind_ProcDef)
+        {
+            auto proc = Interp_ConvertProc(&interp, (Ast_ProcDef*)node);
+            Interp_PrintProc(proc);
+        }
+    }
+    
     printf("Tilde codegen test:\n");
     
     Tc_TestCode(fileAst);

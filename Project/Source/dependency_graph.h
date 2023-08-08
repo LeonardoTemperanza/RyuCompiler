@@ -54,13 +54,17 @@ struct Dg_Entity
     {
         struct
         {
+            // @temporary This will be in a union with other pointers
+            // (for example in the run stage we're interested in bytecode,
+            // not in the ast)
             Ast_Node* node;
+            
             DynArray<Dg_Dependency> waitFor;
             
             // Tarjan visit
             uint32 stackIdx;
             uint32 sccIdx;  // Strongly Connected Component
-            bool onStack;
+            bool onStack;  // @performance This could be in a bitfield along with other things
         };
         Dg_Idx nextFree = Dg_Null;  // Only used when current node is not used
     };
@@ -82,7 +86,7 @@ struct Queue
 
 struct DepGraph
 {
-    Arena* arena;  // Where to allocate entities (items)
+    Arena arena;  // Where to allocate entities (items)
     
     // Entity pool
     Array<Dg_Entity> items = { 0, 0 };
@@ -100,7 +104,7 @@ struct DepGraph
     Typer* typer;
 };
 
-DepGraph Dg_InitGraph(Arena* arena, Arena* phaseArenas[CompPhase_EnumSize][2]);
+DepGraph Dg_InitGraph(Arena* phaseArenas[CompPhase_EnumSize][2]);
 Dg_IdxGen Dg_NewNode(DepGraph* g, Ast_Node* node);
 void Dg_RemoveNode(DepGraph* g, Dg_Idx idx);
 void Dg_UpdateQueueArrays(DepGraph* g, Queue* q);
