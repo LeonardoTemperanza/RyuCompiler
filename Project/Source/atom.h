@@ -24,8 +24,11 @@ struct Atom
 // Hash table stuff
 struct AtomTable
 {
-    Arena* arena;
-    Array<AtomEntry> entries;
+    Arena stringArena;
+    Arena atomArena;
+    //Array<AtomEntry> entries;
+    
+    Array<Atom> atoms;
 };
 
 struct AtomEntry
@@ -35,6 +38,6 @@ struct AtomEntry
 };
 
 void Atom_InternStrings(Array<Array<ToIntern>> intern);
-Atom* Atom_GetOrAddAtom(AtomTable* table, String str, Arena* atomArena);
+Atom* Atom_GetOrAddAtom(AtomTable* table, String str);
 uint32 Atom_StringHash(String str);
 void Atom_ChangeSizeAndRehash(AtomTable table);

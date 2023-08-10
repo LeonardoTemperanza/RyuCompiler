@@ -7,9 +7,11 @@
 //#include "memory_management.h"
 #include "atom.h"
 
-struct TB_Node;  //@temporary
+// This stuff is @temporary
+struct TB_Node;
 struct TB_Function;
 struct TB_FunctionPrototype;
+struct Interp_Symbol;
 
 // @cleanup Maybe the names for these should be changed...
 // Perhaps Ast_PtrType and Ast_ArrayType?
@@ -395,6 +397,7 @@ struct Ast_Declaration : public Ast_Node
     
     // Codegen
     TB_Node* tildeNode;
+    uint16 interpReg = 0;
 };
 
 struct Ast_VarDecl : public Ast_Declaration
@@ -410,7 +413,9 @@ struct Ast_ProcDef : public Ast_Declaration
     
     Ast_Block block;
     
+    // Codegen stuff (later some stuff will be removed)
     TB_Function* tildeProc = 0;
+    Interp_Symbol* symbol = 0;
 };
 
 struct Ast_StructDef : public Ast_Declaration
@@ -556,6 +561,11 @@ cforceinline Ast_DeclaratorProc* Ast_GetDeclProc(Ast_ProcDef* procDef)
 cforceinline Ast_DeclaratorStruct* Ast_GetDeclStruct(Ast_StructDef* structDef)
 {
     return (Ast_DeclaratorStruct*)structDef->type;
+}
+
+cforceinline Ast_DeclaratorProc* Ast_GetDeclCallTarget(Ast_FuncCall* call)
+{
+    return (Ast_DeclaratorProc*)call->target->type;
 }
 
 cforceinline Token* Ast_GetVarDeclTypeToken(Ast_VarDecl* decl)

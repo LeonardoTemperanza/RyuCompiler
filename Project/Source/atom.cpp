@@ -5,20 +5,17 @@
 void Atom_InternStrings(Array<Array<ToIntern>> intern)
 {
     ProfileFunc(prof);
-    ScratchArena scratch;
-    
-    // @leak This will "leak", doesn't really matter for now
-    // or in general
-    Arena atomArena = Arena_VirtualMemInit(GB(4), MB(2));
     
     // Allocate hash table here
-    AtomTable table = { scratch, { 0, 0 } };
+    AtomTable table;
+    table.stringArena = Arena_VirtualMemInit(GB(4), MB(2));
+    table.atomArena = Arena_VirtualMemInit(GB(4), MB(2));
     
     for(int i = 0; i < intern.length; ++i)
     {
         for(int j = 0; j < intern[i].length; ++j)
         {
-            Atom* atom = Atom_GetOrAddAtom(&table, intern[i][j].toIntern, &atomArena);
+            Atom* atom = Atom_GetOrAddAtom(&table, intern[i][j].toIntern);
             *intern[i][j].patch = atom;
         }
     }
@@ -27,15 +24,15 @@ void Atom_InternStrings(Array<Array<ToIntern>> intern)
 // @temporary @performance
 // Just an array to get the system up and running,
 // In the future it will be a reasonably performant hash table
-Atom* Atom_GetOrAddAtom(AtomTable* table, String str, Arena* atomArena)
+Atom* Atom_GetOrAddAtom(AtomTable* table, String str)
 {
     Atom* result = 0;
     bool found = false;
-    for_array(i, table->entries)
+    for_array(i, table->atoms)
     {
-        if(str == table->entries[i].string)
+        if(str == table->atoms[i].string)
         {
-            result = table->entries[i].value;
+            result = &table->atoms[i];
             found = true;
         }
     }
@@ -43,12 +40,11 @@ Atom* Atom_GetOrAddAtom(AtomTable* table, String str, Arena* atomArena)
     if(!found)
     {
         // This is actually unnecessary
-        Atom* newAtom = Arena_AllocVar(atomArena, Atom);
-        char* newStr = Arena_PushStringAndNullTerminate(atomArena, str);
-        newAtom->string = newStr;
-        AtomEntry entry = { newStr, newAtom };
-        table->entries.Append(table->arena, entry);
-        result = newAtom;
+        Atom newAtom;
+        char* newStr = Arena_PushStringAndNullTerminate(&table->stringArena, str);
+        newAtom.string = newStr;
+        table->atoms.Append(&table->atomArena, newAtom);
+        result = &table->atoms[table->atoms.length-1];
     }
     
     return result;

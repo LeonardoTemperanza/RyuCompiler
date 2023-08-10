@@ -358,7 +358,7 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
         
         ++numGroups;
         
-        printf("Group %d, indices %d %d\n", groupId, start, end-1);
+        //printf("Group %d, indices %d %d\n", groupId, start, end-1);
         
         if(end > start + 1)  // If only one item, there's no cycle in this SCC
         {
@@ -368,14 +368,14 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
                 for_array(j, g->items[q->input[i]].waitFor)
                 {
                     auto& it = g->items[q->input[i]].waitFor[j];
-                    printf("needed %d, current %d\n", it.neededPhase, q->phase);
+                    //printf("needed %d, current %d\n", it.neededPhase, q->phase);
                     
                     if(it.neededPhase == q->phase+1)
                     {
-                        printf("stackidx %d, groupId %d\n", g->items[it.idx].stackIdx, groupId);
+                        //printf("stackidx %d, groupId %d\n", g->items[it.idx].stackIdx, groupId);
                         if(g->items[it.idx].stackIdx != groupId)
                         {
-                            printf("cannot pass!\n");
+                            //printf("cannot pass!\n");
                             canPass = false;
                             break;
                         }
@@ -408,7 +408,7 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
         start = end;
     }
     
-    printf("Num cycles: %d\n", numCycles);
+    //printf("Num cycles: %d\n", numCycles);
     
     return numCycles > 0;
 }

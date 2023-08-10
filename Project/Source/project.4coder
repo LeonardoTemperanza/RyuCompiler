@@ -18,10 +18,15 @@ blacklist_patterns = {
     ".*",
 };
 
+load_paths_custom = {
+    { ".", .recursive = false },
+    { "os", .recursive = true },
+    { "llvm-c", .recursive = true },
+    { "tilde_backend/Cuik/tb", .recursive = true }
+};
+
 load_paths = {
-    { { {".", .relative = true, .recursive = true, } }, .os = "win" },
-    { { {".", .relative = true, .recursive = true, } }, .os = "linux" },
-    { { {".", .relative = true, .recursive = true, } }, .os = "mac" },
+    { load_paths_custom, .os = "win" },
 };
 
 command_list = {
