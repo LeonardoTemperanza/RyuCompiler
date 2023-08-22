@@ -80,6 +80,7 @@ enum Ast_NodeKind : uint8
     AstKind_Return,
     AstKind_Break,
     AstKind_Continue,
+    AstKind_MultiAssign,
     AstKind_EmptyStmt,
     AstKind_StmtEnd,
     
@@ -305,7 +306,8 @@ struct Ast_Return : public Ast_Stmt
 {
     Ast_Return() { kind = AstKind_Return; };
     
-    Ast_Expr* expr = 0;
+    //Ast_Expr* expr = 0;
+    Array<Ast_Expr*> rets = { 0, 0 };
 };
 
 struct Ast_Break : public Ast_Stmt
@@ -316,6 +318,14 @@ struct Ast_Break : public Ast_Stmt
 struct Ast_Continue : public Ast_Stmt
 {
     Ast_Continue() { kind = AstKind_Continue; };
+};
+
+struct Ast_MultiAssign : public Ast_Stmt
+{
+    Ast_MultiAssign() { kind = AstKind_MultiAssign; };
+    
+    Array<Ast_Node*> lefts;  // Each can be a VarDecl or an Expr
+    Array<Ast_Expr*> rights;
 };
 
 // Syntax-Trees related to types
@@ -377,9 +387,11 @@ struct Ast_DeclaratorStruct : public TypeInfo
     
     // For errors?
     Array<Token*> memberNameTokens = { 0, 0 };
-    //Array<Ast_Declaration*> decls;
     
-    //uint32 size = -1;
+    // Filled in later in the sizing stage 
+    uint32 size = -1;
+    uint32 align = -1;
+    Array<uint32> memberOffsets = { 0, 0 };
 };
 
 // Declarations
@@ -387,17 +399,12 @@ struct Ast_DeclaratorStruct : public TypeInfo
 struct Ast_Declaration : public Ast_Node
 {
     TypeInfo* type;
-    //String name;
-    
-    // In the future this will be used
     Atom* name;
-    
     
     Ast_Expr* initExpr = 0;
     
     // Codegen
     TB_Node* tildeNode;
-    uint16 interpReg = 0;
 };
 
 struct Ast_VarDecl : public Ast_Declaration
@@ -405,6 +412,11 @@ struct Ast_VarDecl : public Ast_Declaration
     Ast_VarDecl() { kind = AstKind_VarDecl; };
     
     Ast_Expr* initExpr = 0;
+    
+    // This is the index in the procedure's
+    // declaration array (flattened form),
+    // This stays -1 if it's a global variable
+    int declIdx = -1;
 };
 
 struct Ast_ProcDef : public Ast_Declaration
@@ -413,7 +425,12 @@ struct Ast_ProcDef : public Ast_Declaration
     
     Ast_Block block;
     
+    // Flattened form of all declarations in the
+    // procedure. Useful for codegen
+    DynArray<Ast_Declaration*> declsFlat;
+    
     // Codegen stuff (later some stuff will be removed)
+    // This stuff could just be in a PtrMap
     TB_Function* tildeProc = 0;
     Interp_Symbol* symbol = 0;
 };
@@ -421,10 +438,6 @@ struct Ast_ProcDef : public Ast_Declaration
 struct Ast_StructDef : public Ast_Declaration
 {
     Ast_StructDef() { kind = AstKind_StructDef; };
-    
-    // Filled in later in the sizing stage 
-    uint32 size = -1;
-    uint32 align = -1;
 };
 
 // Expressions
@@ -461,7 +474,7 @@ struct Ast_TernaryExpr : public Ast_Expr
     Ast_Expr* expr2;
     Ast_Expr* expr3;
     
-    // Filled in by the overload resolver (if needed/possible)
+    // Filled in by the overload resolver, if needed and possible
     Ast_FuncCall* overloaded = 0;
 };
 

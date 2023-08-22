@@ -3,3 +3,9 @@
 *.ilk
 *.pdb
 *.obj
+Build/Ryu.exe
+*.o
+*.ilk
+*.pdb
+*.obj
+*.exe

@@ -87,6 +87,26 @@ Array<t> Array<t>::CopyToArena(Arena* to)
     return result;
 }
 
+// PtrMap
+
+uint32 PtrHashFunction(uintptr ptr)
+{
+    // If 32-bit is ever considered, update the implementation to include 32-bit
+#ifdef Env32Bit
+#error "PtrHashFunction Implementation currently doesn't support 32-bit."
+#endif
+    
+    uint32 result;
+    ptr = (~ptr) + (ptr << 21);
+    ptr = ptr ^ (ptr >> 24);
+    ptr = (ptr + (ptr << 3)) + (ptr << 8);
+	ptr = ptr ^ (ptr >> 14);
+    ptr = (ptr + (ptr << 2)) + (ptr << 4);
+    ptr = ptr ^ (ptr << 28);
+	result = (uint32)ptr;
+    return result;
+}
+
 void String::Append(Arena* a, char element)
 {
     // If empty, allocate a new array
@@ -113,7 +133,6 @@ String String::CopyToArena(Arena* to)
 }
 
 // Array utilities
-#define DynArray_MinCapacity 10
 template<typename t>
 void DynArray<t>::Append(t element)
 {
@@ -122,15 +141,24 @@ void DynArray<t>::Append(t element)
 }
 
 template<typename t>
+t* DynArray<t>::Reserve()
+{
+    this->Resize(this->length + 1);
+    return &this->ptr[this->length - 1];
+}
+
+// TODO: the buffer doesn't shrink when reducing
+// the size
+template<typename t>
 void DynArray<t>::Resize(uint32 newSize)
 {
     this->length = newSize;
     if(this->capacity < this->length)
     {
         if(this->capacity < DynArray_MinCapacity)
-            this->capacity = DynArray_MinCapacity;
+            capacity = DynArray_MinCapacity;
         else
-            this->capacity = (this->capacity + 1) * 3 / 2;  // TODO: better grow formula?
+            this->capacity = this->length * 3 / 2;
         
         this->ptr = (t*)realloc(this->ptr, sizeof(t) * this->capacity);
     }

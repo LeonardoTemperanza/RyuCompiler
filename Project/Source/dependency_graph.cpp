@@ -474,6 +474,7 @@ void Dg_TopologicalSort(DepGraph* graph, Queue* queue)
 
 bool Dg_IsDependencyBreakable(DepGraph* g, Queue* q, Dg_Entity* source, Dg_Idx target)
 {
+    
     return true;
 }
 

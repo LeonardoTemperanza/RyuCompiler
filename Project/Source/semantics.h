@@ -31,18 +31,19 @@ void CannotDereferenceTypeError(Typer* t, TypeInfo* type, Token* where);
 void IncompatibleTypesError(Typer* t, TypeInfo* type1, TypeInfo* type2, Token* where);
 
 // Semantics
-inline bool IsExprLValue(Ast_Expr* expr)
+inline bool IsNodeLValue(Ast_Node* node)
 {
     // Pointer dereferencing
-    if(expr->kind == AstKind_UnaryExpr && ((Ast_UnaryExpr*)expr)->op == '*')
+    if(node->kind == AstKind_UnaryExpr && ((Ast_UnaryExpr*)node)->op == '*')
         return true;
     
-    switch_nocheck(expr->kind)
+    switch_nocheck(node->kind)
     {
         default: return false;
         case AstKind_Subscript:
         case AstKind_MemberAccess:
         case AstKind_Ident:
+        case AstKind_VarDecl:
         return true;
     } switch_nocheck_end;
     
@@ -63,9 +64,10 @@ bool CheckDefer(Typer* t, Ast_Defer* stmt);
 bool CheckReturn(Typer* t, Ast_Return* stmt);
 bool CheckBreak(Typer* t, Ast_Break* stmt);
 bool CheckContinue(Typer* t, Ast_Continue* stmt);
+bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt);
 bool CheckNumLiteral(Typer* t, Ast_NumLiteral* expr);
 Ast_Declaration* CheckIdent(Typer* t, Ast_IdentExpr* expr);
-bool CheckFuncCall(Typer* t, Ast_FuncCall* call);
+bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign);
 bool CheckBinExpr(Typer* t, Ast_BinaryExpr* expr);
 bool CheckUnaryExpr(Typer* t, Ast_UnaryExpr* expr);
 bool CheckTypecast(Typer* t, Ast_Typecast* expr);
@@ -148,7 +150,14 @@ cforceinline int GetTypeSize(TypeInfo* type)
     if(type->typeId == Typeid_Ident)
     {
         auto structDef = ((Ast_DeclaratorIdent*)type)->structDef;
-        return structDef->size;
+        auto structDecl = Ast_GetDeclStruct(structDef);
+        return structDecl->size;
+    }
+    
+    if(type->typeId == Typeid_Struct)
+    {
+        auto structDecl = (Ast_DeclaratorStruct*)type;
+        return structDecl->size;
     }
     
     Assert(false && "not implemented");
@@ -167,7 +176,14 @@ cforceinline int GetTypeAlign(TypeInfo* type)
     if(type->typeId == Typeid_Ident)
     {
         auto structDef = ((Ast_DeclaratorIdent*)type)->structDef;
-        return structDef->align;
+        auto structDecl = Ast_GetDeclStruct(structDef);
+        return structDecl->align;
+    }
+    
+    if(type->typeId == Typeid_Struct)
+    {
+        auto structDecl = (Ast_DeclaratorStruct*)type;
+        return structDecl->align;
     }
     
     Assert(false && "not implemented");

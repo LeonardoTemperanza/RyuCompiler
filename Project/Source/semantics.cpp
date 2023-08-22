@@ -5,6 +5,8 @@
 
 #include "semantics.h"
 
+// TODO TODO: missing compute size for procedures.
+
 // Primitive types
 
 Typer InitTyper(Arena* arena, Parser* parser)
@@ -17,9 +19,9 @@ Typer InitTyper(Arena* arena, Parser* parser)
     return t;
 }
 
-Ast_DeclaratorPtr* Typer_MakePtr(Typer* t, TypeInfo* base)
+Ast_DeclaratorPtr* Typer_MakePtr(Arena* arena, TypeInfo* base)
 {
-    auto ptr = Arena_AllocAndInitPack(t->arena, Ast_DeclaratorPtr);
+    auto ptr = Arena_AllocAndInitPack(arena, Ast_DeclaratorPtr);
     ptr->baseType = base;
     return ptr;
 }
@@ -47,13 +49,14 @@ bool CheckNode(Typer* t, Ast_Node* node)
         case AstKind_Return:        outcome = CheckReturn(t, (Ast_Return*)node); break;
         case AstKind_Break:         outcome = CheckBreak(t, (Ast_Break*)node); break;
         case AstKind_Continue:      outcome = CheckContinue(t, (Ast_Continue*)node); break;
+        case AstKind_MultiAssign:   outcome = CheckMultiAssign(t, (Ast_MultiAssign*)node); break;
         case AstKind_EmptyStmt:     break;
         case AstKind_StmtEnd:       break;
         case AstKind_ExprBegin:     break;
         case AstKind_Literal:       printf("Literal not implemented.\n"); outcome = false; break;
         case AstKind_NumLiteral:    outcome = CheckNumLiteral(t, (Ast_NumLiteral*)node); break;
         case AstKind_Ident:         outcome = CheckIdent(t, (Ast_IdentExpr*)node); break;
-        case AstKind_FuncCall:      outcome = CheckFuncCall(t, (Ast_FuncCall*)node); break;
+        case AstKind_FuncCall:      outcome = CheckFuncCall(t, (Ast_FuncCall*)node, false); break;
         case AstKind_BinaryExpr:    outcome = CheckBinExpr(t, (Ast_BinaryExpr*)node); break;
         case AstKind_UnaryExpr:     outcome = CheckUnaryExpr(t, (Ast_UnaryExpr*)node); break;
         case AstKind_TernaryExpr:   printf("Ternary expression not implemented.\n"); outcome = false; break;
@@ -284,13 +287,22 @@ bool CheckReturn(Typer* t, Ast_Return* stmt)
     auto retStmt = (Ast_Return*)stmt;
     Array<TypeInfo*> retTypes = Ast_GetDeclProc(t->currentProc)->retTypes;
     
+#if 0
     if(retTypes.length > 1)
     {
         SemanticError(t, retStmt->where, StrLit("Multiple return types are currently not supported."));
         return false;
     }
+#endif
     
-    if(retStmt->expr)
+    if(retTypes.length != retStmt->rets.length)
+    {
+        SemanticError(t, retStmt->where, StrLit("Trying to return x values, ..."));
+        SemanticErrorContinue(t, t->currentProc->where, StrLit("... but the procedure returns y values."));
+        return false;
+    }
+    
+    if(retStmt->rets.length > 0)
     {
         if(retTypes.length == 0)
         {
@@ -299,16 +311,19 @@ bool CheckReturn(Typer* t, Ast_Return* stmt)
             return false;
         }
         
-        if(!CheckNode(t, retStmt->expr)) return false;
-        
-        TypeInfo* exprType = retStmt->expr->type;
-        TypeInfo* retType  = retTypes[0];
-        
-        if(!ImplicitConversion(t, retStmt->expr, exprType, retType))
+        for_array(i, retStmt->rets)
         {
-            // TODO: print a more specific error in place of this.
-            IncompatibleTypesError(t, exprType, retType, retStmt->where);
-            return false;
+            if(!CheckNode(t, retStmt->rets[i])) return false;
+            
+            TypeInfo* exprType = retStmt->rets[i]->type;
+            TypeInfo* retType  = retTypes[i];
+            
+            if(!ImplicitConversion(t, retStmt->rets[i], exprType, retType))
+            {
+                // TODO: print a more specific error in place of this.
+                IncompatibleTypesError(t, exprType, retType, retStmt->where);
+                return false;
+            }
         }
     }
     else  // Check if this function is supposed to have one or more ret types
@@ -334,6 +349,92 @@ bool CheckContinue(Typer* t, Ast_Continue* stmt)
 {
     printf("Continue not implemented\n");
     return false;
+}
+
+bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt)
+{
+    auto& lefts = stmt->lefts;
+    auto& rights = stmt->rights;
+    
+    // Check all declarations
+    ScratchArena scratch;
+    Array<TypeInfo*> leftTypes;
+    for_array(i, lefts)
+    {
+        TypeInfo* type = CheckDeclOrExpr(t, lefts[i]);
+        if(!type) return false;
+        
+        leftTypes.Append(scratch, type);
+    }
+    
+    int leftCounter = 0;
+    int rightCounter = 0;
+    while(leftCounter < lefts.length && rightCounter < rights.length)
+    {
+        Array<TypeInfo*> toCheck;  // > 1 if there's a function call with multiple return values, = 1 for anything else
+        
+        // Current rhs (which means, zero or more types due to multiple returns)
+        if(stmt->rights[rightCounter]->kind == AstKind_FuncCall)
+        {
+            // Check against multiple statements
+            auto call = (Ast_FuncCall*)stmt->rights[rightCounter];
+            if(!CheckFuncCall(t, call, true)) return false;
+            
+            auto procDecl = Ast_GetDeclCallTarget(call);
+            toCheck = procDecl->retTypes;
+        }
+        else
+        {
+            if(!CheckNode(t, stmt->lefts[leftCounter])) return false;
+            
+            if(stmt->lefts[leftCounter]->kind == AstKind_VarDecl)
+            {
+                auto varDecl = (Ast_VarDecl*)stmt->lefts[leftCounter];
+                toCheck.ptr = &varDecl->type;
+            }
+            else
+            {
+                auto expr = (Ast_Expr*)stmt->lefts[leftCounter];
+                toCheck.ptr = &expr->type;
+            }
+            
+            toCheck.length = 1;
+        }
+        
+        ++rightCounter;
+        
+        // Check type compatibility between lhs and rhs
+        bool exit = false;
+        for(int i = 0; i < toCheck.length && leftCounter < lefts.length; ++i)
+        {
+            auto lhs = lefts[leftCounter];
+            auto lhsType = leftTypes[leftCounter];
+            
+            if(!IsNodeLValue(lhs) || lhsType->typeId == Typeid_Proc)
+            {
+                SemanticError(t, lhs->where, StrLit("Left-hand side of assignment is not assignable"));
+                return false;
+            }
+            else if(!TypesCompatible(t, lhsType, toCheck[i]))
+            {
+                IncompatibleTypesError(t, lhsType, toCheck[i], stmt->where);
+                return false;
+            }
+            
+            ++leftCounter;
+        }
+    }
+    
+    if(leftCounter != lefts.length || rightCounter != rights.length)
+    {
+        bool tempPrint = t->tokenizer->status != CompStatus_Error;
+        SemanticError(t, stmt->where, StrLit("Mismatching number of left-hand and right-hand side values (x and y, respectively)"));
+        if(tempPrint) fprintf(stderr, "%d %d\n", leftCounter, rightCounter);
+        
+        return false;
+    }
+    
+    return true;
 }
 
 bool CheckNumLiteral(Typer* t, Ast_NumLiteral* expr)
@@ -362,7 +463,9 @@ Ast_Declaration* CheckIdent(Typer* t, Ast_IdentExpr* expr)
     return decl;
 }
 
-bool CheckFuncCall(Typer* t, Ast_FuncCall* call)
+// NOTE: Only considers "normal" function calls with single
+// return value
+bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign)
 {
     ProfileFunc(prof);
     
@@ -382,10 +485,23 @@ bool CheckFuncCall(Typer* t, Ast_FuncCall* call)
         return false;
     }
     
+    auto procDecl = (Ast_DeclaratorProc*)call->target->type;
+    
+    // If the number of return types is > 0, and we're not in a
+    // multi assign statement, then throw an error because multiple
+    // returns cannot be used in this context.
+    // NOTE: Maybe rethink this language feature, so that it can be more
+    // flexible?
+    if(!isMultiAssign && procDecl->retTypes.length > 1)
+    {
+        SemanticError(t, call->where,
+                      StrLit("Calling procedures with multiple return values in expression is not allowed. Use a MultiAssign statement instead."));
+        return false;
+    }
+    
     // Check that number of parameters and types correspond
     // Support varargs in the future maybe?
     
-    auto procDecl = (Ast_DeclaratorProc*)call->target->type;
     if(call->args.length != procDecl->args.length)
     {
         // TODO: print actual number of arguments, need to improve the print function
@@ -553,7 +669,7 @@ bool CheckBinExpr(Typer* t, Ast_BinaryExpr* bin)
         case Tok_OrEquals: case Tok_XorEquals:
         case Tok_LShiftEquals: case Tok_RShiftEquals:
         {
-            if(!IsExprLValue(bin->lhs) || bin->lhs->type->typeId == Typeid_Proc)
+            if(!IsNodeLValue(bin->lhs) || bin->lhs->type->typeId == Typeid_Proc)
             {
                 SemanticError(t, bin->lhs->where, StrLit("Left-hand side of assignment is not assignable"));
                 return false;
@@ -626,13 +742,13 @@ bool CheckUnaryExpr(Typer* t, Ast_UnaryExpr* expr)
         }
         case '&':
         {
-            if(!IsExprLValue(expr->expr))
+            if(!IsNodeLValue(expr->expr))
             {
                 SemanticError(t, expr->expr->where, StrLit("Cannot use operator '&' on r-value"));
                 return false;
             }
             
-            expr->type = Typer_MakePtr(t, expr->expr->type);
+            expr->type = Typer_MakePtr(t->arena, expr->expr->type);
             break;
         }
     }
@@ -657,13 +773,13 @@ bool CheckTypecast(Typer* t, Ast_Typecast* expr)
     if(expr->expr->type->typeId == Typeid_Arr)
     {
         auto base = ((Ast_DeclaratorArr*)expr->expr)->baseType;
-        expr->expr->type = Typer_MakePtr(t, base);
+        expr->expr->type = Typer_MakePtr(t->arena, base);
     }
     
     if(expr->type->typeId == Typeid_Arr)
     {
         auto base = ((Ast_DeclaratorArr*)expr)->baseType;
-        expr->type = Typer_MakePtr(t, base);
+        expr->type = Typer_MakePtr(t->arena, base);
     }
     
     TypeInfo* type1 = expr->type;
@@ -832,8 +948,8 @@ bool ComputeSize(Typer* t, Ast_StructDef* structDef)
     
     if(outcome)
     {
-        structDef->size = ret.size;
-        structDef->align = ret.align;
+        declStruct->size = ret.size;
+        declStruct->align = ret.align;
         printf("Outcome = true, Size: %d\n", ret.size);
     }
     else
@@ -848,15 +964,13 @@ ComputeSize_Ret ComputeSize(Typer* t, Ast_DeclaratorStruct* declStruct, Token* e
 {
     struct Funcs
     {
-        static uint32 GetNextSize(uint32 curSize, uint32 elSize, uint32 elAlign)
+        static uint32 Align(uint32 curSize, uint32 elAlign)
         {
             Assert(IsPowerOf2(elAlign));
             
             uint32 modulo = curSize & (elAlign - 1);  // (curSize % align)
             if(modulo != 0)
                 curSize += elAlign - modulo;
-            
-            curSize += elSize;
             return curSize;
         }
     };
@@ -866,6 +980,7 @@ ComputeSize_Ret ComputeSize(Typer* t, Ast_DeclaratorStruct* declStruct, Token* e
     uint32 sizeResult = 0;
     uint32 alignResult = 0;
     
+    // TODO: refactor this
     for_array(i, declStruct->memberTypes)
     {
         auto it = declStruct->memberTypes[i];
@@ -884,13 +999,16 @@ ComputeSize_Ret ComputeSize(Typer* t, Ast_DeclaratorStruct* declStruct, Token* e
                 continue;
             }
             
-            sizeResult = Funcs::GetNextSize(sizeResult, sizeSubStruct, alignSubStruct);
+            sizeResult = Funcs::Align(sizeResult, alignSubStruct);
+            declStruct->memberOffsets[i] = sizeResult;
+            sizeResult += sizeSubStruct;
             alignResult = max(alignResult, alignSubStruct);
         }
         else if(it->typeId == Typeid_Ident)
         {
             auto itIdent = (Ast_DeclaratorIdent*)it;
             auto structDef = itIdent->structDef;
+            auto structDecl = Ast_GetDeclStruct(structDef);
             if(structDef->phase < CompPhase_ComputeSize)
             {
                 Dg_Yield(t->graph, structDef, CompPhase_ComputeSize);
@@ -898,13 +1016,17 @@ ComputeSize_Ret ComputeSize(Typer* t, Ast_DeclaratorStruct* declStruct, Token* e
                 continue;
             }
             
-            sizeResult = Funcs::GetNextSize(sizeResult, structDef->size, structDef->align);
-            alignResult = max(alignResult, structDef->align);
+            sizeResult = Funcs::Align(sizeResult, structDecl->align);
+            declStruct->memberOffsets[i] = sizeResult;
+            sizeResult += structDecl->size;
+            alignResult = max(alignResult, structDecl->align);
         }
         else if(it->typeId == Typeid_Ptr)
         {
             // TODO: when 32-bit is supported, this should be changed
-            sizeResult = Funcs::GetNextSize(sizeResult, 8, 8);
+            sizeResult = Funcs::Align(sizeResult, 8);
+            declStruct->memberOffsets[i] = sizeResult;
+            sizeResult += 8;
             alignResult = max(alignResult, (uint32)8);
         }
         else  // Primitive types are trivial
@@ -912,14 +1034,16 @@ ComputeSize_Ret ComputeSize(Typer* t, Ast_DeclaratorStruct* declStruct, Token* e
             if(it->typeId < StArraySize(typeSize))
             {
                 uint32 curTypeSize = typeSize[it->typeId];
-                sizeResult = Funcs::GetNextSize(sizeResult, curTypeSize, curTypeSize);
+                sizeResult = Funcs::Align(sizeResult, curTypeSize);
+                declStruct->memberOffsets[i] = sizeResult;
+                sizeResult += curTypeSize;
                 alignResult = max(alignResult, curTypeSize);
             }
         }
     }
     
     // Final size needs to be aligned
-    sizeResult = Funcs::GetNextSize(sizeResult, 0, alignResult);
+    sizeResult = Funcs::Align(sizeResult, alignResult);
     return { sizeResult, alignResult };
 }
 
@@ -965,7 +1089,16 @@ bool AddDeclaration(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
     }
     
     if(!redefinition && !alreadyDefined)
+    {
         scope->decls.Append(decl);
+        // currentProc == null means we're top level
+        if(t->currentProc && decl->kind == AstKind_VarDecl)
+        {
+            auto varDecl = (Ast_VarDecl*)decl;
+            t->currentProc->declsFlat.Append(decl);
+            varDecl->declIdx = t->currentProc->declsFlat.length - 1;
+        }
+    }
     
     return !redefinition;
 }
@@ -1019,19 +1152,19 @@ bool TypesCompatible(Typer* t, TypeInfo* src, TypeInfo* dst)
     if(src->typeId == Typeid_Arr && dst->typeId == Typeid_Ptr)
     {
         auto arrayOf = ((Ast_DeclaratorArr*)src)->baseType;
-        src = Typer_MakePtr(t, arrayOf);
+        src = Typer_MakePtr(t->arena, arrayOf);
     }
     
     // Implicitly convert procs into pointers
     if(src->typeId == Typeid_Ptr && dst->typeId == Typeid_Proc)
     {
         auto base = (Ast_DeclaratorProc*)dst;
-        dst = Typer_MakePtr(t, base);
+        dst = Typer_MakePtr(t->arena, base);
     }
     else if(src->typeId == Typeid_Proc && dst->typeId == Typeid_Ptr)
     {
         auto base = (Ast_DeclaratorProc*)src;
-        src = Typer_MakePtr(t, base);
+        src = Typer_MakePtr(t->arena, base);
     }
     
     if(src->typeId != dst->typeId)
@@ -1085,21 +1218,21 @@ TypeInfo* GetCommonType(Typer* t, TypeInfo* type1, TypeInfo* type2)
     if(type1->typeId == Typeid_Arr)
     {
         auto base = ((Ast_DeclaratorArr*)type1)->baseType;
-        type1 = Typer_MakePtr(t, base);
+        type1 = Typer_MakePtr(t->arena, base);
     }
     
     // Implicitly convert arrays into pointers
     if(type2->typeId == Typeid_Arr)
     {
         auto base = ((Ast_DeclaratorArr*)type2)->baseType;
-        type2 = Typer_MakePtr(t, base);
+        type2 = Typer_MakePtr(t->arena, base);
     }
     
     // Implicitly convert functions into function pointers
     if(type1->typeId == Typeid_Proc)
-        type1 = Typer_MakePtr(t, type1);
+        type1 = Typer_MakePtr(t->arena, type1);
     if(type2->typeId == Typeid_Proc)
-        type2 = Typer_MakePtr(t, type2);
+        type2 = Typer_MakePtr(t->arena, type2);
     
     // Operations with floats promote up to floats
     if(type1->typeId == Typeid_Double || type2->typeId == Typeid_Double)
@@ -1191,11 +1324,11 @@ bool ImplicitConversion(Typer* t, Ast_Expr* exprSrc, TypeInfo* src, TypeInfo* ds
     
     // Implicitly convert functions & arrays into pointers
     if(dst->typeId == Typeid_Proc)
-        dst = Typer_MakePtr(t, dst);
+        dst = Typer_MakePtr(t->arena, dst);
     else if(dst->typeId == Typeid_Arr)
     {
         auto arrType = Ast_MakeType<Ast_DeclaratorArr>(t->arena);
-        dst = Typer_MakePtr(t, arrType->baseType);
+        dst = Typer_MakePtr(t->arena, arrType->baseType);
     }
     
     if(false)  // Data loss warnings

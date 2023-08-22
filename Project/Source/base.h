@@ -22,6 +22,22 @@
 #define Assert(expression)
 #endif
 
+#if _WIN32 || _WIN64
+#if _WIN64
+#define Env64Bit
+#else
+#define Env32Bit
+#endif
+#endif
+
+#if __GNUC__
+#if __x86_64__ || __ppc64__
+#define Env64Bit
+#else
+#define Env32Bit
+#endif
+#endif
+
 // Common utility functions
 #define KB(num) (num)*1024LLU
 #define MB(num) KB(num)*1024LLU
@@ -103,13 +119,14 @@ struct ProfileFuncGuard
 template<typename t>
 struct Array
 {
-    t* ptr;
-    int64 length;
+    t* ptr = 0;
+    int64 length = 0;
     
     void Append(Arena* a, t element);
     void Resize(Arena* a, uint32 newSize);
     void ResizeAndInit(Arena* a, uint32 newSize);
     Array<t> CopyToArena(Arena* to);
+    cforceinline t last() { return this->ptr[this->length-1]; };
     
 #ifdef BoundsChecking
     // For reading the value
@@ -127,6 +144,7 @@ struct Array
 #define for_array(loopVar, array) for(int loopVar = 0; loopVar < (array).length; ++loopVar)
 
 // Used for dynamic arrays with unknown/variable lifetimes
+#define DynArray_MinCapacity 16
 template<typename t>
 struct DynArray
 {
@@ -134,7 +152,10 @@ struct DynArray
     int64 length = 0;
     int64 capacity = 0;
     
+    // All of the below functions assume that the array is initialized
+    void Init(int64 initCapacity = DynArray_MinCapacity) { ptr = (t*)malloc(sizeof(t)*initCapacity); capacity = initCapacity; };
     void Append(t element);
+    t* Reserve();
     void Resize(uint32 numElements);
     void ResizeAndInit(uint32 numElements);
     Array<t> ConvertToArray();  // Returns the array as a "slice" of the current DynArray
@@ -153,6 +174,29 @@ struct DynArray
     cforceinline t& operator [](int idx) { return ptr[idx]; };
 #endif
 };
+
+// Pointer map data structure, credits to GingerBill
+
+template<typename k, typename v>
+struct PtrMapEntry
+{
+    static_assert(sizeof(k) == sizeof(void*), "Key must be pointer");
+    
+    k key;
+    v val;
+    uint32 next;
+};
+
+template<typename k, typename v>
+struct PtrMap
+{
+    Array<uint32> hashes;
+    PtrMapEntry<k, v>* entries;
+    uint32 count;
+    uint32 capacity;
+};
+
+uint32 PtrHashFunction(uintptr ptr);
 
 // Generic string. This could be null-terminated or not,
 // but in the case of strings allocated in a custom allocator,
@@ -183,6 +227,12 @@ inline bool IsPowerOf2(uintptr a)
 {
     return (a & (a-1)) == 0;
 }
+
+template<typename t>
+cforceinline t max(t i, t j) { return i < j? j : i; }
+
+template<typename t>
+cforceinline t min(t i, t j) { return i > j? j : i; }
 
 // I/O utilities
 char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName);
@@ -265,12 +315,6 @@ Defer<F> DeferFunc(F&& f)
 //        
 //    // delete will be executed here
 //    }
-
-template<typename t>
-cforceinline t max(t i, t j) { return i < j? j : i; }
-
-template<typename t>
-cforceinline t min(t i, t j) { return i > j? j : i; }
 
 // Using this so that comparisons can be inlined
 

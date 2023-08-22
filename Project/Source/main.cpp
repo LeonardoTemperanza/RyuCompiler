@@ -90,7 +90,7 @@ int main(int argCount, char** argValue)
     
     printf("Interpreter codegen test:\n");
     
-    Interp interp;
+    Interp interp = Interp_Init();
     for_array(i, fileAst->scope.stmts)
     {
         auto node = fileAst->scope.stmts[i];
@@ -103,7 +103,7 @@ int main(int argCount, char** argValue)
     
     printf("Tilde codegen test:\n");
     
-    Tc_TestCode(fileAst);
+    Tc_TestCode(fileAst, &interp);
     
     return outcome;
 }

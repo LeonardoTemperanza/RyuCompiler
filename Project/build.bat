@@ -6,7 +6,7 @@ pushd ..\Build
 REM Check if llvm lib file is present
 IF NOT EXIST "..\Project\Libs\LLVM-C.lib" (
 echo Build failed, due to missing LLVM-C.lib. This shouldn't happen in the first place, but you could try building from source.
-echo LLVM Source is not included here, for obvious reasons.
+echo LLVM Source is not included here, for obvious reasons ^(it's gigantic^).
 
 goto :exitlabel
 )

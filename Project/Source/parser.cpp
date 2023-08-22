@@ -5,11 +5,9 @@
 #include "parser.h"
 
 // @architecture Do we want to do a conversion between syntactic declarators
-// and typeinfo? You need AST nodes for declarators etc., but you also need that
-// for the typeinfo stuff. I can imagine in some cases a reallocation might be
-// beneficial, i'm just not sure if I should do it or not. The overall structure
-// seems the same to me for both syntax and semantics. Let's just put these in 2 different
-// places, in the ast arena initially and then in the 
+// and typeinfo?
+// update: it seems that it is not needed, the structure is pretty much the same
+// anyways
 
 template<typename t>
 t* Ast_MakeNode(Arena* arena, Token* token)
@@ -150,11 +148,8 @@ Ast_StructDef* ParseStructDef(Parser* p)
     return structDef;
 }
 
-Ast_Node* ParseDeclOrExpr(Parser* p, bool forceInit)
+bool IsNextDecl(Parser* p)
 {
-    ProfileFunc(prof);
-    
-    // Determine if it's a declaration or an expression first
     bool isDecl = false;
     
     if(IsTokStartOfDecl(p->at->type))
@@ -179,16 +174,28 @@ Ast_Node* ParseDeclOrExpr(Parser* p, bool forceInit)
         }
     }
     
+    return isDecl;
+}
+
+Ast_Node* ParseDeclOrExpr(Parser* p, bool forceInit, bool ignoreInit)
+{
+    ProfileFunc(prof);
+    
+    Token* start = p->at;
+    
+    // Determine if it's a declaration or an expression first
+    bool isDecl = IsNextDecl(p);
+    
     Ast_Node* result;
     if(isDecl)
-        result = ParseVarDecl(p, forceInit);
+        result = ParseVarDecl(p, forceInit, ignoreInit);
     else
         result = ParseExpression(p);
     
     return result;
 }
 
-Ast_VarDecl* ParseVarDecl(Parser* p, bool forceInit, bool preventInit)
+Ast_VarDecl* ParseVarDecl(Parser* p, bool forceInit, bool ignoreInit)
 {
     ProfileFunc(prof);
     
@@ -201,7 +208,7 @@ Ast_VarDecl* ParseVarDecl(Parser* p, bool forceInit, bool preventInit)
     decl->type = type;
     DeferStringInterning(p, t->ident, &decl->name);
     
-    if(!preventInit)
+    if(!ignoreInit)
     {
         if(forceInit || p->at->type == '=')
         {
@@ -238,7 +245,61 @@ Ast_Stmt* ParseStatement(Parser* p)
         }
         default:
         {
-            stmt = ParseDeclOrExpr(p);
+            Token* start = p->at;
+            stmt = ParseDeclOrExpr(p, false, true);
+            
+            if(p->at->type == ',')  // Multi assign
+            {
+                ++p->at;
+                
+                auto multiAssign = Ast_MakeNode<Ast_MultiAssign>(p->arena, start);
+                
+                ScratchArena scratch;
+                Array<Ast_Node*> lefts = { 0, 0 };
+                Array<Ast_Expr*> rights = { 0, 0 };
+                
+                lefts.Append(scratch, stmt);
+                stmt = multiAssign;
+                
+                while(true)
+                {
+                    // Parse declaration
+                    Ast_Node* toAppend = 0;
+                    if(IsNextDecl(p)) toAppend = ParseVarDecl(p, false, true);
+                    else              toAppend = ParseExpression(p, INT_MAX, true);
+                    
+                    lefts.Append(scratch, toAppend);
+                    
+                    if(p->at->type == ',') ++p->at;
+                    else break;
+                }
+                
+                multiAssign->lefts = lefts.CopyToArena(p->arena);
+                
+                if(p->at->type == '=')
+                {
+                    multiAssign->where = p->at;
+                    ++p->at;
+                    
+                    while(true)
+                    {
+                        rights.Append(scratch, ParseExpression(p));
+                        
+                        if(p->at->type == ',') ++p->at;
+                        else break;
+                    }
+                    
+                    multiAssign->rights = rights.CopyToArena(p->arena);
+                }
+                
+            }
+            else if(stmt->kind == AstKind_VarDecl && p->at->type == '=')  // Single initialization
+            {
+                ++p->at;
+                auto varDecl = (Ast_VarDecl*)stmt;
+                varDecl->initExpr = ParseExpression(p);
+            }
+            
             EatRequiredToken(p, ';');
             break;
         }
@@ -346,12 +407,26 @@ Ast_Defer* ParseDefer(Parser* p)
 Ast_Return* ParseReturn(Parser* p)
 {
     ProfileFunc(prof);
+    ScratchArena scratch;
     
     auto stmt = Ast_MakeNode<Ast_Return>(p->arena, p->at);
     EatRequiredToken(p, Tok_Return);
     
     if(p->at->type != ';')
-        stmt->expr = ParseExpression(p);
+    {
+        Array<Ast_Expr*> exprs = { 0, 0 };
+        while(true)
+        {
+            auto expr = ParseExpression(p);
+            exprs.Append(scratch, expr);
+            
+            if(p->at->type == ',') ++p->at;
+            else break;
+        }
+        
+        stmt->rets = exprs.CopyToArena(p->arena);
+    }
+    
     EatRequiredToken(p, ';');
     return stmt;
 }
@@ -436,10 +511,10 @@ Ast_Block* ParseOneOrMoreStmtBlock(Parser* p)
     return thenBlock;
 }
 
-// NOTE: All unary operators always have precedence over
+// NOTE: All unary operators always have higher precedence over
 // binary operators. If this is not the case anymore, change
 // the implementation of this procedure a bit.
-Ast_Expr* ParseExpression(Parser* p, int prec)
+Ast_Expr* ParseExpression(Parser* p, int prec, bool ignoreEqual)
 {
     ProfileFunc(prof);
     
@@ -495,6 +570,7 @@ Ast_Expr* ParseExpression(Parser* p, int prec)
         undoRecurse |= (opPrec == -1);
         undoRecurse |= (opPrec > prec);  // Is it's less important (=greater priority) don't recurse
         undoRecurse |= (opPrec == prec && IsOperatorLToR(p->at->type));
+        undoRecurse |= (p->at->type == '=' && ignoreEqual);  // If we're supposed to ignore the equal sign, stop here
         if(undoRecurse)
         {
             /* TODO: test this
@@ -900,6 +976,9 @@ Ast_DeclaratorStruct ParseDeclStruct(Parser* p, Token** outIdent)
     
     decl.memberNames.ptr = Arena_AllocArrayPack(p->arena, tokens.length, Atom*);
     decl.memberNames.length = tokens.length;
+    
+    decl.memberOffsets.ptr = Arena_AllocArrayPack(p->arena, types.length, uint32);
+    decl.memberOffsets.length = types.length;
     
     // Keep track of atom pointers so that they can later be patched
     // with the correct value (during string interning, which is done

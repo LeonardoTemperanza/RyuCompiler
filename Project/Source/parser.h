@@ -19,8 +19,8 @@ struct Parser
 Ast_FileScope* ParseFile(Parser* p);
 Ast_ProcDef* ParseProcDef(Parser* p);
 Ast_StructDef* ParseStructDef(Parser* p);
-Ast_Node* ParseDeclOrExpr(Parser* p, bool forceInit = false);
-Ast_VarDecl* ParseVarDecl(Parser* p, bool forceInit = false, bool preventInit = false);
+Ast_Node* ParseDeclOrExpr(Parser* p, bool forceInit = false, bool ignoreInit = false);
+Ast_VarDecl* ParseVarDecl(Parser* p, bool forceInit = false, bool ignoreInit = false);
 Ast_Stmt* ParseStatement(Parser* p);
 Ast_If* ParseIf(Parser* p);
 Ast_For* ParseFor(Parser* p);
@@ -31,9 +31,9 @@ Ast_Return* ParseReturn(Parser* p);
 Ast_Break* ParseBreak(Parser* p);
 Ast_Continue* ParseContinue(Parser* p);
 Ast_Block* ParseBlock(Parser* p);
-Ast_Block* ParseOneOrMoreStmtBlock(Parser* p);  // Used for blocks in i.e. if stmts
+Ast_Block* ParseOneOrMoreStmtBlock(Parser* p);  // Used for blocks in e.g. if stmts
 
-Ast_Expr* ParseExpression(Parser* p, int prec = INT_MAX);
+Ast_Expr* ParseExpression(Parser* p, int prec = INT_MAX, bool ignoreEqual = false);
 Ast_Expr* ParsePostfixExpression(Parser* p);
 Ast_Expr* ParsePrimaryExpression(Parser* p);
 TypeInfo* ParseType(Parser* p, Token** outIdent);
