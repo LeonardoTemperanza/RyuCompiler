@@ -139,8 +139,7 @@ extern "C"
 #ifndef MICROSOFT_CRAZINESS_IMPLEMENTATION_GUARD
 #define MICROSOFT_CRAZINESS_IMPLEMENTATION_GUARD
     
-#include "miniwindows.h"
-    //#include <windows.h>
+#include <windows.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>

@@ -107,7 +107,7 @@ void Tc_TestCode(Ast_FileScope* file, Interp* interp)
         printf("Tilde Backend: Successfully created object file!\n");
         
         // Pass object file to linker
-        //LaunchPlatformSpecificLinker();
+        LaunchPlatformSpecificLinker();
     }
 #endif
 }

@@ -18,14 +18,20 @@ echo Build failed. Please build tilde_backend, and copy tb.lib into Project^/Lib
 goto :exitlabel
 )
 
-set debug_flags=/DDebug /MDd /Zi
+set debug_flags=/DDebug /Zi
 set profile_flags=/DProfile
 
 set warning_level=/W2
 
 set include_dirs="..\Project\Source\tilde_backend\Cuik\tb\include"
 
-set common=/FC /Feryu.exe /std:c++20 /permissive %warning_level% /we4061 /we4062 /we4714 /wd4530 /wd4200 /nologo ..\Project\Source\unity_build.cpp /I %include_dirs% /link ..\Project\Libs\LLVM-C.lib ..\Project\Libs\tb.lib
+REM Compile microsoft_craziness if needed (this one file takes a lot longer to compile
+REM than the rest of the project simply because it needs to include windows.h)
+IF NOT EXIST "microsoft_craziness.obj" (
+cl /nologo /c /DMICROSOFT_CRAZINESS_IMPLEMENTATION /TP ..\Project\Source\os\microsoft_craziness.h -Fo:microsoft_craziness.obj
+)
+
+set common=/FC /Feryu.exe /std:c++20 /permissive %warning_level% /we4061 /we4062 /we4714 /wd4530 /wd4200 /nologo ..\Project\Source\unity_build.cpp microsoft_craziness.obj /I %include_dirs% /link ..\Project\Libs\LLVM-C.lib ..\Project\Libs\tb.lib Ole32.lib OleAut32.lib
 
 REM Development build, debug is enabled, profiling and optimization disabled
 cl /Od %debug_flags% %common%

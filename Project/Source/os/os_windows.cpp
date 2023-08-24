@@ -1,17 +1,8 @@
 
 #include "base.h"
 #include "os_agnostic.h"
-
-//#define WIN32_LEAN_AND_MEAN
-//#include <windows.h>
-//#undef WIN32_LEAN_AND_MEAN
-
 #include "miniwindows.h"
-
-//#define MICROSOFT_CRAZINESS_IMPLEMENTATION
-//#include "microsoft_craziness.h"
-//#undef MICROSOFT_CRAZINESS_IMPLEMENTATION
-
+#include "microsoft_craziness.h"
 
 static DWORD win32ThreadContextIdx = 0;
 static HANDLE win32ConsoleHandle = 0;
@@ -118,5 +109,33 @@ void ResetColor()
 
 void LaunchPlatformSpecificLinker()
 {
+    Find_Result findRes = find_visual_studio_and_windows_sdk();
+    defer(free_resources(&findRes););
     
+    if(findRes.windows_sdk_version == 0)
+    {
+        fprintf(stderr, "Linking failed: could not find Windows SDK\n");
+        return;
+    }
+    
+    // Launch subprocess with link.exe
+    
+    if(!findRes.vs_exe_path)
+    {
+        fprintf(stderr, "Linking failed: could not find VisualStudio executable path\n");
+        return;
+    }
+    
+    if(!findRes.vs_library_path)
+    {
+        fprintf(stderr, "Linking failed: could not find VisualStudio library path\n");
+        return;
+    }
+    
+    printf("%ls\n%ls\n%ls\n%ls\n%ls\n",
+           findRes.windows_sdk_root,
+           findRes.windows_sdk_um_library_path,
+           findRes.windows_sdk_ucrt_library_path,
+           findRes.vs_exe_path,
+           findRes.vs_library_path);
 }
