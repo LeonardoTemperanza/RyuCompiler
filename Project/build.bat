@@ -35,6 +35,7 @@ set common=/FC /Feryu.exe /std:c++20 /permissive %warning_level% /we4061 /we4062
 
 REM Development build, debug is enabled, profiling and optimization disabled
 cl /Od %debug_flags% %common%
+set build_ret=%errorlevel%
 
 REM Optimized build with debug information
 REM cl /O2 %debug_flags% %common%
@@ -48,10 +49,14 @@ REM cl /O2 %common%
 echo Done.
 
 REM For quicker testing
-IF %ERRORLEVEL%==0 ( 
+if %build_ret%==0 ( 
 echo Running program:
-pushd TestPrograms
-..\ryu.exe interp_test.c
+pushd .\TestPrograms
+ryu interp_test.c
+
+call output.exe
+
+echo Result from program: %output_ret%
 popd
 )
 

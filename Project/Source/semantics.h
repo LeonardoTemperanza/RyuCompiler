@@ -23,12 +23,13 @@ struct Typer
 };
 
 Typer InitTyper(Arena* arena, Parser* parser);
-void SemanticError(Typer* t, Token* token, String message);
-void SemanticErrorContinue(Typer* t, Token* token, String message);
+void SemanticError(Typer* t, Token* token, String message, ...);
+void SemanticErrorContinue(Typer* t, Token* token, String message, ...);
 void CannotConvertToScalarTypeError(Typer* t, TypeInfo* type, Token* where);
 void CannotConvertToIntegralTypeError(Typer* t, TypeInfo* type, Token* where);
 void CannotDereferenceTypeError(Typer* t, TypeInfo* type, Token* where);
 void IncompatibleTypesError(Typer* t, TypeInfo* type1, TypeInfo* type2, Token* where);
+void IncompatibleReturnsError(Typer* t, Token* where, int numStmtRets, int numProcRets);
 
 // Semantics
 inline bool IsNodeLValue(Ast_Node* node)
@@ -65,7 +66,7 @@ bool CheckReturn(Typer* t, Ast_Return* stmt);
 bool CheckBreak(Typer* t, Ast_Break* stmt);
 bool CheckContinue(Typer* t, Ast_Continue* stmt);
 bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt);
-bool CheckNumLiteral(Typer* t, Ast_NumLiteral* expr);
+bool CheckConstValue(Typer* t, Ast_ConstValue* expr);
 Ast_Declaration* CheckIdent(Typer* t, Ast_IdentExpr* expr);
 bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign);
 bool CheckBinExpr(Typer* t, Ast_BinaryExpr* expr);

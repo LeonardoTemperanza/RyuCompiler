@@ -124,6 +124,12 @@ inline bool IsAllowedForMiddleIdent(char c)
         || IsNumeric(c);
 }
 
+inline bool IsAllowedForMiddleNum(char c)
+{
+    return IsNumeric(c)
+        || c == '.' || c == 'e' || c == '-';
+}
+
 inline bool IsNewline(char c)
 {
     return c == '\n';
@@ -178,41 +184,6 @@ static void EatAllWhitespace(Tokenizer* t)
     }
 }
 
-// TODO(Leo): improve the implementation
-// It's assumed that the string is properly formatted
-static float String2Float(char* string, int length)
-{
-    float result = 0.0f;
-    
-    // It represents the decimal position (0.1, 0.01, ...)
-    float decimalMultiplier = 1.0f;
-    // The position in the string where '.' is located
-    int dotPos = -1;
-    for(int i = 0; i < length && string[i] != 0; ++i)
-    {
-        if(string[i] == '.')
-            dotPos = i;
-        else
-        {
-            if(dotPos != -1)
-            {
-                decimalMultiplier *= 0.1f;
-                result += (float)(string[i] - '0') * decimalMultiplier;
-            }
-            else
-            {
-                // Before reaching the '.', the desired
-                // effect is to multiply by 10 at each step
-                // (example: 53 = 0*10+3=3 -> 3*10+5=53)
-                result *= 10.0f;
-                result += (float)(string[i] - '0');
-            }
-        }
-    }
-    
-    return result;
-}
-
 static void LexFile(Tokenizer* t)
 {
     ProfileFunc(prof);
@@ -239,12 +210,12 @@ static Token GetToken(Tokenizer* t)
     result.ec      = result.sc;
     result.ident   = { t->at, 1 };
     
-    if(t->at[0] == 0)
+    if(t->at[0] == 0)  // String terminator
     {
         result.type = Tok_EOF;
         result.ec = result.sc;
     }
-    else if(IsAllowedForStartIdent(t->at[0]))
+    else if(IsAllowedForStartIdent(t->at[0]))  // Idents
     {
         result.type = Tok_Ident;
         for(int i = 1; IsAllowedForMiddleIdent(t->at[i]); ++i)
@@ -262,35 +233,67 @@ static Token GetToken(Tokenizer* t)
         t->at += result.ident.length;
         result.ec = result.sc + result.ident.length - 1;
     }
-    else if(IsNumeric(t->at[0]))
+    else if(IsNumeric(t->at[0]) || (t->at[0] == '-' && IsNumeric(t->at[1])))  // Numbers
     {
-        result.type = Tok_Num;
-        
+        // Determine which type of number it is
         int length = 0;
-        int numPoints = 0;
+        bool isFloatingPoint = false;
+        bool isDoublePrecision = false;
+        
         do
         {
             ++length;
-            if(t->at[length] == '.')
-                ++numPoints;
+            if(!isFloatingPoint && (t->at[length] == '.' || t->at[length] == 'e'))
+                isFloatingPoint = true;
         }
-        while((IsNumeric(t->at[length]) ||
-               t->at[length] == '.') &&
-              numPoints <= 1);
+        while(IsAllowedForMiddleNum(t->at[length]));
         
-        if(numPoints > 1)
+        // Use c-stdlib functions for number parsing
+        // (parsing floating pointer numbers with accurate precision
+        // is kinda hard)
+        if(isFloatingPoint)
         {
-            printf("Error: Unidentified token\n");
-            result.type = Tok_Error;
-            result.doubleValue = 0.0f;
+            if(t->at[length] == 'd')
+            {
+                result.type = Tok_DoubleNum;
+                char* endPtr;
+                result.doubleValue = strtod(t->at, &endPtr);
+                Assert(endPtr == t->at + length);
+                
+                isDoublePrecision = true;
+                ++length;
+            }
+            else
+            {
+                result.type = Tok_FloatNum;
+                char* endPtr;
+                result.floatValue = strtof(t->at, &endPtr);
+                Assert(endPtr == t->at + length);
+                
+                // Eat the optional 'f' at the end of single precision floating point
+                if(t->at[length] == 'f')
+                    ++length;
+            }
         }
         else
-            result.doubleValue = String2Float(t->at, length);
+        {
+            result.type = Tok_IntNum;
+            char* endPtr;
+            result.intValue = strtoll(t->at, &endPtr, 10);
+            if(endPtr == t->at)
+            {
+                printf("Error: Unidentified token\n");
+                result.type = Tok_Error;
+                result.doubleValue = 0.0f;
+            }
+            else
+                Assert(endPtr == t->at + length);
+        }
         
         t->at += length;
         result.ec = result.sc + result.ident.length - 1;
     }
-    else
+    else  // Anything else (operators, parentheses, etc)
     {
         bool found = false;
         String foundStr = { 0, 0 };
@@ -322,30 +325,8 @@ static Token GetToken(Tokenizer* t)
     return result;
 }
 
-void CompileError(Tokenizer* t, Token* token, String message)
+void PrintFileLine(Token* token, char* fileContents)
 {
-    if(t->status == CompStatus_Error)
-        return;
-    t->status = CompStatus_Error;
-    
-    if(token->type == Tok_EOF || token->type == Tok_Error)
-    {
-        printf("Reached unexpected EOF\n");
-        return;
-    }
-    
-    char* fileContents = t->startOfFile;
-    
-    SetErrorColor();
-    t->lastCompileErrorNumChars = fprintf(stderr, "Error ");
-    ResetColor();
-    fprintf(stderr, "(%d,%d): ",
-            token->lineNum,
-            token->sc - token->sl + 1);
-    
-    fprintf(stderr, "%.*s\n", (int)message.length, message.ptr);
-    
-    // Print line in file
     fprintf(stderr, "    > ");
     bool endOfLine = false;
     int i = token->sl;
@@ -388,6 +369,32 @@ void CompileError(Tokenizer* t, Token* token, String message)
         fprintf(stderr, "^\n");
     else
         fprintf(stderr, "\n");
+}
+
+void CompileError(Tokenizer* t, Token* token, String message)
+{
+    if(t->status == CompStatus_Error)
+        return;
+    t->status = CompStatus_Error;
+    
+    if(token->type == Tok_EOF || token->type == Tok_Error)
+    {
+        printf("Reached unexpected EOF\n");
+        return;
+    }
+    
+    char* fileContents = t->startOfFile;
+    
+    SetErrorColor();
+    t->lastCompileErrorNumChars = fprintf(stderr, "Error ");
+    ResetColor();
+    fprintf(stderr, "(%d,%d): ",
+            token->lineNum,
+            token->sc - token->sl + 1);
+    
+    fprintf(stderr, "%.*s\n", (int)message.length, message.ptr);
+    
+    PrintFileLine(token, fileContents);
     
     t->compileErrorPrinted = true;
 }
@@ -416,49 +423,7 @@ void CompileErrorContinue(Tokenizer* t, Token* token, String message)
     
     fprintf(stderr, "%.*s\n", (int)message.length, message.ptr);
     
-    // Print line in file
-    fprintf(stderr, "    > ");
-    bool endOfLine = false;
-    int i = token->sl;
-    while(!endOfLine)
-    {
-        if(fileContents[i] == '\t')
-            fprintf(stderr, "    ");
-        else
-            fprintf(stderr, "%c", fileContents[i]);
-        
-        ++i;
-        endOfLine = fileContents[i] == '\r' ||
-            fileContents[i] == '\n' ||
-            fileContents[i] == 0;
-    }
-    
-    int length = i - token->sl;
-    
-    fprintf(stderr, "\n    > ");
-    
-    for(int i = token->sl; i < token->sc; ++i)
-    {
-        if(fileContents[i] == '\t')
-            fprintf(stderr, "    ");
-        else
-            fprintf(stderr, " ");
-    }
-    
-    fprintf(stderr, "^");
-    
-    for(int i = token->sc; i < token->ec - 1; ++i)
-    {
-        if(fileContents[i] == '\t')
-            fprintf(stderr, "----");
-        else
-            fprintf(stderr, "-");
-    }
-    
-    if(token->sc != token->ec)
-        fprintf(stderr, "^\n");
-    else
-        fprintf(stderr, "\n");
+    PrintFileLine(token, fileContents);
 }
 
 String TokTypeToString(TokenType tokType, Arena* dest)

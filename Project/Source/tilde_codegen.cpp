@@ -26,20 +26,8 @@ void Tc_TestCode(Ast_FileScope* file, Interp* interp)
     TB_ExecutableType exeType = TB_EXECUTABLE_PE;
     const bool useTbLinker = false;
     
-    Tc_Context ctx = Tc_InitCtx(module, true);
+    Tc_Context ctx = Tc_InitCtx(module, false);
     
-#if 0
-    for_array(i, file->scope.stmts)
-    {
-        auto stmt = file->scope.stmts[i];
-        if(stmt->kind == AstKind_ProcDef)
-            Tc_GenProcDef_(&ctx, (Ast_ProcDef*)stmt);
-        else if(stmt->kind == AstKind_StructDef)
-            Tc_GenStructDef_(&ctx, (Ast_StructDef*)stmt);
-        else
-            Assert(false);
-    }
-#else
     Arena regArena = Arena_VirtualMemInit(MB(512), MB(2));
     Arena symArena = Arena_VirtualMemInit(MB(512), MB(2));
     Arena flagArena = Arena_VirtualMemInit(MB(512), MB(2));
@@ -52,7 +40,6 @@ void Tc_TestCode(Ast_FileScope* file, Interp* interp)
         auto proc = &interp->procs[i];
         Tc_GenProc(&ctx, proc);
     }
-#endif
     
     int numFuncs = tb_module_get_function_count(module);
     printf("Num funcs: %d\n", numFuncs);
@@ -64,7 +51,6 @@ void Tc_TestCode(Ast_FileScope* file, Interp* interp)
     }
     
     // Linking
-#if 1
     if(useTbLinker)
     {
         // TB Linker is still extremely early in development,
@@ -109,49 +95,6 @@ void Tc_TestCode(Ast_FileScope* file, Interp* interp)
         // Pass object file to linker
         LaunchPlatformSpecificLinker();
     }
-#endif
-}
-
-TB_Node* Tc_GenNode_(Tc_Context* ctx, Ast_Node* node)
-{
-    switch(node->kind)
-    {
-        case AstKind_ProcDef:       break;  // Not handled here
-        case AstKind_StructDef:     break;  // Not handled here
-        case AstKind_DeclBegin:     break;
-        case AstKind_VarDecl:       return Tc_GenVarDecl_(ctx, (Ast_VarDecl*)node); break;
-        case AstKind_EnumDecl:      printf("Enumerator not implemented.\n"); break;
-        case AstKind_DeclEnd:       break;
-        case AstKind_StmtBegin:     break;
-        case AstKind_Block:         Tc_GenBlock_(ctx, (Ast_Block*)node); break;
-        case AstKind_If:            Tc_GenIf_(ctx, (Ast_If*)node); break;
-        case AstKind_For:           Tc_GenFor_(ctx, (Ast_For*)node); break;
-        case AstKind_While:         Tc_GenWhile_(ctx, (Ast_While*)node); break;
-        case AstKind_DoWhile:       Tc_GenDoWhile_(ctx, (Ast_DoWhile*)node); break;
-        case AstKind_Switch:        Tc_GenSwitch_(ctx, (Ast_Switch*)node); break;
-        case AstKind_Defer:         Tc_GenDefer_(ctx, (Ast_Defer*)node); break;
-        case AstKind_Return:        Tc_GenReturn_(ctx, (Ast_Return*)node); break;
-        case AstKind_Break:         Tc_GenBreak_(ctx, (Ast_Break*)node); break;
-        case AstKind_Continue:      Tc_GenContinue_(ctx, (Ast_Continue*)node); break;
-        case AstKind_MultiAssign:   break;
-        case AstKind_EmptyStmt:     break;
-        case AstKind_StmtEnd:       break;
-        case AstKind_ExprBegin:     break;
-        case AstKind_Literal:       printf("Literal not implemented.\n"); break;
-        case AstKind_NumLiteral:    return Tc_GenNumLiteral_(ctx, (Ast_NumLiteral*)node); break;
-        case AstKind_Ident:         return Tc_GenIdent_(ctx, (Ast_IdentExpr*)node); break;
-        case AstKind_FuncCall:      return Tc_GenFuncCall_(ctx, (Ast_FuncCall*)node); break;
-        case AstKind_BinaryExpr:    return Tc_GenBinExpr_(ctx, (Ast_BinaryExpr*)node); break;
-        case AstKind_UnaryExpr:     return Tc_GenUnaryExpr_(ctx, (Ast_UnaryExpr*)node); break;
-        case AstKind_TernaryExpr:   printf("Ternary expression not implemented.\n"); break;
-        case AstKind_Typecast:      return Tc_GenNode_(ctx, ((Ast_Typecast*)node)->expr);
-        case AstKind_Subscript:     return Tc_GenSubscript_(ctx, (Ast_Subscript*)node); break;
-        case AstKind_MemberAccess:  return Tc_GenMemberAccess_(ctx, (Ast_MemberAccess*)node); break;
-        case AstKind_ExprEnd:       break;
-        default: Assert(false && "Enum value out of bounds");
-    }
-    
-    return 0;
 }
 
 void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
@@ -274,7 +217,6 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
     auto& regs = ctx->regs;
     auto& syms = ctx->syms;
     
-    // @performance , can unroll this loop
     for(int i = 0; i < proc->instrs.length; ++i)
     {
         auto& instr = proc->instrs[i];
@@ -283,26 +225,28 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
         if(instr.bitfield & InstrBF_SetUpArgs) continue;
         
         Tc_ExpandRegs(ctx, instr.dst);
+        
+        auto& dst = regs[instr.dst];
+        auto& unarySrc = regs[instr.unary.src];
+        auto& src1 = regs[instr.bin.src1];
+        auto& src2 = regs[instr.bin.src2];
+        auto unaryType = Tc_ToTBType(instr.unary.type);
+        
         switch(instr.op)
         {
-            case Op_Null:         break;
+            case Op_Null: break;
             case Op_IntegerConst:
             {
-                regs[instr.dst] = tb_inst_sint(tildeProc,
-                                               Tc_ToTBType(instr.imm.type),
-                                               instr.imm.val);
+                dst = tb_inst_sint(tildeProc,
+                                   Tc_ToTBType(instr.imm.type),
+                                   instr.imm.intVal);
                 break;
             }
-            case Op_Float32Const: break;
-            case Op_Float64Const: break;
+            case Op_Float32Const: dst = tb_inst_float32(tildeProc, instr.imm.floatVal); break;
+            case Op_Float64Const: dst = tb_inst_float64(tildeProc, instr.imm.doubleVal); break;
             case Op_Region:       tb_inst_set_control(tildeProc, bbs[i]); break;
             case Op_Call:
             {
-                // Calls are assumed to be semantically correct, thus the
-                // prototype can just be constructed here
-                // Yeah but how do structs even work???
-                // Maybe just include the symbol for now
-                
                 auto symbol = syms[instr.call.target];
                 
                 auto debugProto = Tc_ConvertProcToDebugType(ctx->module, symbol->type);
@@ -317,14 +261,14 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
                                                       nodes);
                 if(outputs.count == 1)
                 {
-                    regs[instr.dst] = outputs.single;
+                    dst = outputs.single;
                 }
                 else  // 0 or >= 2
                     Assert(false);
                 
                 break;
             }
-            case Op_SysCall:      break;
+            case Op_SysCall: break;
             case Op_Store:
             {
                 tb_inst_store(tildeProc, regs[instr.store.val]->dt,
@@ -381,7 +325,7 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
             {
                 if(!(instr.bitfield & InstrBF_RetVoid))
                 {
-                    tb_inst_ret(tildeProc, 1, &regs[instr.unary.src]);
+                    tb_inst_ret(tildeProc, 1, &unarySrc);
                 }
                 else
                     tb_inst_ret(tildeProc, 0, 0);
@@ -389,359 +333,66 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
             }
             case Op_Load:
             {
-                regs[instr.dst] = tb_inst_load(tildeProc,
-                                               Tc_ToTBType(instr.load.type),
-                                               regs[instr.load.addr],
-                                               instr.load.align,
-                                               false);
+                dst = tb_inst_load(tildeProc,
+                                   Tc_ToTBType(instr.load.type),
+                                   regs[instr.load.addr],
+                                   instr.load.align,
+                                   false);
                 break;
             }
-            case Op_Local:
-            {
-                regs[instr.dst] = tb_inst_local(tildeProc, instr.local.size, instr.local.align);
-                break;
-            }
+            case Op_Local: dst = tb_inst_local(tildeProc, instr.local.size, instr.local.align); break;
             case Op_GetSymbolAddress:
             {
                 auto tildeSymbol = (TB_Symbol*)instr.symAddress.symbol->tildeProc;
-                regs[instr.dst] = tb_inst_get_symbol_address(tildeProc, tildeSymbol);
+                dst = tb_inst_get_symbol_address(tildeProc, tildeSymbol);
                 ctx->syms[instr.dst] = instr.symAddress.symbol;
                 
                 break;
             }
             case Op_MemberAccess: break;
             case Op_ArrayAccess: break;
-            case Op_Truncate: break;
-            case Op_FloatExt: break;
-            case Op_SignExt: break;
-            case Op_ZeroExt: break;
-            case Op_Int2Ptr: break;
-            case Op_Uint2Float: break;
-            case Op_Float2Uint: break;
-            case Op_Int2Float: break;
-            case Op_Float2Int: break;
-            case Op_Bitcast: break;
+            case Op_Truncate: dst = tb_inst_trunc(tildeProc, unarySrc, unaryType); break;
+            case Op_FloatExt: dst = tb_inst_fpxt(tildeProc, unarySrc, unaryType); break;
+            case Op_SignExt: dst = tb_inst_sxt(tildeProc, unarySrc, unaryType); break;
+            case Op_ZeroExt: dst = tb_inst_zxt(tildeProc, unarySrc, unaryType); break;
+            case Op_Int2Ptr: dst = tb_inst_int2ptr(tildeProc, unarySrc); break;
+            case Op_Uint2Float: dst = tb_inst_int2float(tildeProc, unarySrc, unaryType, false); break;
+            case Op_Float2Uint: dst = tb_inst_float2int(tildeProc, unarySrc, unaryType, false); break;
+            case Op_Int2Float: dst = tb_inst_int2float(tildeProc, unarySrc, unaryType, true); break;
+            case Op_Float2Int: dst = tb_inst_float2int(tildeProc, unarySrc, unaryType, true); break;
+            case Op_Bitcast: dst = tb_inst_bitcast(tildeProc, unarySrc, unaryType); break;
             case Op_Select: break;
-            case Op_Not: break;
-            case Op_Negate: break;
-            case Op_And: break;
-            case Op_Or: break;
-            case Op_Xor: break;
-            case Op_Add:
-            {
-                regs[instr.dst] = tb_inst_add(tildeProc, regs[instr.bin.src1], regs[instr.bin.src2], TB_ARITHMATIC_NONE);
-                break;
-            }
-            case Op_Sub:
-            {
-                regs[instr.dst] = tb_inst_sub(tildeProc, regs[instr.bin.src1], regs[instr.bin.src2], TB_ARITHMATIC_NONE);
-                break;
-            }
-            case Op_Mul:
-            {
-                regs[instr.dst] = tb_inst_mul(tildeProc, regs[instr.bin.src1], regs[instr.bin.src2], TB_ARITHMATIC_NONE);
-                
-                break;
-            }
-            case Op_ShL: break;
-            case Op_ShR: break;
-            case Op_Sar: break;
-            case Op_Rol: break;
-            case Op_Ror: break;
-            case Op_UDiv: break;
-            case Op_SDiv: break;
-            case Op_UMod: break;
-            case Op_SMod: break;
-            case Op_FAdd: break;
-            case Op_FSub: break;
-            case Op_FMul: break;
-            case Op_FDiv: break;
-            case Op_CmpEq: break;
-            case Op_CmpNe: break;
-            case Op_CmpULT: break;
-            case Op_CmpULE: break;
-            case Op_CmpSLT: break;
-            case Op_CmpSLE: break;
-            case Op_CmpFLT: break;
-            case Op_CmpFLE: break;
+            case Op_Not: dst = tb_inst_not(tildeProc, unarySrc); break;
+            case Op_Negate: dst = tb_inst_neg(tildeProc, unarySrc); break;
+            case Op_And: dst = tb_inst_and(tildeProc, src1, src2); break;
+            case Op_Or: dst = tb_inst_or(tildeProc, src1, src2); break;
+            case Op_Xor: dst = tb_inst_xor(tildeProc, src1, src2); break;
+            case Op_Add: dst = tb_inst_add(tildeProc, src1, src2, TB_ARITHMATIC_NONE); break;
+            case Op_Sub: dst = tb_inst_sub(tildeProc, src1, src2, TB_ARITHMATIC_NONE); break;
+            case Op_Mul: dst = tb_inst_mul(tildeProc, src1, src2, TB_ARITHMATIC_NONE); break;
+            case Op_ShL: dst = tb_inst_shl(tildeProc, src1, src2, TB_ARITHMATIC_NONE); break;
+            case Op_ShR: dst = tb_inst_shr(tildeProc, src1, src2); break;
+            case Op_Sar: dst = tb_inst_sar(tildeProc, src1, src2); break;
+            case Op_Rol: dst = tb_inst_rol(tildeProc, src1, src2); break;
+            case Op_Ror: dst = tb_inst_ror(tildeProc, src1, src2); break;
+            case Op_UDiv: dst = tb_inst_div(tildeProc, src1, src2, false); break;
+            case Op_SDiv: dst = tb_inst_div(tildeProc, src1, src2, true); break;
+            case Op_UMod: dst = tb_inst_mod(tildeProc, src1, src2, false); break;
+            case Op_SMod: dst = tb_inst_mod(tildeProc, src1, src2, true); break;
+            case Op_FAdd: dst = tb_inst_fadd(tildeProc, src1, src2); break;
+            case Op_FSub: dst = tb_inst_fsub(tildeProc, src1, src2); break;
+            case Op_FMul: dst = tb_inst_fmul(tildeProc, src1, src2); break;
+            case Op_FDiv: dst = tb_inst_fdiv(tildeProc, src1, src2); break;
+            case Op_CmpEq: dst = tb_inst_cmp_eq(tildeProc, src1, src2); break;
+            case Op_CmpNe: dst = tb_inst_cmp_ne(tildeProc, src1, src2); break;
+            case Op_CmpULT: dst = tb_inst_cmp_ilt(tildeProc, src1, src2, false); break;
+            case Op_CmpULE: dst = tb_inst_cmp_ile(tildeProc, src1, src2, false); break;
+            case Op_CmpSLT: dst = tb_inst_cmp_ilt(tildeProc, src1, src2, true); break;
+            case Op_CmpSLE: dst = tb_inst_cmp_ile(tildeProc, src1, src2, true); break;
+            case Op_CmpFLT: dst = tb_inst_cmp_flt(tildeProc, src1, src2); break;
+            case Op_CmpFLE: dst = tb_inst_cmp_fle(tildeProc, src1, src2); break;
         }
     }
-}
-
-void Tc_GenProcDef_(Tc_Context* ctx, Ast_ProcDef* proc)
-{
-    // Create the debug type, for debugging but also so that tilde can handle the ABI
-    // Automatically
-    tb_arena_create(&ctx->procArena, MB(1));
-    
-    auto procDecl = Ast_GetDeclProc(proc);
-    TB_DebugType* procType = Tc_ConvertProcToDebugType(ctx->module, procDecl);
-    
-    TB_Function* curProc = tb_function_create(ctx->module, strlen(proc->name->string),
-                                              proc->name->string, TB_LINKAGE_PUBLIC, TB_COMDAT_MATCH_ANY);
-    
-    proc->tildeProc = curProc;
-    
-    size_t paramCount = 0;
-    TB_Node** paramNodes = tb_function_set_prototype_from_dbg(curProc, procType, &ctx->procArena, &paramCount);
-    for(int i = 0; i < paramCount; ++i)
-        procDecl->args[i]->tildeNode = tb_inst_param(curProc, i);
-    
-    bool isMain = strcmp(proc->name->string, "main") == 0;
-    if(isMain)
-        ctx->mainProc = curProc;
-    ctx->proc = curProc;
-    
-    auto block = (Ast_Node*)&proc->block;
-    Tc_GenBlock_(ctx, (Ast_Block*)block);
-    
-    // Code Passes
-    
-    TB_Passes* passes = tb_pass_enter(ctx->proc, &ctx->procArena);
-    tb_pass_print(passes);
-    //tb_pass_peephole(passes);
-    //tb_pass_mem2reg(passes);
-    //tb_pass_peephole(passes);
-    //tb_pass_loop(passes);
-    //tb_pass_peephole(passes);
-    TB_FunctionOutput* output = tb_pass_codegen(passes, ctx->emitAsm);
-    tb_pass_exit(passes);
-    
-    if(ctx->emitAsm)
-    {
-        tb_output_print_asm(output, stdout);
-    }
-}
-
-void Tc_GenStructDef_(Tc_Context* ctx, Ast_StructDef* structDef)
-{
-    
-}
-
-TB_Node* Tc_GenVarDecl_(Tc_Context* ctx, Ast_VarDecl* decl)
-{
-    TB_Node* node = tb_inst_local(ctx->proc, GetTypeSize(decl->type), GetTypeAlign(decl->type));
-    decl->tildeNode = node;
-    
-    if(decl->initExpr)
-    {
-        auto exprNode = Tc_GenNode_(ctx, decl->initExpr);
-        tb_inst_store(ctx->proc, Tc_ConvertToTildeType(decl->type), node, exprNode, GetTypeAlign(decl->type), false);
-    }
-    
-    return node;
-}
-
-// This will also handle defer stuff i think
-void Tc_GenBlock_(Tc_Context* ctx, Ast_Block* block)
-{
-    for_array(i, block->stmts)
-        Tc_GenNode_(ctx, block->stmts[i]);
-    
-    // If there was a defer in the block, ...
-}
-
-void Tc_GenIf_(Tc_Context* ctx, Ast_If* stmt)
-{
-    TB_Node* thenNode = tb_inst_region(ctx->proc);
-    TB_Node* endNode  = tb_inst_region(ctx->proc);
-    TB_Node* elseNode = endNode;
-    if(stmt->elseStmt)
-        elseNode = tb_inst_region(ctx->proc);
-    
-    auto condNode = Tc_GenNode_(ctx, stmt->condition);
-    tb_inst_if(ctx->proc, condNode, thenNode, elseNode);
-    
-    // Then
-    tb_inst_set_control(ctx->proc, thenNode);
-    Tc_GenBlock_(ctx, stmt->thenBlock);
-    tb_inst_goto(ctx->proc, endNode);
-    
-    // Else
-    if(stmt->elseStmt)
-    {
-        tb_inst_set_control(ctx->proc, elseNode);
-        Tc_GenNode_(ctx, stmt->elseStmt);
-        tb_inst_goto(ctx->proc, endNode);
-    }
-    
-    tb_inst_set_control(ctx->proc, endNode);
-}
-
-void Tc_GenFor_(Tc_Context* ctx, Ast_For* stmt) {}
-void Tc_GenWhile_(Tc_Context* ctx, Ast_While* stmt) {}
-void Tc_GenDoWhile_(Tc_Context* ctx, Ast_DoWhile* smt) {}
-void Tc_GenCheckDoWhile_(Tc_Context* ctx, Ast_DoWhile* stmt) {}
-void Tc_GenSwitch_(Tc_Context* ctx, Ast_Switch* stmt) {}
-void Tc_GenDefer_(Tc_Context* ctx, Ast_Defer* stmt) {}
-
-void Tc_GenReturn_(Tc_Context* ctx, Ast_Return* stmt)
-{
-    // TODO: only doing first return
-    if(stmt->rets.length > 0)
-    {
-        TB_Node* node = Tc_GenNode_(ctx, stmt->rets[0]);
-        Assert(node);
-        
-        tb_inst_ret(ctx->proc, 1, &node);
-    }
-    else
-        tb_inst_ret(ctx->proc, 0, 0);
-}
-
-void Tc_GenBreak_(Tc_Context* ctx, Ast_Break* stmt) {}
-void Tc_GenContinue_(Tc_Context* ctx, Ast_Continue* stmt) {}
-TB_Node* Tc_GenNumLiteral_(Tc_Context* ctx, Ast_NumLiteral* expr)
-{
-    TB_DataType dataType = { { TB_INT, 4, 32 } };
-    auto node = tb_inst_sint(ctx->proc, dataType, 2);
-    return node;
-}
-
-TB_Node* Tc_GenIdent_(Tc_Context* ctx, Ast_IdentExpr* expr)
-{
-    // Procedure
-    if(expr->declaration->kind == AstKind_ProcDef)
-    {
-        auto procDef = (Ast_ProcDef*)expr->declaration;
-        auto address = tb_inst_get_symbol_address(ctx->proc, (TB_Symbol*)procDef->tildeProc);
-        
-        return address;
-    }
-    
-    // Variable declaration (global or local)
-    if(ctx->needValue)
-        return tb_inst_load(ctx->proc, Tc_ConvertToTildeType(expr->type), expr->declaration->tildeNode, GetTypeAlign(expr->type), false);
-    else
-        return expr->declaration->tildeNode;
-}
-
-// Only works for single return value
-TB_Node* Tc_GenFuncCall_(Tc_Context* ctx, Ast_FuncCall* call)
-{
-    auto targetNode = Tc_GenNode_(ctx, call->target);
-    
-    ScratchArena scratch;
-    auto argNodes = Arena_AllocArray(scratch, call->args.length, TB_Node*);
-    for_array(i, call->args)
-    {
-        argNodes[i] = Tc_GenNode_(ctx, call->args[i]);
-    }
-    
-    Assert(call->target->type->typeId == Typeid_Proc);
-    
-    auto debugProto = Tc_ConvertProcToDebugType(ctx->module, call->target->type);
-    auto proto = tb_prototype_from_dbg(ctx->module, debugProto);
-    
-    TB_MultiOutput output = tb_inst_call(ctx->proc, proto, targetNode, call->args.length, argNodes);
-    
-    if(output.count > 1) return output.multiple[0];
-    else return output.single;
-    
-    //TB_DataType dataType = { { TB_INT, 4, 32 } };
-    //auto node = tb_inst_sint(ctx->proc, dataType, 2);
-    //return node;
-}
-
-TB_Node* Tc_GenBinExpr_(Tc_Context* ctx, Ast_BinaryExpr* expr)
-{
-    if(expr->op == '=')
-        ctx->needValue = false;
-    TB_Node* lhs = Tc_GenNode_(ctx, expr->lhs);
-    ctx->needValue = true;
-    TB_Node* rhs = Tc_GenNode_(ctx, expr->rhs);
-    ctx->needValue = true;
-    
-    Assert(lhs && rhs);
-    
-    // @temporary assuming integer operands
-    TB_Node* result = 0;
-    switch(expr->op)
-    {
-        case '=':
-        {
-            tb_inst_store(ctx->proc, Tc_ConvertToTildeType(expr->lhs->type), lhs, rhs, GetTypeAlign(expr->lhs->type), false);
-            result = lhs;
-            break;
-        }
-        case '+': result = tb_inst_add(ctx->proc, lhs, rhs, TB_ARITHMATIC_NONE); break;
-        case '-': result = tb_inst_sub(ctx->proc, lhs, rhs, TB_ARITHMATIC_NONE); break;
-        case '*': result = tb_inst_mul(ctx->proc, lhs, rhs, TB_ARITHMATIC_NONE); break;
-        case '/': result = tb_inst_div(ctx->proc, lhs, rhs, true);               break;
-    }
-    
-    return result;
-}
-
-TB_Node* Tc_GenUnaryExpr_(Tc_Context* ctx, Ast_UnaryExpr* expr) {return 0;}
-TB_Node* Tc_GenTypecast_(Tc_Context* ctx, Ast_Typecast* expr) { return Tc_GenNode_(ctx, expr); }
-TB_Node* Tc_GenSubscript_(Tc_Context* ctx, Ast_Subscript* expr) {return 0;}
-TB_Node* Tc_GenMemberAccess_(Tc_Context* ctx, Ast_MemberAccess* expr) {return 0;}
-
-TB_DataType Tc_ConvertToTildeType(TypeInfo* type)
-{
-    TB_DataType dt = { { 0, 0, 0 } };
-    
-    if(IsTypeIntegral(type) || type->typeId == Typeid_None)
-    {
-        dt.type = TB_INT;
-    }
-    else if(IsTypeFloat(type))
-    {
-        dt.type = TB_FLOAT;
-    }
-    else if(type->typeId == Typeid_Ptr)
-    {
-        dt.type = TB_PTR;
-    }
-    else if(type->typeId == Typeid_Proc)
-    {
-        dt.type = TB_PTR;
-    }
-    else
-        Assert(false);
-    
-    if(type->typeId == Typeid_Bool ||
-       type->typeId == Typeid_Char ||
-       type->typeId == Typeid_Uint8 ||
-       type->typeId == Typeid_Int8)
-    {
-        dt.width = 1;
-        dt.data = 8;
-    }
-    else if(type->typeId == Typeid_Uint16 ||
-            type->typeId == Typeid_Int16)
-    {
-        dt.width = 2;
-        dt.data = 16;
-    }
-    else if(type->typeId == Typeid_Uint32 ||
-            type->typeId == Typeid_Int32 ||
-            type->typeId == Typeid_Float)
-    {
-        dt.width = 4;
-        dt.data = 32;
-    }
-    else if(type->typeId == Typeid_Uint64 ||
-            type->typeId == Typeid_Int64 ||
-            type->typeId == Typeid_Double ||
-            type->typeId == Typeid_Ptr ||
-            type->typeId == Typeid_Proc)
-    {
-        dt.width = 8;
-        dt.data = 64;
-    }
-    else if(type->typeId == Typeid_None)
-    {
-        dt.width = 1;
-        dt.data = 0;
-    }
-    else Assert(false);
-    
-    if(type->typeId == Typeid_Bool)
-        dt.data = 1;
-    
-    return dt;
 }
 
 TB_DebugType* Tc_ConvertToDebugType(TB_Module* module, TypeInfo* type)

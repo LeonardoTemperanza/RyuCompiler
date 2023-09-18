@@ -245,6 +245,7 @@ char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName);
 // instead, if the strings are very long (>8 characters).
 // Instead of copying each character twice, you end up only copying each
 // character once (and instead copy the pointers)
+// TODO: I think this would just be better if the arena was in the struct itself
 struct StringBuilder
 {
     String string = { 0, 0 };

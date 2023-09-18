@@ -80,24 +80,14 @@ enum TokenType
     Tok_Volatile,
     
     // Literals
-    Tok_Num,
+    Tok_IntNum,
+    Tok_FloatNum,
+    Tok_DoubleNum,
     Tok_StrLiteral,
     
     // Lexer message types
     Tok_EOF,
     Tok_Error,
-};
-
-struct TokenHotData
-{
-    union
-    {
-        String ident;
-        uint64 uintValue;
-        int64 intValue;
-        float floatValue;
-        double doubleValue;
-    };
 };
 
 struct Token
@@ -111,16 +101,10 @@ struct Token
     // Additional information
     union
     {
-        // Use token hot data either anonymously or not
-        //TokenHotData tokenHotData;
-        //union
-        //{
         String ident;
-        uint64 uintValue;
         int64 intValue;
         float floatValue;
         double doubleValue;
-        //};
     };
 };
 
@@ -156,10 +140,10 @@ inline bool IsNumeric(char c);
 inline bool IsWhitespace(char c);
 inline bool IsAllowedForStartIdent(char c);
 inline bool IsAllowedForMiddleIdent(char c);
+inline bool IsAllowedForMiddleNum(char c);
 inline bool IsNewline(char c);
 static void EatAllWhitespace(Tokenizer* t);
 static bool FindStringInStream(char* stream, char* string);
-static float String2Float(char* string, int length);
 
 static void LexFile(Tokenizer* t);
 

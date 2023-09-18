@@ -24,7 +24,6 @@ int main(int argCount, char** argValue)
     
     // TODO: Command-line argument parsing
     
-    
     // Main thread context
     ThreadContext threadCtx;
     ThreadCtx_Init(&threadCtx, GB(2), KB(32));

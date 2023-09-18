@@ -2,11 +2,13 @@
 #include "base.h"
 #include "os_agnostic.h"
 #include "miniwindows.h"
+//#include "windows.h"
 #include "microsoft_craziness.h"
 
 static DWORD win32ThreadContextIdx = 0;
 static HANDLE win32ConsoleHandle = 0;
 static CONSOLE_SCREEN_BUFFER_INFO win32SavedScreenBufferInfo;
+static bool win32Initted = false;
 
 void OS_Init()
 {
@@ -14,6 +16,7 @@ void OS_Init()
     win32ConsoleHandle = GetStdHandle(STD_ERROR_HANDLE);
     
     GetConsoleScreenBufferInfo(win32ConsoleHandle, &win32SavedScreenBufferInfo);
+    win32Initted = true;
 }
 
 // Memory utilities
@@ -43,11 +46,13 @@ void FreeMemory(void* mem, size_t size)
 // Thread context
 void SetThreadContext(void* ptr)
 {
+    assert(win32Initted);
     TlsSetValue(win32ThreadContextIdx, ptr);
 }
 
 void* GetThreadContext()
 {
+    assert(win32Initted);
     return (void*)TlsGetValue(win32ThreadContextIdx);
 }
 
@@ -98,17 +103,21 @@ uint64 GetRdtscFreq()
 
 void SetErrorColor()
 {
+    assert(win32Initted);
     GetConsoleScreenBufferInfo(win32ConsoleHandle, &win32SavedScreenBufferInfo);
     SetConsoleTextAttribute(win32ConsoleHandle, 12);  // Bright red color
 }
 
 void ResetColor()
 {
+    assert(win32Initted);
     SetConsoleTextAttribute(win32ConsoleHandle, win32SavedScreenBufferInfo.wAttributes);
 }
 
 void LaunchPlatformSpecificLinker()
 {
+    assert(win32Initted);
+    
     Find_Result findRes = find_visual_studio_and_windows_sdk();
     defer(free_resources(&findRes););
     
@@ -132,10 +141,28 @@ void LaunchPlatformSpecificLinker()
         return;
     }
     
-    printf("%ls\n%ls\n%ls\n%ls\n%ls\n",
-           findRes.windows_sdk_root,
-           findRes.windows_sdk_um_library_path,
-           findRes.windows_sdk_ucrt_library_path,
-           findRes.vs_exe_path,
-           findRes.vs_library_path);
+    constexpr int cmdMaxLength = 2048;
+    wchar_t cmdStr[cmdMaxLength];
+    const wchar_t* linkerExeName = L"link.exe";
+    // TODO: This should actually change based on arguments and whatever
+    _snwprintf(cmdStr, cmdMaxLength,
+               L"\"%ls\\%ls\" /nologo /machine:amd64 /subsystem:console /debug:none /out:.\\output.exe /incremental:no /libpath:\"%ls\" /libpath:\"%ls\" kernel32.lib ucrt.lib msvcrt.lib vcruntime.lib ./output.o",
+               findRes.vs_exe_path, linkerExeName, findRes.windows_sdk_um_library_path, findRes.windows_sdk_ucrt_library_path);
+    
+    // Spawn linker
+    STARTUPINFOW startupInfo;
+    memset(&startupInfo, 0, sizeof(startupInfo));
+    startupInfo.cb = sizeof(startupInfo);
+    
+    PROCESS_INFORMATION processInfo;
+    if(!CreateProcessW(0, cmdStr, 0, 0, false, 0, 0, 0, &startupInfo, &processInfo))
+    {
+        printf("Error: Could not create process for MSVC linker\n");
+        return;
+    }
+    
+    // Wait for the end of the process (could time the linker here, too)
+    WaitForSingleObject(processInfo.hProcess, INFINITE);
+    CloseHandle(processInfo.hProcess);
+    CloseHandle(processInfo.hThread);
 }

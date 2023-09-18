@@ -53,8 +53,6 @@ bool CheckNode(Typer* t, Ast_Node* node)
         case AstKind_EmptyStmt:     break;
         case AstKind_StmtEnd:       break;
         case AstKind_ExprBegin:     break;
-        case AstKind_Literal:       printf("Literal not implemented.\n"); outcome = false; break;
-        case AstKind_NumLiteral:    outcome = CheckNumLiteral(t, (Ast_NumLiteral*)node); break;
         case AstKind_Ident:         outcome = CheckIdent(t, (Ast_IdentExpr*)node); break;
         case AstKind_FuncCall:      outcome = CheckFuncCall(t, (Ast_FuncCall*)node, false); break;
         case AstKind_BinaryExpr:    outcome = CheckBinExpr(t, (Ast_BinaryExpr*)node); break;
@@ -63,8 +61,15 @@ bool CheckNode(Typer* t, Ast_Node* node)
         case AstKind_Typecast:      outcome = CheckTypecast(t, (Ast_Typecast*)node); break;
         case AstKind_Subscript:     outcome = CheckSubscript(t, (Ast_Subscript*)node); break;
         case AstKind_MemberAccess:  outcome = CheckMemberAccess(t, (Ast_MemberAccess*)node); break;
+        case AstKind_ConstValue:    outcome = CheckConstValue(t, (Ast_ConstValue*)node); break;
         case AstKind_ExprEnd:       break;
         default: Assert(false && "Enum value out of bounds");
+    }
+    
+    if(Ast_IsExpr(node))
+    {
+        auto expr = (Ast_Expr*)node;
+        expr->castType = expr->type;
     }
     
     return outcome;
@@ -143,6 +148,8 @@ bool CheckVarDecl(Typer* t, Ast_VarDecl* decl)
             IncompatibleTypesError(t, decl->type, decl->initExpr->type, decl->where);
             return false;
         }
+        
+        decl->initExpr->castType = decl->type;
     }
     
     return true;
@@ -287,36 +294,22 @@ bool CheckReturn(Typer* t, Ast_Return* stmt)
     auto retStmt = (Ast_Return*)stmt;
     Array<TypeInfo*> retTypes = Ast_GetDeclProc(t->currentProc)->retTypes;
     
-#if 0
-    if(retTypes.length > 1)
-    {
-        SemanticError(t, retStmt->where, StrLit("Multiple return types are currently not supported."));
-        return false;
-    }
-#endif
-    
+    // Mismatching
     if(retTypes.length != retStmt->rets.length)
     {
-        SemanticError(t, retStmt->where, StrLit("Trying to return x values, ..."));
-        SemanticErrorContinue(t, t->currentProc->where, StrLit("... but the procedure returns y values."));
+        IncompatibleReturnsError(t, retStmt->where, retStmt->rets.length, retTypes.length);
         return false;
     }
     
     if(retStmt->rets.length > 0)
     {
-        if(retTypes.length == 0)
-        {
-            SemanticError(t, retStmt->where, StrLit("Trying to return a value, ..."));
-            SemanticErrorContinue(t, t->currentProc->where, StrLit("... but the procedure does not return a value."));
-            return false;
-        }
-        
         for_array(i, retStmt->rets)
         {
             if(!CheckNode(t, retStmt->rets[i])) return false;
             
             TypeInfo* exprType = retStmt->rets[i]->type;
             TypeInfo* retType  = retTypes[i];
+            retStmt->rets[i]->castType = retType;
             
             if(!ImplicitConversion(t, retStmt->rets[i], exprType, retType))
             {
@@ -437,9 +430,13 @@ bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt)
     return true;
 }
 
-bool CheckNumLiteral(Typer* t, Ast_NumLiteral* expr)
+bool CheckConstValue(Typer* t, Ast_ConstValue* expr)
 {
-    // @cleanup The type is currently set by the parser. I don't think that's good...
+    if(!(expr->constBitfield & Const_IsReady))
+    {
+        return false;
+    }
+    
     return true;
 }
 
@@ -477,11 +474,7 @@ bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign)
     
     if(call->target->type->typeId != Typeid_Proc)
     {
-        ScratchArena scratch;
-        String typeString = TypeInfo2String(call->target->type, scratch);
-        StringBuilder builder;
-        builder.Append(scratch, 3, StrLit("Cannot call target of type '"), typeString, StrLit("'"));
-        SemanticError(t, call->where, builder.string);
+        SemanticError(t, call->where, StrLit("Cannot call target of type '%T'"), call->target->type);
         return false;
     }
     
@@ -504,8 +497,7 @@ bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign)
     
     if(call->args.length != procDecl->args.length)
     {
-        // TODO: print actual number of arguments, need to improve the print function
-        SemanticError(t, call->where, StrLit("Procedure does not take n arguments"));
+        SemanticError(t, call->where, StrLit("Procedure does not take %d arguments"), call->args.length);
         return false;
     }
     
@@ -516,6 +508,8 @@ bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign)
             return false;
         if(!ImplicitConversion(t, call->args[i], call->args[i]->type, procDecl->args[i]->type))
             return false;
+        
+        call->args[i]->castType = procDecl->args[i]->type;
     }
     
     if(procDecl->retTypes.length <= 0)
@@ -564,22 +558,12 @@ bool CheckBinExpr(Typer* t, Ast_BinaryExpr* bin)
                     {
                         if(!TypesIdentical(t, ltype, rtype))
                         {
-                            ScratchArena scratch;
-                            String ltypeStr = TypeInfo2String(ltype, scratch);
-                            String rtypeStr = TypeInfo2String(rtype, scratch);
-                            StringBuilder builder;
-                            builder.Append(StrLit("Pointer difference disallowed for pointers of different base types ('"), scratch.arena());
-                            builder.Append(scratch, 4, ltypeStr, StrLit("' and '"), rtypeStr, StrLit("')"));
-                            SemanticError(t, bin->where, builder.string);
-                            bin->type = 0;
+                            SemanticError(t, bin->where,
+                                          StrLit("Pointer difference disallowed for pointers of different base types ('%T' and '%T'"), ltype, rtype);
                             return false;
                         }
                         else
-                        {
-                            lhs->castType = lhs->type;
-                            rhs->castType = rhs->type;
                             bin->type = ltype;
-                        }
                     }
                     else  // ... unlike pointer addition
                     {
@@ -626,6 +610,12 @@ bool CheckBinExpr(Typer* t, Ast_BinaryExpr* bin)
                              StrLit("' and '"), rtypeStr, StrLit("'"));
                     SemanticError(t, bin->where, b.string);
                     return false;
+                }
+                
+                // Bit-manipulation operators only work on integer types
+                if(Ast_IsExprBitManipulation(bin))
+                {
+                    // TODO: if it's not an integer, it's not allowed to do it.
                 }
                 
                 // @cleanup Is this necessary? I forgot what GetCommonType even does
@@ -680,11 +670,14 @@ bool CheckBinExpr(Typer* t, Ast_BinaryExpr* bin)
                 return false;
             }
             
-            bin->type = &primitiveTypes[Typeid_Bool];
+            bin->rhs->castType = bin->lhs->type;
+            bin->type = bin->lhs->type;
             break;
         }
     }
     
+    // By default, keep the same type
+    bin->castType = bin->type;
     return true;
 }
 
@@ -753,6 +746,7 @@ bool CheckUnaryExpr(Typer* t, Ast_UnaryExpr* expr)
         }
     }
     
+    expr->castType = expr->type;
     return true;
 }
 
@@ -790,7 +784,7 @@ bool CheckTypecast(Typer* t, Ast_Typecast* expr)
     
     if(type1->typeId == Typeid_Ptr && IsTypeFloat(type2))
     {
-        SemanticError(t, expr->where, StrLit("Cannot cast from type '%T' to type '%T'"));
+        SemanticError(t, expr->where, StrLit("Cannot cast from type '%T' to type '%T'"), type2, type1);
         return false;
     }
     
@@ -803,13 +797,13 @@ bool CheckTypecast(Typer* t, Ast_Typecast* expr)
             
             if(ident1->ident != ident2->ident)
             {
-                SemanticError(t, expr->where, StrLit("Cannot cast from type '%T' to type '%T'"));
+                SemanticError(t, expr->where, StrLit("Cannot cast from type '%T' to type '%T'"), type2, type1);
                 return false;
             }
         }
         else
         {
-            SemanticError(t, expr->where, StrLit("Cannot cast from type '%T' to type '%T'"));
+            SemanticError(t, expr->where, StrLit("Cannot cast from type '%T' to type '%T'"), type2, type1);
             return false;
         }
     }
@@ -832,7 +826,7 @@ bool CheckSubscript(Typer* t, Ast_Subscript* expr)
     
     if(!IsTypeIntegral(expr->idxExpr->type))
     {
-        SemanticError(t, expr->idxExpr->where, StrLit("Subscript is not of integral type, it's of type '%T'"));
+        SemanticError(t, expr->idxExpr->where, StrLit("Subscript is not of integral type, it's of type '%T'"), expr->idxExpr->type);
         return false;
     }
     
@@ -851,7 +845,7 @@ bool CheckMemberAccess(Typer* t, Ast_MemberAccess* expr)
     TypeId targetTypeId = expr->target->type->typeId;
     if(targetTypeId != Typeid_Struct && targetTypeId != Typeid_Ident)
     {
-        SemanticError(t, expr->target->where, StrLit("Cannot apply '.' operator to expression of type '%T'"));
+        SemanticError(t, expr->target->where, StrLit("Cannot apply '.' operator to expression of type '%T'"), expr->target->type);
         return false;
     }
     
@@ -950,11 +944,11 @@ bool ComputeSize(Typer* t, Ast_StructDef* structDef)
     {
         declStruct->size = ret.size;
         declStruct->align = ret.align;
-        printf("Outcome = true, Size: %d\n", ret.size);
+        //printf("Outcome = true, Size: %d\n", ret.size);
     }
     else
     {
-        printf("Outcome = false\n");
+        //printf("Outcome = false\n");
     }
     
     return outcome;
@@ -1358,12 +1352,7 @@ bool ImplicitConversion(Typer* t, Ast_Expr* exprSrc, TypeInfo* src, TypeInfo* ds
     
     if(!TypesCompatible(t, src, dst))
     {
-        ScratchArena scratch;
-        String type1Str = TypeInfo2String(src, scratch);
-        String type2Str = TypeInfo2String(dst, scratch);
-        StringBuilder builder;
-        builder.Append(scratch, 5, StrLit("Cannot implicitly convert type '"), type1Str, StrLit("' to '"), type2Str, StrLit("'"));
-        SemanticError(t, exprSrc->where, builder.string);
+        SemanticError(t, exprSrc->where, StrLit("Cannot implicitly convert type '%T' to '%T'"), src, dst);
         return false;
     }
     
@@ -1461,53 +1450,147 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
     return strBuilder.ToString(dest);
 }
 
-void SemanticError(Typer* t, Token* token, String message)
+// Supports formatted strings (but only %d and %T)
+// TODO: refactor, remove repetition. Some of this stuff (like support of %d)
+// should be available to the other modules as well (parser, lexer...)
+String GenerateErrorString(String message, va_list args, Arena* allocTo)
 {
-    CompileError(t->tokenizer, token, message);
+    ScratchArena typeArena(allocTo);
+    ScratchArena stringArena(allocTo, typeArena);
+    
+    StringBuilder resBuilder;
+    
+    // Filter format specifiers and replace them with the string representation of the type
+    
+    int i = 0;
+    // First and last characters of string separated by %T (to append)
+    int first = 0;
+    int last  = 0;
+    while(i < message.length)
+    {
+        bool isLastChar = i >= message.length - 1;
+        if(!isLastChar && message[i] == '%')
+        {
+            if(message[i+1] == 'T')
+            {
+                last = i-1;
+                if(first <= last)
+                {
+                    String toAppend;
+                    toAppend.ptr = message.ptr + first;
+                    toAppend.length = last - first + 1;
+                    resBuilder.Append(toAppend, stringArena);
+                }
+                
+                auto type = va_arg(args, TypeInfo*);
+                String typeStr = TypeInfo2String(type, typeArena);
+                resBuilder.Append(typeStr, stringArena);
+                
+                first = i+2;
+                ++i;
+            }
+            else if(message[i+1] == 'd')
+            {
+                last = i-1;
+                if(first <= last)
+                {
+                    String toAppend;
+                    toAppend.ptr = message.ptr + first;
+                    toAppend.length = last - first + 1;
+                    resBuilder.Append(toAppend, stringArena);
+                }
+                
+                auto toPrint = va_arg(args, int);
+                constexpr int bufferLen = 16;
+                char buffer[bufferLen];
+                snprintf(buffer, bufferLen, "%d", toPrint);
+                String valStr = { buffer, (int64)strlen(buffer) };
+                resBuilder.Append(valStr, stringArena);
+                
+                first = i+2;
+                ++i;
+            }
+        }
+        
+        ++i;
+    }
+    
+    last = message.length - 1;
+    if(first <= last)
+    {
+        String toAppend;
+        toAppend.ptr = message.ptr + first;
+        toAppend.length = last - first + 1;
+        resBuilder.Append(toAppend, stringArena);
+    }
+    
+    return resBuilder.ToString(allocTo);
 }
 
-void SemanticErrorContinue(Typer* t, Token* token, String message)
+void SemanticError(Typer* t, Token* token, String message, ...)
 {
-    CompileErrorContinue(t->tokenizer, token, message);
+    ScratchArena scratch;
+    
+    va_list args;
+    va_start(args, message);
+    defer(va_end(args););
+    
+    String errStr = GenerateErrorString(message, args, scratch);
+    
+    CompileError(t->tokenizer, token, errStr);
+}
+
+void SemanticErrorContinue(Typer* t, Token* token, String message, ...)
+{
+    ScratchArena scratch;
+    
+    va_list args;
+    va_start(args, message);
+    defer(va_end(args););
+    
+    String errStr = GenerateErrorString(message, args, scratch);
+    
+    CompileErrorContinue(t->tokenizer, token, errStr);
 }
 
 void CannotConvertToScalarTypeError(Typer* t, TypeInfo* type, Token* where)
 {
-    ScratchArena scratch;
-    String typeStr = TypeInfo2String(type, scratch);
-    
-    StringBuilder builder;
-    builder.Append(scratch, 3, StrLit("Cannot convert type '"), typeStr, StrLit("' to any scalar type"));
-    SemanticError(t, where, builder.string);
+    SemanticError(t, where, StrLit("Cannot convert type '%T' to any scalar type"), type);
 }
 
 void CannotConvertToIntegralTypeError(Typer* t, TypeInfo* type, Token* where)
 {
-    ScratchArena scratch;
-    String typeStr = TypeInfo2String(type, scratch);
-    
-    StringBuilder builder;
-    builder.Append(scratch, 3, StrLit("Cannot convert type '"), typeStr, StrLit("' to any integral type"));
-    SemanticError(t, where, builder.string);
+    SemanticError(t, where, StrLit("Cannot convert type '%T' to any integral type"), type);
 }
 
 void CannotDereferenceTypeError(Typer* t, TypeInfo* type, Token* where)
 {
-    ScratchArena scratch;
-    String typeStr = TypeInfo2String(type, scratch);
-    StringBuilder builder;
-    builder.Append(scratch, 3, StrLit("Cannot dereference type '"), typeStr, StrLit("'"));
-    SemanticError(t, where, builder.string);
+    SemanticError(t, where, StrLit("Cannot dereference type '%T'"), type);
 }
 
 void IncompatibleTypesError(Typer* t, TypeInfo* type1, TypeInfo* type2, Token* where)
 {
-    ScratchArena scratch;
-    String type1Str = TypeInfo2String(type1, scratch);
-    String type2Str = TypeInfo2String(type2, scratch);
+    SemanticError(t, where, StrLit("The following types are incompatible: '%T' and '%T'"), type1, type2);
+}
+
+void IncompatibleReturnsError(Typer* t, Token* where, int numStmtRets, int numProcRets)
+{
+    if(numStmtRets == 0)
+        SemanticError(t, where, StrLit("Statement does not return a value, ..."));
+    else if(numStmtRets == 1)
+    {
+        if(numProcRets > 1)
+            SemanticError(t, where, StrLit("Trying to return a single value, ..."));
+        else
+            SemanticError(t, where, StrLit("Trying to return a value, ..."));
+    }
+    else
+        SemanticError(t, where, StrLit("Trying to return %d values, ..."), numStmtRets);
     
-    StringBuilder builder;
-    builder.Append(scratch, 5, StrLit("The following types are incompatible: '"),
-                   type1Str, StrLit("' and '"), type2Str, StrLit("'"));
-    SemanticError(t, where, builder.string);
+    if(numProcRets == 0)
+        SemanticErrorContinue(t, t->currentProc->where, StrLit("... but the procedure does not return any value."));
+    else if(numProcRets == 1)
+        SemanticErrorContinue(t, t->currentProc->where, StrLit("... but the procedure returns 1 value."));
+    else
+        SemanticErrorContinue(t, t->currentProc->where, StrLit("... but the procedure returns %d values."), numProcRets);
 }

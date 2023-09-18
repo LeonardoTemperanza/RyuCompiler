@@ -147,13 +147,7 @@ RegIdx Interp_BuildPreRet(Interp_Proc* proc, RegIdx arg, Interp_Val val, TypeInf
                     uint16 typeSize = GetTypeSize(type);
                     uint16 typeAlign = GetTypeAlign(type);
                     Assert(typeSize <= 8);
-                    Interp_Type dt = { 0, 0, 0 };
-                    
-                    if(type->typeId == Typeid_Struct ||
-                       type->typeId == Typeid_Ident)
-                        dt = { InterpType_Int, 0, uint16(typeSize * 8) };  // Use int type for structs
-                    else
-                        dt = Interp_ConvertType(type);
+                    Interp_Type dt = Interp_ConvertType(type);
                     
                     res = Interp_Load(proc, dt, val.reg, typeAlign, false);
                 }
@@ -332,51 +326,94 @@ void Interp_DebugBreak(Interp_Proc* proc)
     newElement.dst = 0;
 }
 
+RegIdx Interp_Bin(Interp_Proc* proc, Interp_OpCode op, RegIdx reg1, RegIdx reg2)
+{
+    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
+    auto& newElement = proc->instrs[proc->instrs.length-1];
+    
+    newElement.op       = op;
+    newElement.dst      = proc->regCounter;
+    newElement.bin.src1 = reg1;
+    newElement.bin.src2 = reg2;
+    Interp_AdvanceReg(proc);
+    return newElement.dst;
+}
+
+RegIdx Interp_Unary(Interp_Proc* proc, Interp_OpCode op, RegIdx src, Interp_Type type)
+{
+    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
+    auto& newElement = proc->instrs[proc->instrs.length-1];
+    
+    newElement.op   = op;
+    newElement.dst  = proc->regCounter;
+    newElement.unary.type = type;
+    newElement.unary.src  = src;
+    
+    proc->permanentRegs.Append(proc->regCounter);
+    Interp_AdvanceReg(proc);
+    return newElement.dst;
+}
+
+RegIdx Interp_Unary(Interp_Proc* proc, Interp_OpCode op, RegIdx src)
+{
+    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
+    auto& newElement = proc->instrs[proc->instrs.length-1];
+    
+    newElement.op   = op;
+    newElement.dst  = proc->regCounter;
+    newElement.unary.src  = src;
+    
+    proc->permanentRegs.Append(proc->regCounter);
+    Interp_AdvanceReg(proc);
+    return newElement.dst;
+}
+
 // void Interp_Param(Interp_Proc* proc) {}
 
-void Interp_FPExt(Interp_Proc* proc)
+RegIdx Interp_FPExt(Interp_Proc* proc, RegIdx src, Interp_Type type)
 {
-    
+    return Interp_Unary(proc, Op_FloatExt, src, type);
 }
 
-void Interp_SExt(Interp_Proc* proc)
+RegIdx Interp_SExt(Interp_Proc* proc, RegIdx src, Interp_Type type)
 {
-    
+    return Interp_Unary(proc, Op_SignExt, src, type);
 }
 
-void Interp_ZExt(Interp_Proc* proc)
+RegIdx Interp_ZExt(Interp_Proc* proc, RegIdx src, Interp_Type type)
 {
-    
+    return Interp_Unary(proc, Op_ZeroExt, src, type);
 }
 
-void Interp_Trunc(Interp_Proc* proc)
+RegIdx Interp_Trunc(Interp_Proc* proc, RegIdx src, Interp_Type type)
 {
-    
+    return Interp_Unary(proc, Op_Truncate, src, type);
 }
 
-void Interp_Int2Ptr(Interp_Proc* proc)
+RegIdx Interp_Int2Ptr(Interp_Proc* proc, RegIdx src, Interp_Type type)
 {
-    
+    return Interp_Unary(proc, Op_Int2Ptr, src, type);
 }
 
-void Interp_Ptr2Int(Interp_Proc* proc)
+RegIdx Interp_Ptr2Int(Interp_Proc* proc, RegIdx src, Interp_Type type)
 {
-    
+    return Interp_Unary(proc, Op_Ptr2Int, src, type);
 }
 
-void Interp_Int2Float(Interp_Proc* proc)
+// TODO: If it's a constant, remove the unnecessary cast and directly convert the constant
+RegIdx Interp_Int2Float(Interp_Proc* proc, RegIdx src, Interp_Type type, bool isSigned)
 {
-    
+    return Interp_Unary(proc, isSigned? Op_Int2Float : Op_Uint2Float, src, type);
 }
 
-void Interp_Float2Int(Interp_Proc* proc)
+RegIdx Interp_Float2Int(Interp_Proc* proc, RegIdx src, Interp_Type type, bool isSigned)
 {
-    
+    return Interp_Unary(proc, isSigned? Op_Float2Int : Op_Float2Uint, src, type);
 }
 
-void Interp_Bitcast(Interp_Proc* proc)
+RegIdx Interp_Bitcast(Interp_Proc* proc, RegIdx src, Interp_Type type)
 {
-    
+    return Interp_Unary(proc, Op_Bitcast, src, type);
 }
 
 // Local uses reg1 and reg2 to store size and alignment,
@@ -438,10 +475,10 @@ RegIdx Interp_ImmSInt(Interp_Proc* proc, Interp_Type type, int64 imm)
     proc->instrs.ResizeAndInit(proc->instrs.length + 1);
     auto& newElement = proc->instrs[proc->instrs.length-1];
     
-    newElement.op       = Op_IntegerConst;
-    newElement.dst      = proc->regCounter;
-    newElement.imm.val  = imm;
-    newElement.imm.type = type;
+    newElement.op         = Op_IntegerConst;
+    newElement.dst        = proc->regCounter;
+    newElement.imm.intVal = imm;
+    newElement.imm.type   = type;
     Interp_AdvanceReg(proc);
     return newElement.dst;
 }
@@ -455,17 +492,39 @@ RegIdx Interp_ImmUInt(Interp_Proc* proc, Interp_Type type, uint64 imm)
     proc->instrs.ResizeAndInit(proc->instrs.length + 1);
     auto& newElement = proc->instrs[proc->instrs.length-1];
     
-    newElement.op       = Op_IntegerConst;
-    newElement.dst      = proc->regCounter;
-    newElement.imm.val  = imm;
-    newElement.imm.type = type;
+    newElement.op         = Op_IntegerConst;
+    newElement.dst        = proc->regCounter;
+    newElement.imm.intVal = imm;
+    newElement.imm.type   = type;
     Interp_AdvanceReg(proc);
     return newElement.dst;
 }
 
-void Interp_Float32(Interp_Proc* proc) {}
+RegIdx Interp_ImmFloat32(Interp_Proc* proc, Interp_Type type, float imm)
+{
+    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
+    auto& newElement = proc->instrs[proc->instrs.length-1];
+    
+    newElement.op           = Op_Float32Const;
+    newElement.dst          = proc->regCounter;
+    newElement.imm.floatVal = imm;
+    newElement.imm.type     = type;
+    Interp_AdvanceReg(proc);
+    return newElement.dst;
+}
 
-void Interp_Float64(Interp_Proc* proc) {}
+RegIdx Interp_ImmFloat64(Interp_Proc* proc, Interp_Type type, double imm)
+{
+    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
+    auto& newElement = proc->instrs[proc->instrs.length-1];
+    
+    newElement.op            = Op_Float64Const;
+    newElement.dst           = proc->regCounter;
+    newElement.imm.doubleVal = imm;
+    newElement.imm.type      = type;
+    Interp_AdvanceReg(proc);
+    return newElement.dst;
+}
 
 // void Interp_CString(Interp_Proc* proc) {}
 
@@ -512,67 +571,27 @@ void Interp_Select(Interp_Proc* proc)
 // This should support different kinds of arithmetic behavior 
 RegIdx Interp_Add(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
 {
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op       = Op_Add;
-    newElement.dst      = proc->regCounter;
-    newElement.bin.src1 = reg1;
-    newElement.bin.src2 = reg2;
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
+    return Interp_Bin(proc, Op_Add, reg1, reg2);
 }
 
 RegIdx Interp_Sub(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
 {
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op       = Op_Sub;
-    newElement.dst      = proc->regCounter;
-    newElement.bin.src1 = reg1;
-    newElement.bin.src2 = reg2;
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
+    return Interp_Bin(proc, Op_Sub, reg1, reg2);
 }
 
 RegIdx Interp_Mul(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
 {
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op       = Op_Mul;
-    newElement.dst      = proc->regCounter;
-    newElement.bin.src1 = reg1;
-    newElement.bin.src2 = reg2;
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
+    return Interp_Bin(proc, Op_Mul, reg1, reg2);
 }
 
 RegIdx Interp_Div(Interp_Proc* proc, RegIdx reg1, RegIdx reg2, bool signedness)
 {
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op       = signedness ? Op_SDiv : Op_UDiv;
-    newElement.dst      = proc->regCounter;
-    newElement.bin.src1 = reg1;
-    newElement.bin.src2 = reg2;
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
+    return Interp_Bin(proc, signedness? Op_SDiv : Op_UDiv, reg1, reg2);
 }
 
 RegIdx Interp_Mod(Interp_Proc* proc, RegIdx reg1, RegIdx reg2, bool signedness)
 {
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op       = signedness ? Op_SMod : Op_UMod;
-    newElement.dst      = proc->regCounter;
-    newElement.bin.src1 = reg1;
-    newElement.bin.src2 = reg2;
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
+    return Interp_Bin(proc, signedness? Op_SMod : Op_UMod, reg1, reg2);
 }
 
 void Interp_BSwap(Interp_Proc* proc)
@@ -586,15 +605,27 @@ void Interp_BSwap(Interp_Proc* proc)
 
 //void Interp_PopCount(Interp_Proc* proc) {}
 
-void Interp_Not(Interp_Proc* proc) {}
+void Interp_Not(Interp_Proc* proc)
+{
+    
+}
 
 void Interp_Neg(Interp_Proc* proc) {}
 
-void Interp_And(Interp_Proc* proc) {}
+void Interp_And(Interp_Proc* proc)
+{
+    
+}
 
-void Interp_Or(Interp_Proc* proc) {}
+void Interp_Or(Interp_Proc* proc)
+{
+    
+}
 
-void Interp_Xor(Interp_Proc* proc) {}
+void Interp_Xor(Interp_Proc* proc)
+{
+    
+}
 
 void Interp_Sar(Interp_Proc* proc) {}
 
@@ -622,13 +653,25 @@ void Interp_AtomicOr(Interp_Proc* proc) {}
 
 void Interp_AtomicCmpExchange(Interp_Proc* proc) {}
 
-void Interp_FAdd(Interp_Proc* proc) {}
+RegIdx Interp_FAdd(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
+{
+    return Interp_Bin(proc, Op_FAdd, reg1, reg2);
+}
 
-void Interp_FSub(Interp_Proc* proc) {}
+RegIdx Interp_FSub(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
+{
+    return Interp_Bin(proc, Op_FSub, reg1, reg2);
+}
 
-void Interp_FMul(Interp_Proc* proc) {}
+RegIdx Interp_FMul(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
+{
+    return Interp_Bin(proc, Op_FMul, reg1, reg2);
+}
 
-void Interp_FDiv(Interp_Proc* proc) {}
+RegIdx Interp_FDiv(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
+{
+    return Interp_Bin(proc, Op_FDiv, reg1, reg2);
+}
 
 void Interp_CmpEq(Interp_Proc* proc) {}
 
@@ -665,8 +708,6 @@ RegIdx Interp_Call(Interp_Proc* proc, RegIdx target, Array<RegIdx> args)
     newElement.op = Op_Call;
     newElement.dst         = proc->regCounter;
     newElement.call.target = target;
-    //newElement.call.minRetReg = result.minReg;
-    //newElement.call.maxRetReg = result.maxReg;
     newElement.call.argCount = args.length;
     newElement.call.argStart = argIdx;
     
@@ -756,8 +797,6 @@ void Interp_Return(Interp_Proc* proc, RegIdx retValue)
     
     newElement.op = Op_Ret;
     newElement.unary.src = retValue;
-    //newElement.ret.valStart = arrayStart;
-    //newElement.ret.valCount = count;
 }
 
 void Interp_ReturnVoid(Interp_Proc* proc)
@@ -768,8 +807,6 @@ void Interp_ReturnVoid(Interp_Proc* proc)
     newElement.op = Op_Ret;
     newElement.bitfield |= InstrBF_RetVoid;
     newElement.unary.src = 0;
-    //newElement.ret.valStart = arrayStart;
-    //newElement.ret.valCount = count;
 }
 
 ////
@@ -793,8 +830,7 @@ RegIdx Interp_ConvertNodeRVal(Interp_Proc* proc, Ast_Node* node)
 
 Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
 {
-    RegIdx result = RegIdx_Unused;
-    bool isLValue = false;
+    Interp_Val res = { RegIdx_Unused, false };
     
     switch(node->kind)
     {
@@ -808,27 +844,16 @@ Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
             
             if(varDecl->initExpr)
             {
-                auto exprReg = Interp_ConvertNodeRVal(proc, varDecl->initExpr);
-                Interp_EndOfExpression(proc);
-                auto addrReg = proc->declToAddr[varDecl->declIdx];
-                Interp_Store(proc, Interp_ConvertType(varDecl->type), addrReg, exprReg, GetTypeAlign(type), false);
+                auto dst = proc->declToAddr[varDecl->declIdx];
+                Interp_Val dstVal = { dst, true };
+                auto src = Interp_ConvertNode(proc, varDecl->initExpr);
+                Interp_Assign(proc, src, varDecl->initExpr->type, dstVal, varDecl->type);
+                
+                //auto exprReg = Interp_ConvertNodeRVal(proc, varDecl->initExpr);
+                //Interp_EndOfExpression(proc);
+                //Interp_Store(proc, Interp_ConvertType(varDecl->type), addrReg, exprReg, GetTypeAlign(type), false);
             }
             
-            break;
-            
-            auto decl = (Ast_VarDecl*)node;
-            auto addr = Interp_Local(proc, GetTypeSize(decl->type), GetTypeAlign(decl->type));
-            //decl->tildeNode = node;
-            
-            // TODO TODO TODO
-            if(decl->initExpr)
-            {
-                auto exprReg = Interp_ConvertNode(proc, decl->initExpr).reg;
-                Interp_EndOfExpression(proc);
-                Interp_Store(proc, Interp_ConvertType(decl->type), addr, exprReg, GetTypeAlign(type), false);
-            }
-            
-            result = addr;
             break;
         }
         case AstKind_EnumDecl:      break;
@@ -882,11 +907,14 @@ Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
                 Interp_ReturnVoid(proc);
             else
             {
+                auto procType = (Ast_DeclaratorProc*)proc->symbol->type;
+                
                 ScratchArena scratch;
                 Array<Interp_Val> regs = { 0, 0 };
                 for_array(i, stmt->rets)
                 {
-                    auto reg = Interp_ConvertNode(proc, stmt->rets[i]);
+                    auto ret = stmt->rets[i];
+                    auto reg = Interp_ConvertNode(proc, ret);
                     regs.Append(scratch, reg);
                 }
                 
@@ -901,25 +929,14 @@ Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
                 Interp_Return(proc, toRet);
             }
             
-            //auto exprReg = Interp_ConvertNodeRVal(proc, stmt->expr);
-            //Interp_Return(proc, exprReg);
             break;
         }
         case AstKind_Break:         break;
         case AstKind_Continue:      break;
-        case AstKind_MultiAssign:   ;
+        case AstKind_MultiAssign:   break;
         case AstKind_EmptyStmt:     break;
         case AstKind_StmtEnd:       break;
         case AstKind_ExprBegin:     break;
-        case AstKind_Literal:       break;
-        case AstKind_NumLiteral:
-        {
-            auto expr = (Ast_Expr*)node;
-            Interp_Type type = Interp_ConvertType(expr->type);
-            // @temporary All literals are 2 for now
-            result = Interp_ImmSInt(proc, type, 2);
-            break;
-        }
         case AstKind_Ident:
         {
             auto expr = (Ast_IdentExpr*)node;
@@ -929,7 +946,7 @@ Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
                 auto procDef = (Ast_ProcDef*)expr->declaration;
                 auto address = Interp_GetSymbolAddress(proc, procDef->symbol);
                 
-                result = address;
+                res.reg = address;
             }
             else  // Variable
             {
@@ -943,11 +960,11 @@ Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
                 }
                 else
                 {
-                    result = proc->declToAddr[decl->declIdx];
+                    res.reg = proc->declToAddr[decl->declIdx];
                 }
             }
             
-            isLValue = true;
+            res.isLValue = true;
             break;
         }
         case AstKind_FuncCall:
@@ -958,10 +975,7 @@ Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
             Assert(values.length == 0 || values.length == 1);
             
             if(values.length == 1)
-            {
-                result = values[0].reg;
-                isLValue = values[0].isLValue;
-            }
+                res = values[0];
             break;
         }
         case AstKind_BinaryExpr:
@@ -973,28 +987,8 @@ Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
             {
                 auto lhs = Interp_ConvertNode(proc, expr->lhs);
                 auto rhs = Interp_ConvertNode(proc, expr->rhs);
-                Assert(lhs.isLValue);
-                
-                TypeInfo* type = expr->lhs->type;
-                auto size = GetTypeSize(type);
-                auto align = GetTypeAlign(type);
-                
-                if(expr->lhs->type->typeId == Typeid_Struct ||
-                   expr->lhs->type->typeId == Typeid_Ident)
-                {
-                    Assert(rhs.isLValue);
-                    RegIdx sizeReg = Interp_ImmUInt(proc, Interp_Int64, size);
-                    Interp_MemCpy(proc, lhs.reg, rhs.reg, sizeReg, align, false);
-                }
-                else
-                {
-                    // TODO: type conversion
-                    auto rhsRVal = Interp_GetRVal(proc, rhs, type);
-                    Interp_Store(proc, Interp_ConvertType(type), lhs.reg, rhsRVal, align, false);
-                }
-                
-                result = lhs.reg;
-                isLValue = true;
+                auto val = Interp_Assign(proc, rhs, expr->rhs->type, lhs, expr->lhs->type);
+                res = val;
             }
             else
             {
@@ -1002,14 +996,30 @@ Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
                 RegIdx rhs = Interp_ConvertNodeRVal(proc, expr->rhs);
                 Assert(lhs != RegIdx_Unused && rhs != RegIdx_Unused);
                 
-                // @temporary assuming integer operands
-                switch(expr->op)
+                if(IsTypeIntegral(expr->type))
                 {
-                    case '=': break;  // Already handled before
-                    case '+': result = Interp_Add(proc, lhs, rhs); break;
-                    case '-': result = Interp_Sub(proc, lhs, rhs); break;
-                    case '*': result = Interp_Mul(proc, lhs, rhs); break;
-                    case '/': result = Interp_Div(proc, lhs, rhs, true); break;
+                    bool isSigned = IsTypeSigned(expr->type);
+                    switch(expr->op)
+                    {
+                        case '=': break;  // Already handled before
+                        case '+': res.reg = Interp_Add(proc, lhs, rhs); break;
+                        case '-': res.reg = Interp_Sub(proc, lhs, rhs); break;
+                        case '*': res.reg = Interp_Mul(proc, lhs, rhs); break;
+                        case '/': res.reg = Interp_Div(proc, lhs, rhs, isSigned); break;
+                        case '%': res.reg = Interp_Mod(proc, lhs, rhs, isSigned); break;
+                    }
+                }
+                else if(IsTypeFloat(expr->type))
+                {
+                    switch(expr->op)
+                    {
+                        case '=': break;  // Already handled before
+                        case '+': res.reg = Interp_FAdd(proc, lhs, rhs); break;
+                        case '-': res.reg = Interp_FSub(proc, lhs, rhs); break;
+                        case '*': res.reg = Interp_FMul(proc, lhs, rhs); break;
+                        case '/': res.reg = Interp_FDiv(proc, lhs, rhs); break;
+                        case '%': Assert(false);
+                    }
                 }
             }
             
@@ -1017,20 +1027,95 @@ Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
         }
         case AstKind_UnaryExpr:     break;
         case AstKind_TernaryExpr:   break;
-        case AstKind_Typecast:      break;
+        case AstKind_Typecast:
+        {
+            auto expr = (Ast_Typecast*)node;
+            auto srcType = Interp_ConvertType(expr->expr->type);
+            RegIdx exprReg = Interp_ConvertNodeRVal(proc, expr->expr);
+            res.reg = Interp_ConvertTypeConversion(proc, exprReg, srcType, expr->expr->type, expr->type);
+            break;
+        }
         case AstKind_Subscript:     break;
         case AstKind_MemberAccess:  break;
+        case AstKind_ConstValue:
+        {
+            auto expr = (Ast_ConstValue*)node;
+            Interp_Type type = Interp_ConvertType(expr->type);
+            
+            switch_nocheck(expr->type->typeId)
+            {
+                case Typeid_Int64:
+                {
+                    int64 val = *(int64*)expr->addr;
+                    res.reg = Interp_ImmSInt(proc, type, val);
+                    break;
+                }
+                case Typeid_Float:
+                {
+                    float val = *(float*)expr->addr;
+                    res.reg = Interp_ImmFloat32(proc, type, val);
+                    break;
+                }
+                case Typeid_Double:
+                {
+                    double val = *(double*)expr->addr;
+                    res.reg = Interp_ImmFloat64(proc, type, val);
+                    break;
+                }
+                default: Assert(false);
+            } switch_nocheck_end;
+            
+            break;
+        }
         case AstKind_ExprEnd:       break;
         default: Assert(false && "Enum value out of bounds");
     }
     
-    return { result, isLValue };
+    if(Ast_IsExpr(node))
+    {
+        auto expr = (Ast_Expr*)node;
+        // Convert type
+        if(expr->castType->typeId != expr->type->typeId)
+        {
+            res.reg = Interp_GetRVal(proc, res, expr->type);
+            res.isLValue = false;
+            
+            auto srcType = Interp_ConvertType(expr->type);
+            res.reg = Interp_ConvertTypeConversion(proc, res.reg, srcType, expr->type, expr->castType);
+        }
+    }
+    
+    return res;
+}
+
+Interp_Val Interp_Assign(Interp_Proc* proc, Interp_Val src, TypeInfo* srcType, Interp_Val dst, TypeInfo* dstType)
+{
+    Assert(dst.isLValue);
+    
+    TypeInfo* type = dstType;
+    auto size = GetTypeSize(type);
+    auto align = GetTypeAlign(type);
+    
+    if(dstType->typeId == Typeid_Struct ||
+       dstType->typeId == Typeid_Ident)
+    {
+        Assert(src.isLValue);
+        RegIdx sizeReg = Interp_ImmUInt(proc, Interp_Int64, size);
+        Interp_MemCpy(proc, dst.reg, src.reg, sizeReg, align, false);
+    }
+    else
+    {
+        auto srcRVal = Interp_GetRVal(proc, src, srcType);
+        Interp_Store(proc, Interp_ConvertType(type), dst.reg, srcRVal, align, false);
+    }
+    
+    return dst;
 }
 
 Array<Interp_Val> Interp_ConvertCall(Interp_Proc* proc, Ast_FuncCall* call, Arena* allocTo)
 {
     ScratchArena scratch1(allocTo);
-    ScratchArena scratch2(allocTo);
+    ScratchArena scratch2(scratch1, allocTo);
     Array<Interp_Val> rets = { 0, 0 };
     Array<RegIdx> args = { 0, 0 };
     
@@ -1071,9 +1156,6 @@ Array<Interp_Val> Interp_ConvertCall(Interp_Proc* proc, Ast_FuncCall* call, Aren
         TB_PassingRule rule = tb_get_passing_rule_from_dbg(proc->module, debugType, false);
         
         auto val = Interp_ConvertNode(proc, call->args[i]);
-        
-        // TODO: Do type conversion
-        
         auto passedArg = Interp_PassArg(proc, val, call->args[i]->type, rule, scratch1);
         args.Append(scratch2, passedArg);
     }
@@ -1235,16 +1317,10 @@ void Interp_ConvertBlock(Interp_Proc* proc, Ast_Block* block)
     
     // Handle scope stuff here
     
-    
 }
 
 Interp_Type Interp_ConvertType(TypeInfo* type)
 {
-    Interp_Type dt = { 0, 0, 0 };
-    
-    // @temporary @temporary @temporary @temporary @temporary @temporary @temporary 
-    return Interp_Int32;
-    
     switch(type->typeId)
     {
         case Typeid_Bool:   return Interp_Bool;
@@ -1263,9 +1339,66 @@ Interp_Type Interp_ConvertType(TypeInfo* type)
         case Typeid_Arr:    return Interp_Ptr;
         case Typeid_None:   return Interp_Void;
         case Typeid_Proc:
+        // NOTE(Leo): If it's a struct, and we'd like to put
+        // it in register, we use an integer type
         case Typeid_Struct:
-        case Typeid_Ident:  Assert(false && "Register cannot be of aggregate type");
+        case Typeid_Ident:  return { InterpType_Int, 0, uint16(GetTypeSize(type) * 8) };
     }
+    
+    return { 0, 0, 0 };
+}
+
+RegIdx Interp_ConvertTypeConversion(Interp_Proc* proc, RegIdx src, Interp_Type srcType, TypeInfo* srcFullType, TypeInfo* dst)
+{
+    Interp_Type dstType = Interp_ConvertType(dst);
+    bool srcIsSigned = IsTypeSigned(srcFullType);
+    bool dstIsSigned = IsTypeSigned(dst);
+    return Interp_ConvertTypeConversion(proc, src, srcType, dstType, srcIsSigned, dstIsSigned);
+}
+
+RegIdx Interp_ConvertTypeConversion(Interp_Proc* proc, RegIdx src, Interp_Type srcType, Interp_Type dstType,
+                                    bool srcIsSigned, bool dstIsSigned)
+{
+    RegIdx res = src;
+    if(srcType.type == dstType.type)
+    {
+        if(srcType.data != dstType.data)
+        {
+            if(srcType.width > dstType.width)  // Truncate
+                res = Interp_Trunc(proc, src, dstType);
+            else  // Extend
+            {
+                if(srcType.type == InterpType_Float)
+                    res = Interp_FPExt(proc, src, dstType);
+                else if(srcType.type == InterpType_Int)
+                {
+                    if(srcIsSigned)
+                        res = Interp_SExt(proc, src, dstType);
+                    else
+                        res = Interp_ZExt(proc, src, dstType);
+                }
+            }
+        }
+    }
+    else if(srcType.type == InterpType_Int)
+    {
+        if(dstType.type == InterpType_Float)
+            res = Interp_Int2Float(proc, src, dstType, srcIsSigned);
+        else if(dstType.type == InterpType_Ptr)
+            res = Interp_Int2Ptr(proc, src, dstType);
+    }
+    else if(srcType.type == InterpType_Float)
+    {
+        if(dstType.type == InterpType_Int)
+            res = Interp_Float2Int(proc, src, dstType, dstIsSigned);
+    }
+    else if(srcType.type == InterpType_Ptr)
+    {
+        if(dstType.type == InterpType_Int)
+            res = Interp_Ptr2Int(proc, src, dstType);
+    }
+    
+    return res;
 }
 
 void Interp_PrintPassRule(TB_PassingRule rule)
@@ -1331,9 +1464,9 @@ void Interp_PrintInstr(Interp_Proc* proc, Interp_Instr* instr)
     switch(instr->op)
     {
         case Op_Null:         break;
-        case Op_IntegerConst: printf("%lld", instr->imm.val); break;
-        case Op_Float32Const: break;
-        case Op_Float64Const: break;
+        case Op_IntegerConst: printf("%lld", instr->imm.intVal); break;
+        case Op_Float32Const: printf("%f", instr->imm.floatVal); break;
+        case Op_Float64Const: printf("%lf", instr->imm.doubleVal); break;
         case Op_Region:       break;
         case Op_Call:
         {
@@ -1365,7 +1498,10 @@ void Interp_PrintInstr(Interp_Proc* proc, Interp_Instr* instr)
             printf("(dst: %%%d, src: %%%d, count: %%%d, align: %lld)", instr->memcpy.dst, instr->memcpy.src, instr->memcpy.count, instr->memcpy.align);
             break;
         }
-        case Op_MemSet:      break;
+        case Op_MemSet:
+        {
+            break;
+        }
         case Op_AtomicTestAndSet:  break;
         case Op_AtomicClear:       break;
         case Op_AtomicLoad:        break;

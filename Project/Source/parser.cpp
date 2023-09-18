@@ -704,12 +704,35 @@ Ast_Expr* ParsePrimaryExpression(Parser* p)
         ++p->at;
         return ident;
     }
-    else if(p->at->type == Tok_Num)
+    else if(p->at->type == Tok_IntNum)
     {
-        auto literalExpr = Ast_MakeNode<Ast_NumLiteral>(p->arena, p->at);
-        literalExpr->type = &primitiveTypes[Typeid_Float];
+        auto constExpr = Ast_MakeNode<Ast_ConstValue>(p->arena, p->at);
+        constExpr->type = &primitiveTypes[Typeid_Int64];
+        constExpr->constBitfield |= Const_IsReady;
+        constExpr->addr = Arena_FromStackPack(p->arena, p->at->intValue);
+        
         ++p->at;
-        return literalExpr;
+        return constExpr;
+    }
+    else if(p->at->type == Tok_FloatNum)
+    {
+        auto constExpr = Ast_MakeNode<Ast_ConstValue>(p->arena, p->at);
+        constExpr->type = &primitiveTypes[Typeid_Float];
+        constExpr->constBitfield |= Const_IsReady;
+        constExpr->addr = Arena_FromStackPack(p->arena, p->at->floatValue);
+        
+        ++p->at;
+        return constExpr;
+    }
+    else if(p->at->type == Tok_DoubleNum)
+    {
+        auto constExpr = Ast_MakeNode<Ast_ConstValue>(p->arena, p->at);
+        constExpr->type = &primitiveTypes[Typeid_Double];
+        constExpr->constBitfield |= Const_IsReady;
+        constExpr->addr = Arena_FromStackPack(p->arena, p->at->doubleValue);
+        
+        ++p->at;
+        return constExpr;
     }
     
     String tokType = TokTypeToString(p->at->type, scratch.arena());

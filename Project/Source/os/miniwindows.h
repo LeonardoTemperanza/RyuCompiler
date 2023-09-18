@@ -23,6 +23,7 @@ extern "C"
     typedef unsigned __int64 DWORD64;
     typedef void VOID;
     typedef void* LPVOID;
+    typedef LONG* LPLONG;
     typedef CONST void *LPCVOID;
     typedef char CHAR;
     typedef CHAR *LPSTR;
@@ -39,6 +40,7 @@ extern "C"
     typedef ULONG_PTR SIZE_T;
 	typedef unsigned long DWORD;
     typedef void* HANDLE;
+    typedef HANDLE* LPHANDLE;
     typedef HANDLE HINSTANCE;
     typedef HINSTANCE HMODULE;
     typedef DWORD COLORREF;
@@ -50,6 +52,8 @@ extern "C"
 #define NEAR near
 #define DUMMYSTRUCTNAME
     typedef int (FAR WINAPI *FARPROC)();
+    typedef unsigned char BYTE;
+    typedef BYTE far *LPBYTE;
     
     typedef union _LARGE_INTEGER {
         struct {
@@ -375,5 +379,208 @@ extern "C"
                                      _In_ HANDLE hConsoleOutput,
                                      _In_ PCONSOLE_SCREEN_BUFFER_INFOEX lpConsoleScreenBufferInfoEx
                                      );
+    
+    // Threads and processes
+    
+    typedef struct _PROCESS_INFORMATION {
+        HANDLE hProcess;
+        HANDLE hThread;
+        DWORD  dwProcessId;
+        DWORD  dwThreadId;
+    } PROCESS_INFORMATION, *PPROCESS_INFORMATION, *LPPROCESS_INFORMATION;
+    
+    typedef struct _PROC_THREAD_ATTRIBUTE_LIST *PPROC_THREAD_ATTRIBUTE_LIST, *LPPROC_THREAD_ATTRIBUTE_LIST;
+    
+    typedef struct _SECURITY_ATTRIBUTES {
+        DWORD  nLength;
+        LPVOID lpSecurityDescriptor;
+        BOOL   bInheritHandle;
+    } SECURITY_ATTRIBUTES, *PSECURITY_ATTRIBUTES, *LPSECURITY_ATTRIBUTES;
+    
+    typedef struct _STARTUPINFOA {
+        DWORD  cb;
+        LPSTR  lpReserved;
+        LPSTR  lpDesktop;
+        LPSTR  lpTitle;
+        DWORD  dwX;
+        DWORD  dwY;
+        DWORD  dwXSize;
+        DWORD  dwYSize;
+        DWORD  dwXCountChars;
+        DWORD  dwYCountChars;
+        DWORD  dwFillAttribute;
+        DWORD  dwFlags;
+        WORD   wShowWindow;
+        WORD   cbReserved2;
+        LPBYTE lpReserved2;
+        HANDLE hStdInput;
+        HANDLE hStdOutput;
+        HANDLE hStdError;
+    } STARTUPINFOA, *LPSTARTUPINFOA;
+    
+    typedef struct _STARTUPINFOW {
+        DWORD  cb;
+        LPWSTR lpReserved;
+        LPWSTR lpDesktop;
+        LPWSTR lpTitle;
+        DWORD  dwX;
+        DWORD  dwY;
+        DWORD  dwXSize;
+        DWORD  dwYSize;
+        DWORD  dwXCountChars;
+        DWORD  dwYCountChars;
+        DWORD  dwFillAttribute;
+        DWORD  dwFlags;
+        WORD   wShowWindow;
+        WORD   cbReserved2;
+        LPBYTE lpReserved2;
+        HANDLE hStdInput;
+        HANDLE hStdOutput;
+        HANDLE hStdError;
+    } STARTUPINFOW, *LPSTARTUPINFOW;
+    
+#ifdef UNICODE
+    typedef STARTUPINFOW STARTUPINFO;
+    typedef LPSTARTUPINFOW LPSTARTUPINFO;
+#else
+    typedef STARTUPINFOA STARTUPINFO;
+    typedef LPSTARTUPINFOA LPSTARTUPINFO;
+#endif // UNICODE
+    
+    typedef struct _STARTUPINFOEXA {
+        STARTUPINFOA                 StartupInfo;
+        LPPROC_THREAD_ATTRIBUTE_LIST lpAttributeList;
+    } STARTUPINFOEXA, *LPSTARTUPINFOEXA;
+    
+    typedef struct _PROC_THREAD_ATTRIBUTE_LIST *PPROC_THREAD_ATTRIBUTE_LIST, *LPPROC_THREAD_ATTRIBUTE_LIST;
+    
+    WINBASEAPI
+        BOOL
+        WINAPI
+        CreateProcessA(
+                       _In_opt_ LPCSTR lpApplicationName,
+                       _Inout_opt_ LPSTR lpCommandLine,
+                       _In_opt_ LPSECURITY_ATTRIBUTES lpProcessAttributes,
+                       _In_opt_ LPSECURITY_ATTRIBUTES lpThreadAttributes,
+                       _In_ BOOL bInheritHandles,
+                       _In_ DWORD dwCreationFlags,
+                       _In_opt_ LPVOID lpEnvironment,
+                       _In_opt_ LPCSTR lpCurrentDirectory,
+                       _In_ LPSTARTUPINFOA lpStartupInfo,
+                       _Out_ LPPROCESS_INFORMATION lpProcessInformation
+                       );
+    
+    WINBASEAPI
+        BOOL
+        WINAPI
+        CreateProcessW(
+                       _In_opt_ LPCWSTR lpApplicationName,
+                       _Inout_opt_ LPWSTR lpCommandLine,
+                       _In_opt_ LPSECURITY_ATTRIBUTES lpProcessAttributes,
+                       _In_opt_ LPSECURITY_ATTRIBUTES lpThreadAttributes,
+                       _In_ BOOL bInheritHandles,
+                       _In_ DWORD dwCreationFlags,
+                       _In_opt_ LPVOID lpEnvironment,
+                       _In_opt_ LPCWSTR lpCurrentDirectory,
+                       _In_ LPSTARTUPINFOW lpStartupInfo,
+                       _Out_ LPPROCESS_INFORMATION lpProcessInformation
+                       );
+#ifdef UNICODE
+#define CreateProcess  CreateProcessW
+#else
+#define CreateProcess  CreateProcessA
+#endif // !UNICODE
+    
+    // Synchronization
+    
+#define INFINITE 0xFFFFFFFF
+    
+    WINBASEAPI
+        BOOL
+        WINAPI
+        SetEvent(
+                 _In_ HANDLE hEvent
+                 );
+    
+    WINBASEAPI
+        BOOL
+        WINAPI
+        ResetEvent(
+                   _In_ HANDLE hEvent
+                   );
+    
+    WINBASEAPI
+        BOOL
+        WINAPI
+        ReleaseSemaphore(
+                         _In_ HANDLE hSemaphore,
+                         _In_ LONG lReleaseCount,
+                         _Out_opt_ LPLONG lpPreviousCount
+                         );
+    
+    WINBASEAPI
+        BOOL
+        WINAPI
+        ReleaseMutex(
+                     _In_ HANDLE hMutex
+                     );
+    
+    WINBASEAPI
+        DWORD
+        WINAPI
+        WaitForSingleObject(
+                            _In_ HANDLE hHandle,
+                            _In_ DWORD dwMilliseconds
+                            );
+    
+    WINBASEAPI
+        DWORD
+        WINAPI
+        SleepEx(
+                _In_ DWORD dwMilliseconds,
+                _In_ BOOL bAlertable
+                );
+    
+    WINBASEAPI
+        DWORD
+        WINAPI
+        WaitForSingleObjectEx(
+                              _In_ HANDLE hHandle,
+                              _In_ DWORD dwMilliseconds,
+                              _In_ BOOL bAlertable
+                              );
+    
+    WINBASEAPI
+        DWORD
+        WINAPI
+        WaitForMultipleObjectsEx(
+                                 _In_ DWORD nCount,
+                                 _In_reads_(nCount) CONST HANDLE* lpHandles,
+                                 _In_ BOOL bWaitAll,
+                                 _In_ DWORD dwMilliseconds,
+                                 _In_ BOOL bAlertable
+                                 );
+    
+    // Handles
+    
+    WINBASEAPI
+        BOOL
+        WINAPI
+        CloseHandle(
+                    _In_ _Post_ptr_invalid_ HANDLE hObject
+                    );
+    
+    WINBASEAPI
+        BOOL
+        WINAPI
+        DuplicateHandle(
+                        _In_ HANDLE hSourceProcessHandle,
+                        _In_ HANDLE hSourceHandle,
+                        _In_ HANDLE hTargetProcessHandle,
+                        _Outptr_ LPHANDLE lpTargetHandle,
+                        _In_ DWORD dwDesiredAccess,
+                        _In_ BOOL bInheritHandle,
+                        _In_ DWORD dwOptions
+                        );
     
 }

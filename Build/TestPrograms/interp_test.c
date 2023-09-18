@@ -11,59 +11,39 @@ proc add(int a, int b, teststr str2)->teststr
     return str;
 }
 
-/*
-proc add2()->int
+proc add_int(int a, int b)->float
 {
-    int a = 2-2;
-    int b = 2+2;
-    
-    if(a)
-    {
-        int c;
-        b = 2*(2+2)+2;
-    }
-    else
-        b = 2*2;
-    
-    return a+b;
+    return a+b + 0.2;
 }
-*/
+
+proc add_float()->int
+{
+    return 40;
+}
 
 proc main()->int
 {
+    //float f = 3.4;
+    //int i = f + 2;
+    
     teststr str;
-    //str = add(2, 3, str);
-    add(2, 3, str);
-    return 0;
+    teststr str2;
+    //*str;
+    str = str2;
+    //str + 2;
     
-    //return add2();
-    //return add() + add();
-}
-
-/*
-proc prova()->(int, float)
-{
-    int testint, float testfloat = prova();
+    float f = 4.8d * cast(int) 5.3;
+    int i = f;
     
-    testfloat += 2;
+    //teststr input;
+    //teststr str = add(3,4, input);
     
-    return 3, 4;
-}
-*/
-
-/*
-proc add(int i, int j)->int
-{
-    i = 2;
+    //float f = 3.4 +
+    //return 3.4;
     
-    return i;
+    return add_int(3.4d, 4.7);
+    
+    //teststr str;
+    //add(2, 3, str);
+    //return 2+6*2+ add_int(2+2,2+3);
 }
-*/
-
-/*proc Fibonacci(int i)->int
-{
-    if(i <= 1) return 1;
-    if(i <= 2) return 2;
-    return Fibonacci(i-1) + Fibonacci(i-2);
-}
-*/

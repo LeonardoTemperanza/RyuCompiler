@@ -1,4 +1,18 @@
 
+// TODO(Leo): @refactor notes:
+// Size should just be in the type itself as a value.
+// The categories should just be:
+// Bool, Char, Int, Float, Ptr, Arr, Proc, Struct, Ident.
+// Should struct and ident just be the same? I mean, they are indeed exactly
+// the same. It should just be an unnamed struct.
+// But i guess it's because structs are considered declarations....
+// The types of struct defs, are they ever used? I don't think so...
+// I mean it's already encoded in the ast node kind itself.
+// I think the issue with the code is this:
+// We always know when we're expecting a type, right?
+// So, maybe type lookup should be different, as a procedure.
+// I guess types could also be placed
+
 #pragma once
 
 #include "base.h"
@@ -55,7 +69,6 @@ struct Ast_Subscript;
 struct Ast_IdentExpr;
 struct Ast_MemberAccess;
 struct Ast_Typecast;
-struct Ast_NumLiteral;
 
 // Ast node types
 enum Ast_NodeKind : uint8
@@ -86,8 +99,6 @@ enum Ast_NodeKind : uint8
     
     // Expressions
     AstKind_ExprBegin,
-    AstKind_Literal,
-    AstKind_NumLiteral,
     AstKind_Ident,
     AstKind_FuncCall,
     AstKind_BinaryExpr,
@@ -96,6 +107,7 @@ enum Ast_NodeKind : uint8
     AstKind_Typecast,
     AstKind_Subscript,
     AstKind_MemberAccess,
+    AstKind_ConstValue,
     AstKind_ExprEnd
 };
 
@@ -135,7 +147,9 @@ enum TypeId : uint8
 struct TypeInfo
 {
     TypeId typeId;
-    //Token* where;
+    bool isSigned;
+    uint64 size;
+    uint64 align;
 };
 
 // @temporary
@@ -225,7 +239,10 @@ inline bool Ast_IsDecl(Ast_Node* node)
 struct Ast_Expr : public Ast_Node
 {
     TypeInfo* type;
-    TypeInfo* castType;  // Do I actually need this?
+    // Type to convert to during codegen.
+    // For example, in 3.4 + 4, 4 has convertTo = float
+    Token* typeWhere = 0;
+    TypeInfo* castType;
 };
 struct Ast_Stmt : public Ast_Node {};
 
@@ -534,21 +551,45 @@ struct Ast_Typecast : public Ast_Expr
     Ast_Expr* expr;
 };
 
-struct Ast_NumLiteral : public Ast_Expr
+enum ConstBitfield
 {
-    Ast_NumLiteral() { kind = AstKind_NumLiteral; };
+    Const_IsReady      = 1 << 0,
+    Const_RunDirective = 1 << 1,
+};
+
+struct Ast_ConstValue : public Ast_Expr
+{
+    Ast_ConstValue() { kind = AstKind_ConstValue; };
+    
+    uint8 constBitfield = 0;
+    void* addr = 0;  // Size is encoded in the type
 };
 
 inline bool Ast_IsExprArithmetic(Ast_BinaryExpr* expr)
 {
-    if(!expr)
-        return false;
+    if(!expr) return false;
     switch(expr->op)
     {
         default: return false;
         case '+': case '-':
         case '*': case '/':
         case '%':
+        return true;
+    }
+    
+    return false;
+}
+
+inline bool Ast_IsExprBitManipulation(Ast_BinaryExpr* expr)
+{
+    if(!expr) return false;
+    switch(expr->op)
+    {
+        default: return false;
+        case Tok_LShift: case Tok_RShift:
+        case '&': case '|': case '^':
+        case Tok_LShiftEquals: case Tok_RShiftEquals:
+        case Tok_AndEquals: case Tok_OrEquals: case Tok_XorEquals:
         return true;
     }
     

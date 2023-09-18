@@ -68,6 +68,7 @@ X(Op_FloatExt, "FloatExt", true) \
 X(Op_SignExt, "SignExt", true) \
 X(Op_ZeroExt, "ZeroExt", true) \
 X(Op_Int2Ptr, "Int2Ptr", true) \
+X(Op_Ptr2Int, "Ptr2Int", true) \
 X(Op_Uint2Float, "Uint2Float", true) \
 X(Op_Float2Uint, "Float2Uint", true) \
 X(Op_Int2Float, "Int2Float", true) \
@@ -193,6 +194,7 @@ enum Interp_OpCodeEnum
     Op_SignExt,
     Op_ZeroExt,
     Op_Int2Ptr,
+    Op_Ptr2Int,
     Op_Uint2Float,
     Op_Float2Uint,
     Op_Int2Float,
@@ -338,6 +340,8 @@ struct Interp_Instr
         struct
         {
             RegIdx src;
+            // Used for casts
+            Interp_Type type;
         } unary;
         struct
         {
@@ -346,7 +350,12 @@ struct Interp_Instr
         struct
         {
             Interp_Type type;
-            int64 val;
+            union
+            {
+                int64 intVal;
+                float floatVal;
+                double doubleVal;
+            };
         } imm;  // @performance immediates could just be in the instructions themselves
         struct
         {
@@ -369,8 +378,6 @@ struct Interp_Instr
             RegIdx target;
             uint16 argCount;
             uint32 argStart;
-            //uint16 minRetReg;
-            //uint16 maxRetReg;  // Exclusive, it's the same as minRetReg if no returns
         } call;
         struct
         {
@@ -512,23 +519,23 @@ Interp Interp_Init();
 InstrIdx Interp_Region(Interp_Proc* proc);
 void Interp_DebugBreak(Interp_Proc* proc);
 // void Interp_Param(Interp_Proc* proc);
-void Interp_FPExt(Interp_Proc* proc);
-void Interp_SExt(Interp_Proc* proc);
-void Interp_ZExt(Interp_Proc* proc);
-void Interp_Trunc(Interp_Proc* proc);
-void Interp_Int2Ptr(Interp_Proc* proc);
-void Interp_Ptr2Int(Interp_Proc* proc);
-void Interp_Int2Float(Interp_Proc* proc);
-void Interp_Float2Int(Interp_Proc* proc);
-void Interp_Bitcast(Interp_Proc* proc);
+RegIdx Interp_FPExt(Interp_Proc* proc, RegIdx src, Interp_Type type);
+RegIdx Interp_SExt(Interp_Proc* proc, RegIdx src, Interp_Type type);
+RegIdx Interp_ZExt(Interp_Proc* proc, RegIdx src, Interp_Type type);
+RegIdx Interp_Trunc(Interp_Proc* proc, RegIdx src, Interp_Type type);
+RegIdx Interp_Int2Ptr(Interp_Proc* proc, RegIdx src, Interp_Type type);
+RegIdx Interp_Ptr2Int(Interp_Proc* proc, RegIdx src, Interp_Type type);
+RegIdx Interp_Int2Float(Interp_Proc* proc, RegIdx src, Interp_Type type, bool isSigned);
+RegIdx Interp_Float2Int(Interp_Proc* proc, RegIdx src, Interp_Type type, bool isSigned);
+RegIdx Interp_Bitcast(Interp_Proc* proc, RegIdx src, Interp_Type type);
 RegIdx Interp_Local(Interp_Proc* proc, uint64 size, uint64 align, bool setUpArg = false);
 RegIdx Interp_Load(Interp_Proc* proc, Interp_Type type, RegIdx addr, uint64 align, bool isVolatile);
 Interp_Instr* Interp_Store(Interp_Proc* proc, Interp_Type type, RegIdx addr, RegIdx val, uint64 align, bool isVolatile, bool setUpArg = false);
 void Interp_ImmBool(Interp_Proc* proc);
 RegIdx Interp_ImmSInt(Interp_Proc* proc, Interp_Type type, int64 imm);
 RegIdx Interp_ImmUInt(Interp_Proc* proc, Interp_Type type, uint64 imm);
-void Interp_Float32(Interp_Proc* proc);
-void Interp_Float64(Interp_Proc* proc);
+void Interp_ImmFloat32(Interp_Proc* proc);
+void Interp_ImmFloat64(Interp_Proc* proc);
 // void Interp_CString(Interp_Proc* proc);
 // void Interp_String(Interp_Proc* proc);
 void Interp_MemSet(Interp_Proc* proc);
@@ -565,10 +572,10 @@ void Interp_AtomicAnd(Interp_Proc* proc);
 void Interp_AtomicXor(Interp_Proc* proc);
 void Interp_AtomicOr(Interp_Proc* proc);
 void Interp_AtomicCmpExchange(Interp_Proc* proc);
-void Interp_FAdd(Interp_Proc* proc);
-void Interp_FSub(Interp_Proc* proc);
-void Interp_FMul(Interp_Proc* proc);
-void Interp_FDiv(Interp_Proc* proc);
+RegIdx Interp_FAdd(Interp_Proc* proc, RegIdx reg1, RegIdx reg2);
+RegIdx Interp_FSub(Interp_Proc* proc, RegIdx reg1, RegIdx reg2);
+RegIdx Interp_FMul(Interp_Proc* proc, RegIdx reg1, RegIdx reg2);
+RegIdx Interp_FDiv(Interp_Proc* proc, RegIdx reg1, RegIdx reg2);
 void Interp_CmpEq(Interp_Proc* proc);
 void Interp_CmpNe(Interp_Proc* proc);
 void Interp_CmpILT(Interp_Proc* proc);
@@ -594,10 +601,13 @@ void Interp_Return(Interp_Proc* proc, RegIdx retValue);
 void Interp_EndOfExpression(Interp_Proc* proc);  // At this point registers can be reused
 RegIdx Interp_ConvertNodeRVal(Interp_Proc* proc, Ast_Node* node);
 Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node);
+Interp_Val Interp_Assign(Interp_Proc* proc, Interp_Val src, TypeInfo* srcType, Interp_Val dst, TypeInfo* dstType);
 Array<Interp_Val> Interp_ConvertCall(Interp_Proc* proc, Ast_FuncCall* call, Arena* allocTo);
 Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc);
 void Interp_ConvertBlock(Interp_Proc* proc, Ast_Block* block);
 Interp_Type Interp_ConvertType(TypeInfo* type);
+RegIdx Interp_ConvertTypeConversion(Interp_Proc* proc, RegIdx src, Interp_Type srcType, TypeInfo* srcFullType, TypeInfo* dst);
+RegIdx Interp_ConvertTypeConversion(Interp_Proc* proc, RegIdx src, Interp_Type srcType, Interp_Type dstType, bool srcIsSigned, bool dstIsSigned);
 // ...
 
 // Utilities
