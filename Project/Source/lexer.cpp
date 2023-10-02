@@ -7,37 +7,44 @@
 // This is defined in such a way that it's possible
 // to temporarily define a macro "X" that can do
 // anything with these strings and types
-#define KeywordStringTokenMapping \
-X("proc", Tok_Proc)           \
-X("operator", Tok_Operator)   \
-/*X("extern", Tok_Extern)*/   \
-X("return", Tok_Return)       \
-/*X("var", Tok_Var)*/         \
-X("if", Tok_If)               \
-X("else", Tok_Else)           \
-X("for", Tok_For)             \
-X("while", Tok_While)         \
-X("do", Tok_Do)               \
-X("break", Tok_Break)         \
-X("continue", Tok_Continue)   \
-X("defer", Tok_Defer)         \
-X("const", Tok_Const)         \
-X("struct", Tok_Struct)       \
-X("cast", Tok_Cast)           \
-/* Primitive types */         \
-X("bool", Tok_Bool)           \
-X("char", Tok_Char)           \
-X("uint8", Tok_Uint8)         \
-X("uint16", Tok_Uint16)       \
-X("uint32", Tok_Uint32)       \
-X("uint64", Tok_Uint64)       \
-X("int8", Tok_Int8)           \
-X("int16", Tok_Int16)         \
-X("int32", Tok_Int32)         \
-X("int", Tok_Int32)           \
-X("int64", Tok_Int64)         \
-X("float", Tok_Float)         \
-X("double", Tok_Double)
+#define KeywordStringTokenMapping     \
+X("proc", Tok_Proc)               \
+X("operator", Tok_Operator)       \
+X("return", Tok_Return)           \
+X("if", Tok_If)                   \
+X("else", Tok_Else)               \
+X("for", Tok_For)                 \
+X("while", Tok_While)             \
+X("do", Tok_Do)                   \
+X("switch", Tok_Switch)           \
+X("case", Tok_Case)               \
+X("break", Tok_Break)             \
+X("continue", Tok_Continue)       \
+X("fallthrough", Tok_Fallthrough) \
+X("defer", Tok_Defer)             \
+X("const", Tok_Const)             \
+X("struct", Tok_Struct)           \
+X("cast", Tok_Cast)               \
+/* Primitive types */             \
+X("bool", Tok_Bool)               \
+X("char", Tok_Char)               \
+X("uint8", Tok_Uint8)             \
+X("uint16", Tok_Uint16)           \
+X("uint32", Tok_Uint32)           \
+X("uint64", Tok_Uint64)           \
+X("int8", Tok_Int8)               \
+X("int16", Tok_Int16)             \
+X("int32", Tok_Int32)             \
+X("int", Tok_Int32)               \
+X("int64", Tok_Int64)             \
+X("float", Tok_Float)             \
+X("double", Tok_Double)           \
+X("raw", Tok_Raw)                 \
+X("true", Tok_True)               \
+X("false", Tok_False)             \
+/* Decl specifiers */             \
+X("extern", Tok_Extern)           \
+
 
 // NOTE(Leo): Order matters here (<<= before <<)
 #define OperatorStringTokenMapping \
@@ -52,8 +59,8 @@ X("<=", Tok_LE)                \
 X(">=", Tok_GE)                \
 X("==", Tok_EQ)                \
 X("!=", Tok_NEQ)               \
-X("&&", Tok_And)               \
-X("||", Tok_Or)                \
+X("&&", Tok_LogAnd)            \
+X("||", Tok_LogOr)             \
 X("+=", Tok_PlusEquals)        \
 X("-=", Tok_MinusEquals)       \
 X("*=", Tok_MulEquals)         \
@@ -282,7 +289,10 @@ static Token GetToken(Tokenizer* t)
             result.intValue = strtoll(t->at, &endPtr, 10);
             if(endPtr == t->at)
             {
-                printf("Error: Unidentified token\n");
+                SetErrorColor();
+                fprintf(stderr, "Error");
+                ResetColor();
+                fprintf(stderr, ": Unidentified token\n");
                 result.type = Tok_Error;
                 result.doubleValue = 0.0f;
             }
@@ -293,8 +303,18 @@ static Token GetToken(Tokenizer* t)
         t->at += length;
         result.ec = result.sc + result.ident.length - 1;
     }
+    else if(String_FirstCharsMatchEntireString(result.ident.ptr, StrLit("true")))
+    {
+        String trueLit = StrLit("true");
+        
+    }
+    else if(String_FirstCharsMatchEntireString(result.ident.ptr, StrLit("false")))
+    {
+        String falseLit = StrLit("false");
+    }
     else  // Anything else (operators, parentheses, etc)
     {
+        
         bool found = false;
         String foundStr = { 0, 0 };
         for(int i = 0; i < StArraySize(operatorStrings); ++i)

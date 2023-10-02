@@ -17,7 +17,11 @@ struct Typer
     Ast_FileScope* fileScope = 0;
     
     Ast_ProcDef* currentProc = 0;
+    
     bool checkedReturnStmt = false;
+    bool inLoopBlock   = false;
+    bool inSwitchBlock = false;
+    bool inDeferBlock  = false;
     
     DepGraph* graph;
 };
@@ -48,8 +52,10 @@ inline bool IsNodeLValue(Ast_Node* node)
         return true;
     } switch_nocheck_end;
     
-    return true;
+    return false;
 }
+
+bool IsNodeConst(Typer* t, Ast_Node* node);
 
 bool CheckNode(Typer* t, Ast_Node* node);
 bool CheckProcDef(Typer* t, Ast_ProcDef* proc);
@@ -65,6 +71,7 @@ bool CheckDefer(Typer* t, Ast_Defer* stmt);
 bool CheckReturn(Typer* t, Ast_Return* stmt);
 bool CheckBreak(Typer* t, Ast_Break* stmt);
 bool CheckContinue(Typer* t, Ast_Continue* stmt);
+bool CheckFallthrough(Typer* t, Ast_Fallthrough* stmt);
 bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt);
 bool CheckConstValue(Typer* t, Ast_ConstValue* expr);
 Ast_Declaration* CheckIdent(Typer* t, Ast_IdentExpr* expr);
@@ -75,11 +82,11 @@ bool CheckTypecast(Typer* t, Ast_Typecast* expr);
 bool CheckSubscript(Typer* t, Ast_Subscript* expr);
 bool CheckMemberAccess(Typer* t, Ast_MemberAccess* expr);
 TypeInfo* CheckDeclOrExpr(Typer* t, Ast_Node* node);
-TypeInfo* CheckDeclOrExpr(Typer* t, Ast_Node* node, Ast_Block* curScope);
+TypeInfo* CheckCondition(Typer* t, Ast_Node* node);
 bool CheckType(Typer* t, TypeInfo* type, Token* where);
-bool ComputeSize(Typer* t, Ast_StructDef* structDef);
-struct ComputeSize_Ret { uint32 size; uint32 align; };
-ComputeSize_Ret ComputeSize(Typer* t, Ast_DeclaratorStruct* declStruct, Token* errTok, bool* outcome);
+bool ComputeSize(Typer* t, Ast_Node* node);
+struct ComputeSize_Ret { uint64 size; uint64 align; };
+ComputeSize_Ret ComputeStructSize(Typer* t, Ast_StructType* declStruct, Token* errTok, bool* outcome);
 
 // Identifier resolution
 Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Atom* ident);
@@ -88,107 +95,32 @@ bool AddDeclaration(Typer* t, Ast_Block* scope, Ast_Declaration* decl);
 // Types
 cforceinline bool IsTypeScalar(TypeInfo* type)
 {
-    return (type->typeId >= Typeid_Bool && type->typeId <= Typeid_Double) || type->typeId == Typeid_Ptr;
+    return type->typeId == Typeid_Bool || type->typeId == Typeid_Char
+        || type->typeId == Typeid_Integer || type->typeId == Typeid_Ptr
+        || type->typeId == Typeid_Float;
 }
 
 cforceinline bool IsTypeIntegral(TypeInfo* type)
 {
-    return type->typeId >= Typeid_Bool && type->typeId <= Typeid_Int64;
+    return type->typeId == Typeid_Bool || type->typeId == Typeid_Char
+        || type->typeId == Typeid_Integer || type->typeId == Typeid_Ptr;
 }
 
-cforceinline bool IsTypeFloat(TypeInfo* type)
+cforceinline bool IsTypeNumeric(TypeInfo* type)
 {
-    return type->typeId == Typeid_Float || type->typeId == Typeid_Double;
+    return type->typeId == Typeid_Char
+        || type->typeId == Typeid_Integer
+        || type->typeId == Typeid_Float;
 }
 
-cforceinline bool IsTypeSigned(TypeInfo* type)
+cforceinline bool IsTypePrimitive(TypeInfo* type)
 {
-    // Floating point types are automatically signed
-    if(IsTypeFloat(type)) return true;
-    
-    return type->typeId == Typeid_Char || (type->typeId >= Typeid_Int8 &&
-                                           type->typeId <= Typeid_Int64);
+    return type->typeId <= Typeid_BasicTypesEnd && type->typeId >= Typeid_BasicTypesBegin;
 }
 
 cforceinline bool IsTypeDereferenceable(TypeInfo* type)
 {
     return type->typeId == Typeid_Ptr || type->typeId == Typeid_Arr;
-}
-
-cforceinline int GetTypeSizeBits(TypeInfo* type)
-{
-    int result = -1;
-    if(type->typeId == Typeid_Bool ||
-       type->typeId == Typeid_Char ||
-       type->typeId == Typeid_Uint8 ||
-       type->typeId == Typeid_Int8)
-        result = 8;
-    else if(type->typeId == Typeid_Uint16 ||
-            type->typeId == Typeid_Int16)
-        result = 16;
-    else if(type->typeId == Typeid_Uint32 ||
-            type->typeId == Typeid_Int32 ||
-            type->typeId == Typeid_Float)
-        result = 32;
-    else if(type->typeId == Typeid_Uint64 ||
-            type->typeId == Typeid_Int64 ||
-            type->typeId == Typeid_Double)
-        result = 64;
-    
-    return result;
-}
-
-// @temporary What do we do with structs??? (not idents)
-cforceinline int GetTypeSize(TypeInfo* type)
-{
-    if(type->typeId >= 0 && type->typeId < StArraySize(typeSize))
-        return typeSize[type->typeId];
-    
-    if(type->typeId == Typeid_Ptr ||
-       type->typeId == Typeid_Proc)
-        return 8;
-    
-    if(type->typeId == Typeid_Ident)
-    {
-        auto structDef = ((Ast_DeclaratorIdent*)type)->structDef;
-        auto structDecl = Ast_GetDeclStruct(structDef);
-        return structDecl->size;
-    }
-    
-    if(type->typeId == Typeid_Struct)
-    {
-        auto structDecl = (Ast_DeclaratorStruct*)type;
-        return structDecl->size;
-    }
-    
-    Assert(false && "not implemented");
-    return -1;
-}
-
-cforceinline int GetTypeAlign(TypeInfo* type)
-{
-    if(type->typeId >= 0 && type->typeId < StArraySize(typeSize))
-        return typeSize[type->typeId];
-    
-    if(type->typeId == Typeid_Ptr ||
-       type->typeId == Typeid_Proc)
-        return 8;
-    
-    if(type->typeId == Typeid_Ident)
-    {
-        auto structDef = ((Ast_DeclaratorIdent*)type)->structDef;
-        auto structDecl = Ast_GetDeclStruct(structDef);
-        return structDecl->align;
-    }
-    
-    if(type->typeId == Typeid_Struct)
-    {
-        auto structDecl = (Ast_DeclaratorStruct*)type;
-        return structDecl->align;
-    }
-    
-    Assert(false && "not implemented");
-    return -1;
 }
 
 TypeInfo* GetBaseType(TypeInfo* type);

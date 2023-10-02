@@ -1,11 +1,19 @@
 
 @echo off
+setlocal enabledelayedexpansion
+
+if exist output.exe (
+rm output.exe
+)
 
 REM ryu newtest.c
-ryu interp_test.c
+ryu interp_test.c -emit_bc -emit_ir -O 0 -o output.exe
 
+if exist output.exe (
 output.exe
-
-echo Value returned by main: %errorlevel%
+echo Value returned by main: !errorlevel!
+) else (
+echo No .exe produced
+)
 
 popd

@@ -83,7 +83,7 @@ int MainDriver(Parser* p, Ast_FileScope* file)
     // the dependency graph.
     
     bool exit = false;
-    int remainingIters = 10;
+    int remainingIters = 10000;
     while(!exit && remainingIters > 0)
     {
         --remainingIters;
@@ -253,21 +253,15 @@ void Dg_PerformStage(DepGraph* graph, Queue* q)
                 auto& gNode = graph->items[q->processing[i]];
                 auto astNode = graph->items[q->processing[i]].node;
                 graph->curIdx = q->processing[i];
-                if(astNode->kind == AstKind_StructDef)  // Need size
+                
+                if(ComputeSize(graph->typer, (Ast_StructDef*)astNode))
                 {
-                    if(ComputeSize(graph->typer, (Ast_StructDef*)astNode))
-                    {
-                        gNode.waitFor.FreeAll();
-                        astNode->phase = CompPhase_ComputeSize;
-                        q->output.Append(q->outputArena, q->processing[i]);
-                    }
-                    else
-                        q->input.Append(q->inputArena, q->processing[i]);
+                    gNode.waitFor.FreeAll();
+                    astNode->phase = CompPhase_ComputeSize;
+                    q->output.Append(q->outputArena, q->processing[i]);
                 }
-                else  // Need codegen
-                {
-                    
-                }
+                else
+                    q->input.Append(q->inputArena, q->processing[i]);
             }
             
             break;

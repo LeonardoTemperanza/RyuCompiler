@@ -19,11 +19,28 @@ Typer InitTyper(Arena* arena, Parser* parser)
     return t;
 }
 
-Ast_DeclaratorPtr* Typer_MakePtr(Arena* arena, TypeInfo* base)
+Ast_PtrType* Typer_MakePtr(Arena* arena, TypeInfo* base)
 {
-    auto ptr = Arena_AllocAndInitPack(arena, Ast_DeclaratorPtr);
+    auto ptr = Arena_AllocAndInitPack(arena, Ast_PtrType);
     ptr->baseType = base;
     return ptr;
+}
+
+bool IsNodeConst(Typer* t, Ast_Node* node)
+{
+    if(node->kind == AstKind_Ident)
+    {
+        // TODO: Check for enum values and #comp
+        return false;
+    }
+    
+    switch_nocheck(node->kind)
+    {
+        case AstKind_ConstValue: return true;
+        case AstKind_RunDir:     return true;
+    }switch_nocheck_end;
+    
+    return false;
 }
 
 bool CheckNode(Typer* t, Ast_Node* node)
@@ -49,6 +66,7 @@ bool CheckNode(Typer* t, Ast_Node* node)
         case AstKind_Return:        outcome = CheckReturn(t, (Ast_Return*)node); break;
         case AstKind_Break:         outcome = CheckBreak(t, (Ast_Break*)node); break;
         case AstKind_Continue:      outcome = CheckContinue(t, (Ast_Continue*)node); break;
+        case AstKind_Fallthrough:   outcome = CheckFallthrough(t, (Ast_Fallthrough*)node); break;
         case AstKind_MultiAssign:   outcome = CheckMultiAssign(t, (Ast_MultiAssign*)node); break;
         case AstKind_EmptyStmt:     break;
         case AstKind_StmtEnd:       break;
@@ -63,6 +81,7 @@ bool CheckNode(Typer* t, Ast_Node* node)
         case AstKind_MemberAccess:  outcome = CheckMemberAccess(t, (Ast_MemberAccess*)node); break;
         case AstKind_ConstValue:    outcome = CheckConstValue(t, (Ast_ConstValue*)node); break;
         case AstKind_ExprEnd:       break;
+        case AstKind_RunDir:        Assert(false && "Run directive semantics not implemented"); break;
         default: Assert(false && "Enum value out of bounds");
     }
     
@@ -106,6 +125,10 @@ bool CheckProcDef(Typer* t, Ast_ProcDef* proc)
         if(!AddDeclaration(t, &proc->block, declProc->args[i]))
             return false;
     }
+    
+    // Skip the definition if it's marked as external
+    if(proc->declSpecs & Decl_Extern)
+        return true;
     
     // Definition
     if(!CheckBlock(t, &proc->block)) return false;
@@ -179,7 +202,7 @@ bool CheckIf(Typer* t, Ast_If* stmt)
     t->curScope = stmt->thenBlock;
     defer(t->curScope = prevScope);
     
-    TypeInfo* condType = CheckDeclOrExpr(t, stmt->condition);
+    TypeInfo* condType = CheckCondition(t, stmt->condition);
     if(!condType) return false;
     
     if(condType)
@@ -204,27 +227,32 @@ bool CheckIf(Typer* t, Ast_If* stmt)
 
 bool CheckFor(Typer* t, Ast_For* stmt)
 {
+    bool wasInLoopBlock = t->inLoopBlock;
+    t->inLoopBlock = true;
+    defer(t->inLoopBlock = wasInLoopBlock);
+    
     auto prevScope = t->curScope;
     t->curScope = stmt->body;
     defer(t->curScope = prevScope);
     
-    if(!CheckNode(t, stmt->initialization))
+    if(stmt->initialization && !CheckNode(t, stmt->initialization))
         return false;
     
-    TypeInfo* condType = CheckDeclOrExpr(t, stmt->condition);
-    if(condType)
+    if(stmt->condition)
     {
-        if(!IsTypeScalar(condType))
+        TypeInfo* condType = CheckCondition(t, stmt->condition);
+        if(condType)
         {
-            CannotConvertToScalarTypeError(t, condType, stmt->condition->where);
-            return false;
-        }
-        else
-        {
-            if(!CheckNode(t, stmt->update)) return false;
-            if(!CheckBlock(t, stmt->body)) return false;
+            if(!IsTypeScalar(condType))
+            {
+                CannotConvertToScalarTypeError(t, condType, stmt->condition->where);
+                return false;
+            }
         }
     }
+    
+    if(!CheckNode(t, stmt->update)) return false;
+    if(!CheckBlock(t, stmt->body)) return false;
     
     return true;
 }
@@ -233,11 +261,15 @@ bool CheckWhile(Typer* t, Ast_While* stmt)
 {
     ProfileFunc(prof);
     
+    bool wasInLoopBlock = t->inLoopBlock;
+    t->inLoopBlock = true;
+    defer(t->inLoopBlock = wasInLoopBlock);
+    
     auto prevScope = t->curScope;
     t->curScope = stmt->doBlock;
     defer(t->curScope = prevScope);
     
-    TypeInfo* condType = CheckDeclOrExpr(t, stmt->condition);
+    TypeInfo* condType = CheckCondition(t, stmt->condition);
     if(!condType) return false;
     
     if(!IsTypeScalar(condType))
@@ -256,8 +288,13 @@ bool CheckDoWhile(Typer* t, Ast_DoWhile* stmt)
 {
     ProfileFunc(prof);
     
+    bool wasInLoopBlock = t->inLoopBlock;
+    t->inLoopBlock = true;
+    defer(t->inLoopBlock = wasInLoopBlock);
+    
     if(!CheckNode(t, stmt->doStmt))    return false;
     if(!CheckNode(t, stmt->condition)) return false;
+    stmt->condition->castType = &Typer_Bool;
     
     TypeInfo* condType = stmt->condition->type;
     if(condType)
@@ -273,21 +310,73 @@ bool CheckSwitch(Typer* t, Ast_Switch* stmt)
 {
     ProfileFunc(prof);
     
-    printf("Switch not implemented.\n");
-    return false;
+    bool wasInSwitchBlock = t->inSwitchBlock;
+    t->inSwitchBlock = true;
+    defer(t->inSwitchBlock = wasInSwitchBlock);
+    
+    if(!CheckNode(t, stmt->switchExpr)) return false;
+    
+    if(stmt->switchExpr->type->typeId != Typeid_Integer)
+    {
+        SemanticError(t, stmt->switchExpr->where, StrLit("Switch condition should be of integer type, not '%T'."), stmt->switchExpr->type);
+        return false;
+    }
+    
+    for_array(i, stmt->cases)
+    {
+        auto caseExpr = stmt->cases[i];
+        
+        if(!CheckNode(t, caseExpr)) return false;
+        
+        if(!IsNodeConst(t, caseExpr))
+        {
+            SemanticError(t, caseExpr->where, StrLit("Switch case expressions are necessarily known at compile-time."));
+            return false;
+        }
+        
+        if(caseExpr->type->typeId != Typeid_Integer)
+        {
+            SemanticError(t, caseExpr->where, StrLit("Switch case expressions should be of integer type, not '%T'."),  caseExpr->type);
+            return false;
+        }
+    }
+    
+    for_array(i, stmt->stmts)
+    {
+        auto caseStmt = stmt->stmts[i];
+        if(!CheckNode(t, caseStmt)) return false;
+    }
+    
+    return true;
 }
 
 bool CheckDefer(Typer* t, Ast_Defer* stmt)
 {
     ProfileFunc(prof);
     
-    printf("Defer not implemented.\n");
-    return false;
+    if(t->inDeferBlock)
+    {
+        SemanticError(t, stmt->where, StrLit("Cannot use defer statements inside other defer statements."));
+        return false;
+    }
+    
+    t->inDeferBlock = true;
+    defer(t->inDeferBlock = false);
+    
+    if(!CheckNode(t, stmt->stmt)) return false;
+    
+    return true;
 }
 
 bool CheckReturn(Typer* t, Ast_Return* stmt)
 {
     ProfileFunc(prof);
+    
+    if(t->inDeferBlock)
+    {
+        SemanticError(t, stmt->where, StrLit("Illegal return; can't use return in defer statements."));
+        return false;
+    }
     
     t->checkedReturnStmt = true;
     
@@ -334,14 +423,35 @@ bool CheckReturn(Typer* t, Ast_Return* stmt)
 
 bool CheckBreak(Typer* t, Ast_Break* stmt)
 {
-    printf("Break not implemented\n");
-    return false;
+    if(!t->inLoopBlock && !t->inSwitchBlock)
+    {
+        SemanticError(t, stmt->where, StrLit("Illegal break; needs to be in a loop block or a switch block"));
+        return false;
+    }
+    
+    return true;
 }
 
 bool CheckContinue(Typer* t, Ast_Continue* stmt)
 {
-    printf("Continue not implemented\n");
-    return false;
+    if(!t->inLoopBlock)
+    {
+        SemanticError(t, stmt->where, StrLit("Illegal continue; needs to be in a loop block"));
+        return false;
+    }
+    
+    return true;
+}
+
+bool CheckFallthrough(Typer* t, Ast_Fallthrough* stmt)
+{
+    if(!t->inSwitchBlock)
+    {
+        SemanticError(t, stmt->where, StrLit("Illegal fallthrough; needs to be in a switch block"));
+        return false;
+    }
+    
+    return true;
 }
 
 bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt)
@@ -432,11 +542,6 @@ bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt)
 
 bool CheckConstValue(Typer* t, Ast_ConstValue* expr)
 {
-    if(!(expr->constBitfield & Const_IsReady))
-    {
-        return false;
-    }
-    
     return true;
 }
 
@@ -478,7 +583,7 @@ bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign)
         return false;
     }
     
-    auto procDecl = (Ast_DeclaratorProc*)call->target->type;
+    auto procDecl = (Ast_ProcType*)call->target->type;
     
     // If the number of return types is > 0, and we're not in a
     // multi assign statement, then throw an error because multiple
@@ -513,7 +618,7 @@ bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign)
     }
     
     if(procDecl->retTypes.length <= 0)
-        call->type = &noneType;
+        call->type = &Typer_None;
     else
         call->type = procDecl->retTypes[0];
     
@@ -534,7 +639,7 @@ bool CheckBinExpr(Typer* t, Ast_BinaryExpr* bin)
         case '+': case '-':
         case '*': case '/':
         case '%':
-        case Tok_And: case Tok_Or:
+        case Tok_LogAnd: case Tok_LogOr:
         case '^':
         case Tok_LShift: case Tok_RShift:
         {
@@ -595,38 +700,49 @@ bool CheckBinExpr(Typer* t, Ast_BinaryExpr* bin)
             }
             else  // Any other binary operation
             {
-                if(!(ltype->typeId >= Typeid_Bool && ltype->typeId <= Typeid_Double &&
-                     rtype->typeId >= Typeid_Bool && rtype->typeId <= Typeid_Double))
+                if(!IsTypePrimitive(ltype) || !IsTypePrimitive(rtype))
                 {
                     // NOTE: This is where you would wait for an operator to be overloaded
                     // Look for overloaded operators (they're procs with certain names) and
                     // yield if none are found.
-                    
-                    ScratchArena scratch;
-                    String ltypeStr = TypeInfo2String(ltype, scratch.arena());
-                    String rtypeStr = TypeInfo2String(rtype, scratch.arena());
-                    StringBuilder b;
-                    b.Append(scratch.arena(), 5, StrLit("Cannot apply binary operator to types '"), ltypeStr,
-                             StrLit("' and '"), rtypeStr, StrLit("'"));
-                    SemanticError(t, bin->where, b.string);
+                    SemanticError(t, bin->where, StrLit("Cannot apply binary operator to types '%T' and '%T'"), ltype, rtype);
                     return false;
                 }
                 
                 // Bit-manipulation operators only work on integer types
                 if(Ast_IsExprBitManipulation(bin))
                 {
+                    SemanticError(t, bin->where, StrLit("Cannot apply bit manipulation operators to types '%T' and '%T'"), ltype, rtype);
+                    return false;
+                    
                     // TODO: if it's not an integer, it's not allowed to do it.
                 }
+                else if(bin->op == '%' &&
+                        (ltype->typeId == Typeid_Float || rtype->typeId == Typeid_Float))
+                {
+                    SemanticError(t, bin->where, StrLit("Cannot apply modulo operator to types '%T' and '%T'"), ltype, rtype);
+                    return false;
+                }
                 
-                // @cleanup Is this necessary? I forgot what GetCommonType even does
-                TypeInfo* commonType = GetCommonType(t, ltype, rtype);
-                bool conv1Success = ImplicitConversion(t, lhs, ltype, commonType);
-                bool conv2Success = ImplicitConversion(t, rhs, rtype, commonType);
-                if(!conv1Success || !conv2Success) return false;
-                
-                bin->lhs->castType = commonType;
-                bin->rhs->castType = commonType;
-                bin->type = commonType;
+                // Logical operators should make the operands cast to bool
+                if(bin->op == Tok_LogAnd || bin->op == Tok_LogOr)
+                {
+                    bin->lhs->castType = &Typer_Bool;
+                    bin->rhs->castType = &Typer_Bool;
+                    bin->type = &Typer_Bool;
+                }
+                else 
+                {
+                    // @cleanup Is this necessary? I forgot what GetCommonType even does
+                    TypeInfo* commonType = GetCommonType(t, ltype, rtype);
+                    bool conv1Success = ImplicitConversion(t, lhs, ltype, commonType);
+                    bool conv2Success = ImplicitConversion(t, rhs, rtype, commonType);
+                    if(!conv1Success || !conv2Success) return false;
+                    
+                    bin->lhs->castType = commonType;
+                    bin->rhs->castType = commonType;
+                    bin->type = commonType;
+                }
             }
             
             break;
@@ -639,8 +755,8 @@ bool CheckBinExpr(Typer* t, Ast_BinaryExpr* bin)
             if(TypesCompatible(t, bin->lhs->type, bin->rhs->type))
             {
                 TypeInfo* commonType = GetCommonType(t, bin->lhs->type, bin->rhs->type);
-                //bin->type = commonType; // ??
-                bin->type = &primitiveTypes[Typeid_Bool];
+                bin->lhs->castType = commonType;
+                bin->rhs->castType = commonType;
             }
             else
             {
@@ -648,7 +764,7 @@ bool CheckBinExpr(Typer* t, Ast_BinaryExpr* bin)
                 return false;
             }
             
-            bin->type = &primitiveTypes[Typeid_Bool];
+            bin->type = &Typer_Bool;
             break;
         }
         // Assignments
@@ -676,7 +792,9 @@ bool CheckBinExpr(Typer* t, Ast_BinaryExpr* bin)
         }
     }
     
-    // By default, keep the same type
+    // NOTE: By default, keep the same type.
+    // Change it if necessary in the above levels
+    // of the call stack.
     bin->castType = bin->type;
     return true;
 }
@@ -690,9 +808,26 @@ bool CheckUnaryExpr(Typer* t, Ast_UnaryExpr* expr)
         default: Assert(false && "Unsupported postfix operator"); return false;
         case Tok_Increment:
         case Tok_Decrement:
+        {
+            if(!IsNodeLValue(expr->expr))
+            {
+                SemanticError(t, expr->expr->where, StrLit("The expression needs to be an l-value to apply ++/-- operators."));
+                return false;
+            }
+            
+            if(!IsTypeIntegral(expr->expr->type))
+            {
+                CannotConvertToIntegralTypeError(t, expr->expr->type, expr->expr->where);
+                return false;
+            }
+            
+            expr->type = expr->expr->type;
+            break;
+        }
         case '+': case '-':
         {
-            if(!IsTypeIntegral(expr->expr->type))
+            bool typeNotAllowed = !IsTypeNumeric(expr->expr->type);
+            if(typeNotAllowed)
             {
                 CannotConvertToIntegralTypeError(t, expr->expr->type, expr->expr->where);
                 return false;
@@ -703,13 +838,16 @@ bool CheckUnaryExpr(Typer* t, Ast_UnaryExpr* expr)
         }
         case '!':
         {
+            // TODO: I don't think this is correct...
             if(!IsTypeScalar(expr->expr->type))
             {
                 CannotConvertToScalarTypeError(t, expr->expr->type, expr->expr->where);
                 return false;
             }
             
-            expr->type = &primitiveTypes[Typeid_Bool];
+            // Logical operators should make the operands cast to bool
+            expr->type = &Typer_Bool;
+            expr->expr->castType = &Typer_Bool;
             break;
         }
         case '~':
@@ -766,13 +904,13 @@ bool CheckTypecast(Typer* t, Ast_Typecast* expr)
     // Implicitly convert arrays to pointers
     if(expr->expr->type->typeId == Typeid_Arr)
     {
-        auto base = ((Ast_DeclaratorArr*)expr->expr)->baseType;
+        auto base = ((Ast_ArrType*)expr->expr)->baseType;
         expr->expr->type = Typer_MakePtr(t->arena, base);
     }
     
     if(expr->type->typeId == Typeid_Arr)
     {
-        auto base = ((Ast_DeclaratorArr*)expr)->baseType;
+        auto base = ((Ast_ArrType*)expr)->baseType;
         expr->type = Typer_MakePtr(t->arena, base);
     }
     
@@ -782,7 +920,7 @@ bool CheckTypecast(Typer* t, Ast_Typecast* expr)
     if(type2->typeId == Typeid_Ptr || type2->typeId == Typeid_Ident)
         Swap(TypeInfo*, type1, type2);
     
-    if(type1->typeId == Typeid_Ptr && IsTypeFloat(type2))
+    if(type1->typeId == Typeid_Ptr && type2->typeId == Typeid_Float)
     {
         SemanticError(t, expr->where, StrLit("Cannot cast from type '%T' to type '%T'"), type2, type1);
         return false;
@@ -792,8 +930,8 @@ bool CheckTypecast(Typer* t, Ast_Typecast* expr)
     {
         if(type2->typeId == Typeid_Ident)
         {
-            auto ident1 = (Ast_DeclaratorIdent*)type1;
-            auto ident2 = (Ast_DeclaratorIdent*)type2;
+            auto ident1 = (Ast_IdentType*)type1;
+            auto ident2 = (Ast_IdentType*)type2;
             
             if(ident1->ident != ident2->ident)
             {
@@ -851,15 +989,19 @@ bool CheckMemberAccess(Typer* t, Ast_MemberAccess* expr)
     
     // Type lookup
     
-    Ast_DeclaratorStruct* structDecl = 0;
+    Ast_StructType* structDecl = 0;
     if(targetTypeId == Typeid_Struct)
-        structDecl = (Ast_DeclaratorStruct*)expr->target->type;
+        structDecl = (Ast_StructType*)expr->target->type;
     else if(targetTypeId == Typeid_Ident)
-        structDecl = (Ast_DeclaratorStruct*)(((Ast_DeclaratorIdent*)expr->target->type)->structDef->type);  // This is kind of stupid
+        structDecl = (Ast_StructType*)(((Ast_IdentType*)expr->target->type)->structDef->type);  // This is kind of stupid
     
+    // TODO: rework this to use the CompPhase, return false if the struct
+    // declaration has not yet been typechecked. Think about how to make this
+    // work actually...
     Assert(structDecl);
     
-    // TODO: rework this to use the CompPhase
+    // The struct declaration has already been typechecked at this point.
+    expr->structDecl = structDecl;
     
     int idx = -1;
     for(int i = 0; i < structDecl->memberNames.length; ++i)
@@ -873,17 +1015,20 @@ bool CheckMemberAccess(Typer* t, Ast_MemberAccess* expr)
     
     if(idx == -1)
     {
+        // TODO: @errorquality Improve this error message
         SemanticError(t, expr->where, StrLit("Member '...' in struct '...' was not found"));
         return false;
     }
     
     // Get the type corresponding to the member in the struct
+    
     if(!CheckType(t, structDecl->memberTypes[idx], expr->where))
     {
         return false;
     }
     
-    expr->type = structDecl->memberTypes[idx];
+    expr->memberIdx = idx;
+    expr->type   = structDecl->memberTypes[idx];
     return true;
 }
 
@@ -911,16 +1056,60 @@ TypeInfo* CheckDeclOrExpr(Typer* t, Ast_Node* node)
     return result;
 }
 
+TypeInfo* CheckCondition(Typer* t, Ast_Node* node)
+{
+    ProfileFunc(prof);
+    
+    auto type = CheckDeclOrExpr(t, node);
+    if(Ast_IsExpr(node))
+    {
+        auto expr = (Ast_Expr*)node;
+        expr->castType = &Typer_Bool;
+    }
+    
+    return type;
+}
+
 bool CheckType(Typer* t, TypeInfo* type, Token* where)
 {
     // TODO: this should be modified in the future to yield
     // in particular cases (#run directive for instance, or #type_of)
     
+    // Check if there is a pure 'raw' type
+    {
+        if(type->typeId == Typeid_Raw)
+        {
+            SemanticError(t, where, StrLit("Pure 'raw' type is not allowed, only '^raw' is"));
+            return false;
+        }
+        
+        TypeInfo* tmp = type;
+        TypeInfo* base = 0;
+        do
+        {
+            base = 0;
+            switch_nocheck(tmp->typeId)
+            {
+                case Typeid_Ptr: base = ((Ast_PtrType*)type)->baseType; break;
+                case Typeid_Arr: base = ((Ast_ArrType*)type)->baseType; break;
+            } switch_nocheck_end;
+            
+            if(base && base->typeId == Typeid_Raw && tmp->typeId != Typeid_Ptr)
+            {
+                SemanticError(t, where, StrLit("Pure 'raw' type is not allowed, only '^raw' is"));
+                return false;
+            }
+            
+            tmp = base;
+        }
+        while(base);
+    }
+    
     // Check type
     TypeInfo* baseType = GetBaseType(type);
     if(baseType->typeId == Typeid_Ident)
     {
-        auto identDecl = (Ast_DeclaratorIdent*)baseType;
+        auto identDecl = (Ast_IdentType*)baseType;
         auto node = IdentResolution(t, t->curScope, identDecl->ident);
         if(!node || node->kind != AstKind_StructDef)
         {
@@ -934,27 +1123,60 @@ bool CheckType(Typer* t, TypeInfo* type, Token* where)
     return true;
 }
 
-bool ComputeSize(Typer* t, Ast_StructDef* structDef)
+bool ComputeSize(Typer* t, Ast_Node* node)
 {
-    bool outcome = true;
-    auto declStruct = Ast_GetDeclStruct(structDef);
-    ComputeSize_Ret ret = ComputeSize(t, declStruct, structDef->where, &outcome);
-    
-    if(outcome)
+    if(node->kind == AstKind_StructDef)
     {
-        declStruct->size = ret.size;
-        declStruct->align = ret.align;
-        //printf("Outcome = true, Size: %d\n", ret.size);
+        bool outcome = true;
+        auto structDef = (Ast_StructDef*)node;
+        auto declStruct = Ast_GetDeclStruct(structDef);
+        ComputeSize_Ret ret = ComputeStructSize(t, declStruct, structDef->where, &outcome);
+        
+        if(outcome)
+        {
+            declStruct->size = ret.size;
+            declStruct->align = ret.align;
+            //printf("Outcome = true, Size: %d\n", ret.size);
+        }
+        else
+        {
+            //printf("Outcome = false\n");
+        }
+        
+        return outcome;
     }
-    else
+    // Fill in all of the proc's declarations with the appropriate sizes
+    else if(node->kind == AstKind_ProcDef)
     {
-        //printf("Outcome = false\n");
+        auto procDef = (Ast_ProcDef*)node;
+        for_array(i, procDef->declsFlat)
+        {
+            // TODO: this currently doesn't work with arrays
+            
+            auto decl = procDef->declsFlat[i];
+            if(decl->type->typeId == Typeid_Ident)
+            {
+                auto identDecl = (Ast_IdentType*)decl->type;
+                auto referTo = identDecl->structDef;
+                if(referTo->phase < CompPhase_ComputeSize)
+                {
+                    Dg_Yield(t->graph, referTo, CompPhase_ComputeSize);
+                    return false;
+                }
+                
+                // The struct we're referring to has passed the ComputeSize phase
+                decl->type->size = referTo->type->size;
+                decl->type->align = referTo->type->align;
+            }
+        }
+        
+        return true;
     }
     
-    return outcome;
+    return false;
 }
 
-ComputeSize_Ret ComputeSize(Typer* t, Ast_DeclaratorStruct* declStruct, Token* errTok, bool* outcome)
+ComputeSize_Ret ComputeStructSize(Typer* t, Ast_StructType* declStruct, Token* errTok, bool* outcome)
 {
     struct Funcs
     {
@@ -971,36 +1193,32 @@ ComputeSize_Ret ComputeSize(Typer* t, Ast_DeclaratorStruct* declStruct, Token* e
     
     Assert(outcome);
     *outcome = true;
-    uint32 sizeResult = 0;
-    uint32 alignResult = 0;
+    uint64 sizeResult = 0;
+    uint64 alignResult = 0;
     
-    // TODO: refactor this
     for_array(i, declStruct->memberTypes)
     {
         auto it = declStruct->memberTypes[i];
+        uint64 curSize = 0;
+        uint64 curAlign = 0;
         
         if(it->typeId == Typeid_Struct)
         {
-            auto itStruct = (Ast_DeclaratorStruct*)it;
+            auto itStruct = (Ast_StructType*)it;
             bool outcomeSubStruct = true;
-            ComputeSize_Ret ret = ComputeSize(t, itStruct, errTok, &outcomeSubStruct);
-            uint32 sizeSubStruct = ret.size;
-            uint32 alignSubStruct = ret.align;
+            ComputeSize_Ret ret = ComputeStructSize(t, itStruct, errTok, &outcomeSubStruct);
+            curSize = ret.size;
+            curAlign = ret.align;
             
             if(!outcomeSubStruct)
             {
                 *outcome = false;
                 continue;
             }
-            
-            sizeResult = Funcs::Align(sizeResult, alignSubStruct);
-            declStruct->memberOffsets[i] = sizeResult;
-            sizeResult += sizeSubStruct;
-            alignResult = max(alignResult, alignSubStruct);
         }
         else if(it->typeId == Typeid_Ident)
         {
-            auto itIdent = (Ast_DeclaratorIdent*)it;
+            auto itIdent = (Ast_IdentType*)it;
             auto structDef = itIdent->structDef;
             auto structDecl = Ast_GetDeclStruct(structDef);
             if(structDef->phase < CompPhase_ComputeSize)
@@ -1010,30 +1228,24 @@ ComputeSize_Ret ComputeSize(Typer* t, Ast_DeclaratorStruct* declStruct, Token* e
                 continue;
             }
             
-            sizeResult = Funcs::Align(sizeResult, structDecl->align);
-            declStruct->memberOffsets[i] = sizeResult;
-            sizeResult += structDecl->size;
-            alignResult = max(alignResult, structDecl->align);
+            curSize = structDecl->size;
+            curAlign = structDecl->align;
         }
         else if(it->typeId == Typeid_Ptr)
         {
             // TODO: when 32-bit is supported, this should be changed
-            sizeResult = Funcs::Align(sizeResult, 8);
-            declStruct->memberOffsets[i] = sizeResult;
-            sizeResult += 8;
-            alignResult = max(alignResult, (uint32)8);
+            curSize = curAlign = 8;
         }
         else  // Primitive types are trivial
         {
-            if(it->typeId < StArraySize(typeSize))
-            {
-                uint32 curTypeSize = typeSize[it->typeId];
-                sizeResult = Funcs::Align(sizeResult, curTypeSize);
-                declStruct->memberOffsets[i] = sizeResult;
-                sizeResult += curTypeSize;
-                alignResult = max(alignResult, curTypeSize);
-            }
+            curSize = it->size;
+            curAlign = it->align;
         }
+        
+        sizeResult = Funcs::Align(sizeResult, curAlign);
+        declStruct->memberOffsets[i] = sizeResult;
+        sizeResult += curSize;
+        alignResult = max(alignResult, curAlign);
     }
     
     // Final size needs to be aligned
@@ -1106,8 +1318,8 @@ TypeInfo* GetBaseType(TypeInfo* type)
         switch_nocheck(type->typeId)
         {
             default: return type;
-            case Typeid_Ptr: type = ((Ast_DeclaratorPtr*)type)->baseType; break;
-            case Typeid_Arr: type = ((Ast_DeclaratorArr*)type)->baseType; break;
+            case Typeid_Ptr: type = ((Ast_PtrType*)type)->baseType; break;
+            case Typeid_Arr: type = ((Ast_ArrType*)type)->baseType; break;
         } switch_nocheck_end;
     }
     
@@ -1120,8 +1332,8 @@ TypeInfo* GetBaseTypeShallow(TypeInfo* type)
     switch_nocheck(type->typeId)
     {
         default: break;
-        case Typeid_Ptr: type = ((Ast_DeclaratorPtr*)type)->baseType; break;
-        case Typeid_Arr: type = ((Ast_DeclaratorArr*)type)->baseType; break;
+        case Typeid_Ptr: type = ((Ast_PtrType*)type)->baseType; break;
+        case Typeid_Arr: type = ((Ast_ArrType*)type)->baseType; break;
     } switch_nocheck_end;
     
     return type;
@@ -1145,19 +1357,19 @@ bool TypesCompatible(Typer* t, TypeInfo* src, TypeInfo* dst)
     // Implicitly convert arrays into pointers
     if(src->typeId == Typeid_Arr && dst->typeId == Typeid_Ptr)
     {
-        auto arrayOf = ((Ast_DeclaratorArr*)src)->baseType;
+        auto arrayOf = ((Ast_ArrType*)src)->baseType;
         src = Typer_MakePtr(t->arena, arrayOf);
     }
     
     // Implicitly convert procs into pointers
     if(src->typeId == Typeid_Ptr && dst->typeId == Typeid_Proc)
     {
-        auto base = (Ast_DeclaratorProc*)dst;
+        auto base = (Ast_ProcType*)dst;
         dst = Typer_MakePtr(t->arena, base);
     }
     else if(src->typeId == Typeid_Proc && dst->typeId == Typeid_Ptr)
     {
-        auto base = (Ast_DeclaratorProc*)src;
+        auto base = (Ast_ProcType*)src;
         src = Typer_MakePtr(t->arena, base);
     }
     
@@ -1176,7 +1388,7 @@ bool TypesCompatible(Typer* t, TypeInfo* src, TypeInfo* dst)
         }
         else if(src->typeId == Typeid_Proc && dst->typeId == Typeid_Ptr)
         {
-            auto dstPtrTo = ((Ast_DeclaratorPtr*) dst)->baseType;
+            auto dstPtrTo = ((Ast_PtrType*) dst)->baseType;
             if(dstPtrTo->typeId == Typeid_Proc)
             {
                 return TypesIdentical(t, dstPtrTo, src);
@@ -1195,7 +1407,9 @@ bool TypesCompatible(Typer* t, TypeInfo* src, TypeInfo* dst)
     }
     else if(src->typeId == Typeid_Ptr)
     {
-        // If void*, everything is ok. Maybe I should have a "^raw"?
+        // If the destination is a raw pointer, anything works.
+        if(GetBaseType(dst)->typeId == Typeid_Raw)
+            return true;
         
         return TypesIdentical(t, src, dst);
     }
@@ -1211,14 +1425,14 @@ TypeInfo* GetCommonType(Typer* t, TypeInfo* type1, TypeInfo* type2)
     // Implicitly convert arrays into pointers
     if(type1->typeId == Typeid_Arr)
     {
-        auto base = ((Ast_DeclaratorArr*)type1)->baseType;
+        auto base = ((Ast_ArrType*)type1)->baseType;
         type1 = Typer_MakePtr(t->arena, base);
     }
     
     // Implicitly convert arrays into pointers
     if(type2->typeId == Typeid_Arr)
     {
-        auto base = ((Ast_DeclaratorArr*)type2)->baseType;
+        auto base = ((Ast_ArrType*)type2)->baseType;
         type2 = Typer_MakePtr(t->arena, base);
     }
     
@@ -1229,10 +1443,16 @@ TypeInfo* GetCommonType(Typer* t, TypeInfo* type1, TypeInfo* type2)
         type2 = Typer_MakePtr(t->arena, type2);
     
     // Operations with floats promote up to floats
-    if(type1->typeId == Typeid_Double || type2->typeId == Typeid_Double)
-        return &primitiveTypes[Typeid_Double];
-    if(type1->typeId == Typeid_Float || type2->typeId == Typeid_Float)
-        return &primitiveTypes[Typeid_Float];
+    
+    if(type1->typeId == Typeid_Float && type2->typeId == Typeid_Float)
+    {
+        if(type1->size > type2->size) return type1;
+        else return type2;
+    }
+    else if(type1->typeId == Typeid_Float)
+        return type1;
+    else 
+        return type2;
     
     // Promote any small integral types into ints
     
@@ -1259,8 +1479,8 @@ bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2)
             default: return true;
             case Typeid_Ident:
             {
-                auto ident1 = (Ast_DeclaratorIdent*)type1;
-                auto ident2 = (Ast_DeclaratorIdent*)type2;
+                auto ident1 = (Ast_IdentType*)type1;
+                auto ident2 = (Ast_IdentType*)type2;
                 if(ident1->ident == ident2->ident)
                     return true;
                 return false;
@@ -1269,22 +1489,22 @@ bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2)
             {
                 if(type1->typeId != type2->typeId)
                     return false;
-                type1 = ((Ast_DeclaratorPtr*)type1)->baseType;
-                type2 = ((Ast_DeclaratorPtr*)type2)->baseType;
+                type1 = ((Ast_PtrType*)type1)->baseType;
+                type2 = ((Ast_PtrType*)type2)->baseType;
                 break;
             }
             case Typeid_Arr:
             {
                 if(type1->typeId != type2->typeId)
                     return false;
-                type1 = ((Ast_DeclaratorArr*)type1)->baseType;
-                type2 = ((Ast_DeclaratorArr*)type2)->baseType;
+                type1 = ((Ast_ArrType*)type1)->baseType;
+                type2 = ((Ast_ArrType*)type2)->baseType;
                 break;
             }
             case Typeid_Proc:
             {
-                auto proc1 = (Ast_DeclaratorProc*)type1;
-                auto proc2 = (Ast_DeclaratorProc*)type2;
+                auto proc1 = (Ast_ProcType*)type1;
+                auto proc2 = (Ast_ProcType*)type2;
                 if(proc1->args.length != proc2->args.length)
                     return false;
                 if(proc1->retTypes.length != proc2->retTypes.length)
@@ -1321,25 +1541,24 @@ bool ImplicitConversion(Typer* t, Ast_Expr* exprSrc, TypeInfo* src, TypeInfo* ds
         dst = Typer_MakePtr(t->arena, dst);
     else if(dst->typeId == Typeid_Arr)
     {
-        auto arrType = Ast_MakeType<Ast_DeclaratorArr>(t->arena);
+        auto arrType = Ast_MakeType<Ast_ArrType>(t->arena);
         dst = Typer_MakePtr(t->arena, arrType->baseType);
     }
     
     if(false)  // Data loss warnings
     {
         // Int and float conversions
-        if(src->typeId >= Typeid_Char && src->typeId <= Typeid_Double &&
-           dst->typeId >= Typeid_Char && src->typeId <= Typeid_Double)
+        if(IsTypeNumeric(src) && IsTypeNumeric(dst))
         {
-            bool isSrcFloat  = IsTypeFloat(src);
-            bool isDstFloat  = IsTypeFloat(dst);
-            bool isSrcSigned = IsTypeSigned(dst);
-            bool isDstSigned = IsTypeSigned(dst);
+            bool isSrcFloat  = src->typeId == Typeid_Float;
+            bool isDstFloat  = dst->typeId == Typeid_Float;
+            bool isSrcSigned = src->isSigned;
+            bool isDstSigned = dst->isSigned;
             
             if(isSrcFloat == isSrcFloat)
             {
                 if(!isSrcFloat && isSrcSigned != isDstSigned)
-                    SemanticError(t, exprSrc->where, StrLit("Implicit conversion affects signedess"));
+                    SemanticError(t, exprSrc->where, StrLit("Implicit conversion affects signedness"));
                 if(src->typeId > dst->typeId)
                     SemanticError(t, exprSrc->where, StrLit("Implicit conversion may lose data"));
             }
@@ -1374,10 +1593,34 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
     {
         if(type->typeId <= Typeid_BasicTypesEnd && type->typeId >= Typeid_BasicTypesBegin)
         {
-            TokenType tokType = PrimitiveTypeidToTokType(type->typeId);
-            String tokTypeStr = TokTypeToString(tokType, scratch2);
+            if(type->typeId == Typeid_Float)
+            {
+                if(type->size == 4)
+                    strBuilder.Append(StrLit("float"), scratch);
+                else if(type->size == 8)
+                    strBuilder.Append(StrLit("double"), scratch);
+                else Assert(false && "Unreachable code");
+            }
+            else if(type->typeId == Typeid_Integer)
+            {
+                if(!type->isSigned)
+                    strBuilder.Append(StrLit("u"), scratch);
+                
+                char buf[6];
+                int numChars = snprintf(buf, 6, "int%lld", type->size * 8);
+                String str = { buf, numChars };
+                strBuilder.Append(str, scratch);
+            }
+            else if(type->typeId == Typeid_Bool)
+            {
+                strBuilder.Append(StrLit("bool"), scratch);
+            }
+            else if(type->typeId == Typeid_Char)
+            {
+                strBuilder.Append(StrLit("char"), scratch);
+            }
+            else Assert(false && "Unreachable code");
             
-            strBuilder.Append(tokTypeStr, scratch);
             quit = true;
         }
         else switch_nocheck(type->typeId)
@@ -1391,7 +1634,7 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
             }
             case Typeid_Ident:
             {
-                char* nullTerminated = ((Ast_DeclaratorIdent*)type)->ident->string;
+                char* nullTerminated = ((Ast_IdentType*)type)->ident->string;
                 String ident = { nullTerminated, (int64)strlen(nullTerminated) };
                 strBuilder.Append(ident, scratch);
                 quit = true;
@@ -1400,18 +1643,18 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
             case Typeid_Ptr:
             {
                 strBuilder.Append(StrLit("^"), scratch);
-                type = ((Ast_DeclaratorPtr*)type)->baseType;
+                type = ((Ast_PtrType*)type)->baseType;
                 break;
             }
             case Typeid_Arr:
             {
                 strBuilder.Append(StrLit("[]"), scratch);
-                type = ((Ast_DeclaratorArr*)type)->baseType;
+                type = ((Ast_ArrType*)type)->baseType;
                 break;
             }
             case Typeid_Proc:
             {
-                auto procType = (Ast_DeclaratorProc*)type;
+                auto procType = (Ast_ProcType*)type;
                 auto argTypesStr = Arena_AllocArray(scratch2, procType->args.length, String);
                 auto retTypesStr = Arena_AllocArray(scratch2, procType->retTypes.length, String);
                 
@@ -1441,6 +1684,12 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
                 if(procType->retTypes.length > 1)
                     strBuilder.Append(StrLit(")"), scratch);
                 
+                quit = true;
+                break;
+            }
+            case Typeid_Raw:
+            {
+                strBuilder.Append(StrLit("raw"), scratch);
                 quit = true;
                 break;
             }

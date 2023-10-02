@@ -155,9 +155,12 @@ struct DynArray
     // All of the below functions assume that the array is initialized
     void Init(int64 initCapacity = DynArray_MinCapacity) { ptr = (t*)malloc(sizeof(t)*initCapacity); capacity = initCapacity; };
     void Append(t element);
+    void InsertAtIdx(Array<t> elements, int idx);
+    void InsertAtIdx(t element, int idx);
     t* Reserve();
     void Resize(uint32 numElements);
     void ResizeAndInit(uint32 numElements);
+    cforceinline t last() { return this->ptr[this->length-1]; };
     Array<t> ConvertToArray();  // Returns the array as a "slice" of the current DynArray
     //Array<t> CopyToArena(Arena* to);
     void FreeAll();
@@ -175,7 +178,7 @@ struct DynArray
 #endif
 };
 
-// Pointer map data structure, credits to GingerBill
+// Pointer map data structure
 
 template<typename k, typename v>
 struct PtrMapEntry
@@ -235,6 +238,7 @@ template<typename t>
 cforceinline t min(t i, t j) { return i > j? j : i; }
 
 // I/O utilities
+size_t GetFileSize(FILE* file);
 char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName);
 
 // String utilities
@@ -426,14 +430,14 @@ Q_UINT q_m = q_l + ((q_r - q_l) >> 1);                           \
  * medians are already in their final positions and need not be rechecked.
  * Since I do not assume that comparisons are cheap, I also do not try
  * to eliminate the (q_j > q_l) boundary check. */
-#define Q_INSERTION_SORT(q_l, q_r, Q_UINT, Q_LESS, Q_SWAP)		\
-do {									\
-Q_UINT q_i, q_j;							\
-/* For each item starting with the second... */			\
-for (q_i = q_l + 1; q_i <= q_r; q_i++)				\
-/* move it down the array so that the first part is sorted. */	\
-for (q_j = q_i; q_j > q_l && (Q_LESS(q_j, q_j - 1)); q_j--)		\
-Q_SWAP(q_j, q_j - 1);						\
+#define Q_INSERTION_SORT(q_l, q_r, Q_UINT, Q_LESS, Q_SWAP)		          \
+do {									                                \
+Q_UINT q_i, q_j;							                        \
+/* For each item starting with the second... */			         \
+for (q_i = q_l + 1; q_i <= q_r; q_i++)				              \
+/* move it down the array so that the first part is sorted. */  \
+for (q_j = q_i; q_j > q_l && (Q_LESS(q_j, q_j - 1)); q_j--)     \
+Q_SWAP(q_j, q_j - 1);                                           \
 } while (0)
 
 /* When the size of [q_l,q_r], i.e. q_r-q_l+1, is greater than or equal to
@@ -444,70 +448,70 @@ Q_SWAP(q_j, q_j - 1);						\
 #define Q_THRESH 16
 
 /* The main loop. */
-#define Q_LOOP(Q_UINT, Q_N, Q_LESS, Q_SWAP)				\
-do {									\
-Q_UINT q_l = 0;							\
-Q_UINT q_r = (Q_N) - 1;						\
-Q_UINT q_sp = 0; /* the number of frames pushed to the stack */	\
-struct { Q_UINT q_l, q_r; }						\
-/* On 32-bit platforms, to sort a "char[3GB+]" array,		\
- * it may take full 32 stack frames.  On 64-bit CPUs,		\
- * though, the address space is limited to 48 bits.		\
- * The usage is further reduced if Q_N has a 32-bit type. */	\
-q_st[sizeof(Q_UINT) > 4 && sizeof(Q_N) > 4 ? 48 : 32];		\
-while (1) {								\
-	if (q_r - q_l + 1 >= Q_THRESH) {				\
-	    Q_UINT q_i, q_j;						\
-	    Q_PARTITION(q_l, q_r, q_i, q_j, Q_UINT, Q_LESS, Q_SWAP);	\
-	    /* Now have two subfiles: [q_l,q_j] and [q_i,q_r].		\
-	     * Dealing with them depends on which one is bigger. */	\
-	    if (q_j - q_l >= q_r - q_i)					\
-            Q_SUBFILES(q_l, q_j, q_i, q_r);				\
-	    else							\
-            Q_SUBFILES(q_i, q_r, q_l, q_j);				\
-	}								\
-	else {								\
-	    Q_INSERTION_SORT(q_l, q_r, Q_UINT, Q_LESS, Q_SWAP);		\
-	    /* Pop subfiles from the stack, until it gets empty. */	\
-	    if (q_sp == 0) break;					\
-	    q_sp--;							\
-	    q_l = q_st[q_sp].q_l;					\
-	    q_r = q_st[q_sp].q_r;					\
-	}								\
-}									\
+#define Q_LOOP(Q_UINT, Q_N, Q_LESS, Q_SWAP)				                 \
+do {									                                \
+Q_UINT q_l = 0;							                         \
+Q_UINT q_r = (Q_N) - 1;						                     \
+Q_UINT q_sp = 0; /* the number of frames pushed to the stack */	 \
+struct { Q_UINT q_l, q_r; }						                 \
+/* On 32-bit platforms, to sort a "char[3GB+]" array,		           \
+ * it may take full 32 stack frames.  On 64-bit CPUs,		                \
+ * though, the address space is limited to 48 bits.		                  \
+ * The usage is further reduced if Q_N has a 32-bit type. */	             \
+q_st[sizeof(Q_UINT) > 4 && sizeof(Q_N) > 4 ? 48 : 32];		              \
+while (1) {								                                 \
+	if (q_r - q_l + 1 >= Q_THRESH) {				                        \
+	    Q_UINT q_i, q_j;						                            \
+	    Q_PARTITION(q_l, q_r, q_i, q_j, Q_UINT, Q_LESS, Q_SWAP);	        \
+	    /* Now have two subfiles: [q_l,q_j] and [q_i,q_r].		          \
+	     * Dealing with them depends on which one is bigger. */	          \
+	    if (q_j - q_l >= q_r - q_i)					                     \
+            Q_SUBFILES(q_l, q_j, q_i, q_r);				                 \
+	    else							                                    \
+            Q_SUBFILES(q_i, q_r, q_l, q_j);				                 \
+	}								                                       \
+	else {								                                  \
+	    Q_INSERTION_SORT(q_l, q_r, Q_UINT, Q_LESS, Q_SWAP);		         \
+	    /* Pop subfiles from the stack, until it gets empty. */	         \
+	    if (q_sp == 0) break;					                           \
+	    q_sp--;							                                 \
+	    q_l = q_st[q_sp].q_l;					                           \
+	    q_r = q_st[q_sp].q_r;					                           \
+	}								                                       \
+}									                                       \
 } while (0)
 
 /* The missing part: dealing with subfiles.
  * Assumes that the first subfile is not smaller than the second. */
-#define Q_SUBFILES(q_l1, q_r1, q_l2, q_r2)				\
-do {									\
-/* If the second subfile is only a single element, it needs		\
- * no further processing.  The first subfile will be processed	\
- * on the next iteration (both subfiles cannot be only a single	\
- * element, due to Q_THRESH). */					\
-if (q_l2 == q_r2) {							\
-	q_l = q_l1;							\
-	q_r = q_r1;							\
-}									\
-else {								\
-	/* Otherwise, both subfiles need processing.			\
-	 * Push the larger subfile onto the stack. */			\
-	q_st[q_sp].q_l = q_l1;						\
-	q_st[q_sp].q_r = q_r1;						\
-	q_sp++;								\
-	/* Process the smaller subfile on the next iteration. */	\
-	q_l = q_l2;							\
-	q_r = q_r2;							\
-}									\
+#define Q_SUBFILES(q_l1, q_r1, q_l2, q_r2)				                  \
+do {									                                \
+/* If the second subfile is only a single element, it needs		     \
+ * no further processing.  The first subfile will be processed	           \
+ * on the next iteration (both subfiles cannot be only a single	          \
+ * element, due to Q_THRESH). */					                         \
+if (q_l2 == q_r2) {							                             \
+	q_l = q_l1;							                                 \
+	q_r = q_r1;							                                 \
+}									                                       \
+else {								                                      \
+	/* Otherwise, both subfiles need processing.                            \
+	 * Push the larger subfile onto the stack. */                            \
+	q_st[q_sp].q_l = q_l1;                                                  \
+	q_st[q_sp].q_r = q_r1;						                          \
+	q_sp++;								                                 \
+	/* Process the smaller subfile on the next iteration. */	            \
+	q_l = q_l2;							                                 \
+	q_r = q_r2;							                                 \
+}									                                       \
 } while (0)
 
 /* And now, ladies and gentlemen, may I proudly present to you... */
-#define QSORT(Q_N, Q_LESS, Q_SWAP)					\
-do {									\
-if ((Q_N) > 1)							\
-/* We could check sizeof(Q_N) and use "unsigned", but at least	\
- * on x86_64, this has the performance penalty of up to 5%. */	\
-Q_LOOP(unsigned long, Q_N, Q_LESS, Q_SWAP);			\
+#define QSORT(Q_N, Q_LESS, Q_SWAP)					                      \
+do {									                                \
+if ((Q_N) > 1)							                          \
+/* We could check sizeof(Q_N) and use "unsigned", but at least	      \
+ * on x86_64, this has the performance penalty of up to 5%. */	           \
+Q_LOOP(unsigned long, Q_N, Q_LESS, Q_SWAP);			                     \
 } while (0)
 
 #endif

@@ -1,4 +1,6 @@
+
 @echo off
+setlocal enabledelayedexpansion
 
 IF NOT EXIST ..\Build mkdir ..\Build
 pushd ..\Build
@@ -18,7 +20,11 @@ echo Build failed. Please build tilde_backend, and copy tb.lib into Project^/Lib
 goto :exitlabel
 )
 
-set debug_flags=/DDebug /Zi
+REM Enable to debug memory issues such as free after use
+REM set sanitizer=/fsanitize=address
+set sanitizer=
+
+set debug_flags=/DDebug /Zi %sanitizer%
 set profile_flags=/DProfile
 
 set warning_level=/W2
@@ -34,7 +40,7 @@ cl /nologo /c /DMICROSOFT_CRAZINESS_IMPLEMENTATION /TP ..\Project\Source\os\micr
 set common=/FC /Feryu.exe /std:c++20 /permissive %warning_level% /we4061 /we4062 /we4714 /wd4530 /wd4200 /nologo ..\Project\Source\unity_build.cpp microsoft_craziness.obj /I %include_dirs% /link ..\Project\Libs\LLVM-C.lib ..\Project\Libs\tb.lib Ole32.lib OleAut32.lib
 
 REM Development build, debug is enabled, profiling and optimization disabled
-cl /Od %debug_flags% %common%
+cl /Zi /Od %debug_flags% %common%
 set build_ret=%errorlevel%
 
 REM Optimized build with debug information
@@ -52,11 +58,11 @@ REM For quicker testing
 if %build_ret%==0 ( 
 echo Running program:
 pushd .\TestPrograms
-ryu interp_test.c
+ryu interp_test.c -emit_bc -emit_ir -time -o output.exe
 
 call output.exe
 
-echo Result from program: %output_ret%
+echo Result from program: !errorlevel!
 popd
 )
 

@@ -1,60 +1,7 @@
 
 #include "base.h"
 #include "interpreter.h"
-
-////
-// Bytecode generation helper functions
-////
-
-// Returns the old register and advances the current one
-// Works kind of like post-order ++ operator
-void Interp_AdvanceReg(Interp_Proc* proc)
-{
-    // Find the next register in the permanentRegs array
-    ++proc->regCounter;
-    int foundIdx = -1;
-    for_array(i, proc->permanentRegs)
-    {
-        if(proc->permanentRegs[i] == proc->regCounter)
-        {
-            foundIdx = i;
-            break;
-        }
-    }
-    
-    if(foundIdx == -1)
-        return;
-    
-    ++proc->regCounter;
-    
-    for(int i = foundIdx + 1; i < proc->permanentRegs.length; ++i)
-    {
-        if(proc->permanentRegs[i] != proc->regCounter)
-            break;
-        
-        ++proc->regCounter;
-    }
-}
-
-RegIdx Interp_GetFirstUnused(Interp_Proc* proc)
-{
-    if(proc->permanentRegs.length == 0) return 0;
-    
-    // Get min
-    RegIdx minPermanent = proc->permanentRegs[0];
-    if(minPermanent > 0) return 0;
-    
-    RegIdx res = 0;
-    for(int i = 0; i < proc->permanentRegs.length; ++i)
-    {
-        if(proc->permanentRegs[i] != res)
-            break;
-        
-        ++res;
-    }
-    
-    return res;
-}
+#include "bytecode_builder.h"
 
 Interp_Proc* Interp_MakeProc(Interp* interp)
 {
@@ -71,64 +18,7 @@ Interp_Symbol* Interp_MakeSymbol(Interp* interp)
     return &newElement;
 }
 
-uint32 Interp_AllocateRegIdxArray(Interp_Proc* proc, RegIdx* values, uint16 arrayCount)
-{
-    uint32 oldLength = (uint32)proc->regArrays.length;
-    proc->regArrays.ResizeAndInit(proc->regArrays.length + arrayCount);
-    
-    for(int i = oldLength; i < proc->regArrays.length; ++i)
-    {
-        int j = i - oldLength;
-        proc->regArrays[i] = values[j];
-    }
-    
-    return oldLength;
-}
-
-uint32 Interp_AllocateRegIdxArray(Interp_Proc* proc, Array<RegIdx> values)
-{
-    return Interp_AllocateRegIdxArray(proc, values.ptr, values.length);
-}
-
-uint32 Interp_AllocateInstrIdxArray(Interp_Proc* proc, InstrIdx* values, uint32 arrayCount)
-{
-    uint32 oldLength = (uint32)proc->instrArrays.length;
-    proc->instrArrays.ResizeAndInit(proc->instrArrays.length + arrayCount);
-    
-    for(int i = oldLength; i < proc->instrArrays.length; ++i)
-    {
-        int j = i - oldLength;
-        proc->instrArrays[i] = values[j];
-    }
-    
-    return oldLength;
-}
-
-uint32 Interp_AllocateInstrIdxArray(Interp_Proc* proc, Array<InstrIdx> instrs)
-{
-    return Interp_AllocateInstrIdxArray(proc, instrs.ptr, instrs.length);
-}
-
-uint32 Interp_AllocateConstArray(Interp_Proc* proc, int64* values, uint32 count)
-{
-    uint32 oldLength = (uint32)proc->constArrays.length;
-    proc->constArrays.ResizeAndInit(proc->constArrays.length + count);
-    
-    for(int i = oldLength; i < proc->constArrays.length; ++i)
-    {
-        int j = i - oldLength;
-        proc->constArrays[i] = values[j];
-    }
-    
-    return oldLength;
-}
-
-uint32 Interp_AllocateConstArray(Interp_Proc* proc, Array<int64> consts)
-{
-    return Interp_AllocateConstArray(proc, consts.ptr, consts.length);
-}
-
-RegIdx Interp_BuildPreRet(Interp_Proc* proc, RegIdx arg, Interp_Val val, TypeInfo* type, TB_PassingRule rule)
+RegIdx Interp_BuildPreRet(Interp_Builder* builder, RegIdx arg, Interp_Val val, TypeInfo* type, TB_PassingRule rule)
 {
     RegIdx res = 0;
     switch(rule)
@@ -137,19 +27,16 @@ RegIdx Interp_BuildPreRet(Interp_Proc* proc, RegIdx arg, Interp_Val val, TypeInf
         case TB_PASSING_IGNORE: break;
         case TB_PASSING_DIRECT:
         {
-            if(val.isLValue)
+            if(val.type == Interp_LValue)
             {
                 // TODO: This is an "Implicit array to pointer" conversion, test this
                 if(type->typeId == Typeid_Arr)
                     res = val.reg;
                 else
                 {
-                    uint16 typeSize = GetTypeSize(type);
-                    uint16 typeAlign = GetTypeAlign(type);
-                    Assert(typeSize <= 8);
+                    Assert(type->size <= 8);
                     Interp_Type dt = Interp_ConvertType(type);
-                    
-                    res = Interp_Load(proc, dt, val.reg, typeAlign, false);
+                    res = Interp_Load(builder, dt, val.reg, type->align, false);
                 }
             }
             else
@@ -164,8 +51,8 @@ RegIdx Interp_BuildPreRet(Interp_Proc* proc, RegIdx arg, Interp_Val val, TypeInf
             // Perform a Memcpy with the caller-owned buffer as
             // destination
             RegIdx dstReg  = arg;
-            RegIdx sizeReg = Interp_ImmUInt(proc, Interp_Int64, GetTypeSize(type));
-            Interp_MemCpy(proc, dstReg, val.reg, sizeReg, GetTypeAlign(type), false);
+            RegIdx sizeReg = Interp_ImmUInt(builder, Interp_Int64, type->size);
+            Interp_MemCpy(builder, dstReg, val.reg, sizeReg, type->align, false);
             res = arg;  // Return the address
             break;
         }
@@ -175,24 +62,19 @@ RegIdx Interp_BuildPreRet(Interp_Proc* proc, RegIdx arg, Interp_Val val, TypeInf
 }
 
 // TODO: This will, in the future, return an array of registers
-// because systemv can split a single struct into multiple registers.
-RegIdx Interp_PassArg(Interp_Proc* proc, Interp_Val arg, TypeInfo* type, TB_PassingRule rule, Arena* allocTo)
+// because SystemV can split a single struct into multiple registers.
+RegIdx Interp_PassArg(Interp_Builder* builder, Interp_Val arg, TypeInfo* type, TB_PassingRule rule, Arena* allocTo)
 {
     RegIdx res = 0;
-    
-    auto size = GetTypeSize(type);
-    auto align = GetTypeAlign(type);
-    
     switch(rule)
     {
         default: Assert(false);
         case TB_PASSING_INDIRECT:
         {
-            
             // First retrieve the address
             RegIdx addr = RegIdx_Unused;
             
-            if(arg.isLValue)
+            if(arg.type == Interp_LValue)
                 addr = arg.reg;
             else
             {
@@ -201,36 +83,36 @@ RegIdx Interp_PassArg(Interp_Proc* proc, Interp_Val arg, TypeInfo* type, TB_Pass
                 // This means that it was a temporary computation
                 // such as 2+2, it's necessary to stack allocate a
                 // new variable to hold this value
-                auto local = Interp_Local(proc, size, align);
-                Interp_Store(proc, dt, local, arg.reg, align, false);
+                auto local = Interp_Local(builder, type->size, type->align);
+                Interp_Store(builder, dt, local, arg.reg, type->align, false);
                 addr = local;
             }
             
             Assert(addr != RegIdx_Unused);
             
             // Now given the address, create a copy of it and pass it to the proc
-            RegIdx local   = Interp_Local(proc, size, align);
-            RegIdx sizeReg = Interp_ImmUInt(proc, Interp_Int64, size);
+            RegIdx local   = Interp_Local(builder, type->size, type->align);
+            RegIdx sizeReg = Interp_ImmUInt(builder, Interp_Int64, type->size);
             
-            Interp_MemCpy(proc, local, addr, sizeReg, align, false);
+            Interp_MemCpy(builder, local, addr, sizeReg, type->align, false);
             
             res = local;
             break;
         }
         case TB_PASSING_DIRECT:
         {
-            if(arg.isLValue)
+            if(arg.type == Interp_LValue)
             {
-                Assert(size <= 8);
+                Assert(type->size <= 8);
                 Interp_Type dt = { 0, 0, 0 };
                 
                 if(type->typeId == Typeid_Struct ||
                    type->typeId == Typeid_Ident)
-                    dt = { InterpType_Int, 0, uint16(size * 8) };  // Use int type for structs
+                    dt = { InterpType_Int, 0, uint16(type->size * 8) };  // Use int type for structs
                 else
                     dt = Interp_ConvertType(type);
                 
-                res = Interp_Load(proc, dt, arg.reg, align, false);
+                res = Interp_Load(builder, dt, arg.reg, type->align, false);
             }
             else
             {
@@ -245,15 +127,12 @@ RegIdx Interp_PassArg(Interp_Proc* proc, Interp_Val arg, TypeInfo* type, TB_Pass
     return res;
 }
 
-Interp_Val Interp_GetRet(Interp_Proc* proc, TB_PassingRule rule, RegIdx retReg, TypeInfo* retType)
+Interp_Val Interp_GetRet(Interp_Builder* builder, TB_PassingRule rule, RegIdx retReg, TypeInfo* retType)
 {
     // If it's indirect, just retrieve the address
     if (rule == TB_PASSING_INDIRECT) return { retReg, true };
     
-    Interp_Val res = { 0, 0 };
-    
-    auto size = GetTypeSize(retType);
-    auto align = GetTypeAlign(retType);
+    Interp_Val res;
     
     // Structs can only be stack variables for
     // bytecode generation purposes, so we need to
@@ -262,37 +141,78 @@ Interp_Val Interp_GetRet(Interp_Proc* proc, TB_PassingRule rule, RegIdx retReg, 
        retType->typeId == Typeid_Ident)
     {
         // Spawn a temporary stack variable
-        RegIdx local = Interp_Local(proc, size, align);
-        Interp_Type dt = { InterpType_Int, 0, uint16(size * 8) };
-        //Interp_Store(proc, dt, local, retReg, align, false);
-        res = { local, true };
+        RegIdx local = Interp_Local(builder, retType->size, retType->align);
+        Interp_Type dt = { InterpType_Int, 0, uint16(retType->size * 8) };
+        //Interp_Store(builder, dt, local, retReg, align, false);
+        res = { local, Interp_LValue };
     }
     else
     {
-        res = { retReg, false };
+        res = { retReg, Interp_RValue };
     }
     
     return res;
 }
 
-RegIdx Interp_GetRVal(Interp_Proc* proc, Interp_Val val, TypeInfo* type)
+RegIdx Interp_GetRVal(Interp_Builder* builder, Interp_Val val, TypeInfo* type)
 {
-    Assert(val.reg != RegIdx_Unused);
+    Assert(Interp_IsValueValid(val));
+    auto proc = builder->proc;
     
-    if(val.isLValue)
+    if(val.type == Interp_LValue)
     {
-        val.reg = Interp_Load(proc, Interp_ConvertType(type), val.reg, GetTypeAlign(type), false);
-        val.isLValue = false;
+        val.reg = Interp_Load(builder, Interp_ConvertType(type), val.reg, type->align, false);
+        val.type = Interp_RValue;
+    }
+    else if(val.type == Interp_RValuePhi)
+    {
+        // Construct value that is 0 if false, 1 if true.
+        // Here, we also merge the true and false region with gotos
+        Interp_Instr trueInstr;
+        trueInstr.op         = Op_IntegerConst;
+        trueInstr.bitfield  |= InstrBF_ViolatesSSA;
+        trueInstr.dst        = builder->regCounter;
+        trueInstr.imm.type   = Interp_Bool;
+        trueInstr.imm.intVal = 1;
+        
+        Interp_Instr falseInstr;
+        falseInstr.op         = Op_IntegerConst;
+        falseInstr.bitfield  |= InstrBF_ViolatesSSA;
+        falseInstr.dst        = builder->regCounter;
+        falseInstr.imm.type   = Interp_Bool;
+        falseInstr.imm.intVal = 0;
+        
+        val.reg = builder->regCounter;
+        Interp_AdvanceReg(builder);
+        
+        proc->instrs[val.phi.trueEndInstr] = trueInstr;
+        proc->instrs[val.phi.falseEndInstr] = falseInstr;
+        
+        // Insert goto instruction directed to 'merge'
+        // We reserved a single instruction at the end of
+        // the true and false regions, but now we need another
+        // one for the jump instruction.
+        Interp_Instr gotoMerge;
+        gotoMerge.op                 = Op_Branch;
+        gotoMerge.branch.count       = 0;
+        gotoMerge.branch.keyStart    = 0;
+        gotoMerge.branch.caseStart   = 0;
+        gotoMerge.branch.defaultCase = val.phi.mergeRegion;
+        
+        // In practice this will result in very little copying
+        Interp_InsertInstrAtMiddle(builder, gotoMerge, val.phi.trueEndInstr+1);
+        ++gotoMerge.branch.defaultCase;
+        
+        if(val.phi.falseEndInstr >= val.phi.trueEndInstr+1)
+            ++val.phi.falseEndInstr;
+        Interp_InsertInstrAtMiddle(builder, gotoMerge, val.phi.falseEndInstr+1);
+        
+        ++gotoMerge.branch.defaultCase;
+        proc->instrs[gotoMerge.branch.defaultCase].bitfield |= InstrBF_MergeSSA;
     }
     
     return val.reg;
 }
-
-// TODO: This code is very "copy-paste"-y...
-// I mean, the OOP way of doing this would be to
-// just have a bunch of constructors which is exactly
-// what this is... but split into multiple files, which
-// is arguably worse
 
 Interp Interp_Init()
 {
@@ -307,670 +227,57 @@ Interp Interp_Init()
     return interp;
 }
 
-InstrIdx Interp_Region(Interp_Proc* proc)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op = Op_Region;
-    newElement.dst = proc->regCounter;
-    return proc->instrs.length - 1;
-}
-
-void Interp_DebugBreak(Interp_Proc* proc)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op  = Op_DebugBreak;
-    newElement.dst = 0;
-}
-
-RegIdx Interp_Bin(Interp_Proc* proc, Interp_OpCode op, RegIdx reg1, RegIdx reg2)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op       = op;
-    newElement.dst      = proc->regCounter;
-    newElement.bin.src1 = reg1;
-    newElement.bin.src2 = reg2;
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
-}
-
-RegIdx Interp_Unary(Interp_Proc* proc, Interp_OpCode op, RegIdx src, Interp_Type type)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op   = op;
-    newElement.dst  = proc->regCounter;
-    newElement.unary.type = type;
-    newElement.unary.src  = src;
-    
-    proc->permanentRegs.Append(proc->regCounter);
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
-}
-
-RegIdx Interp_Unary(Interp_Proc* proc, Interp_OpCode op, RegIdx src)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op   = op;
-    newElement.dst  = proc->regCounter;
-    newElement.unary.src  = src;
-    
-    proc->permanentRegs.Append(proc->regCounter);
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
-}
-
-// void Interp_Param(Interp_Proc* proc) {}
-
-RegIdx Interp_FPExt(Interp_Proc* proc, RegIdx src, Interp_Type type)
-{
-    return Interp_Unary(proc, Op_FloatExt, src, type);
-}
-
-RegIdx Interp_SExt(Interp_Proc* proc, RegIdx src, Interp_Type type)
-{
-    return Interp_Unary(proc, Op_SignExt, src, type);
-}
-
-RegIdx Interp_ZExt(Interp_Proc* proc, RegIdx src, Interp_Type type)
-{
-    return Interp_Unary(proc, Op_ZeroExt, src, type);
-}
-
-RegIdx Interp_Trunc(Interp_Proc* proc, RegIdx src, Interp_Type type)
-{
-    return Interp_Unary(proc, Op_Truncate, src, type);
-}
-
-RegIdx Interp_Int2Ptr(Interp_Proc* proc, RegIdx src, Interp_Type type)
-{
-    return Interp_Unary(proc, Op_Int2Ptr, src, type);
-}
-
-RegIdx Interp_Ptr2Int(Interp_Proc* proc, RegIdx src, Interp_Type type)
-{
-    return Interp_Unary(proc, Op_Ptr2Int, src, type);
-}
-
-// TODO: If it's a constant, remove the unnecessary cast and directly convert the constant
-RegIdx Interp_Int2Float(Interp_Proc* proc, RegIdx src, Interp_Type type, bool isSigned)
-{
-    return Interp_Unary(proc, isSigned? Op_Int2Float : Op_Uint2Float, src, type);
-}
-
-RegIdx Interp_Float2Int(Interp_Proc* proc, RegIdx src, Interp_Type type, bool isSigned)
-{
-    return Interp_Unary(proc, isSigned? Op_Float2Int : Op_Float2Uint, src, type);
-}
-
-RegIdx Interp_Bitcast(Interp_Proc* proc, RegIdx src, Interp_Type type)
-{
-    return Interp_Unary(proc, Op_Bitcast, src, type);
-}
-
-// Local uses reg1 and reg2 to store size and alignment,
-// Dest is the resulting address
-RegIdx Interp_Local(Interp_Proc* proc, uint64 size, uint64 align, bool setUpArg)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op          = Op_Local;
-    newElement.dst         = proc->regCounter;
-    newElement.local.size  = size;
-    newElement.local.align = align;
-    if(setUpArg) newElement.bitfield |= InstrBF_SetUpArgs;
-    
-    // Addresses for locals are used across different
-    // statements, so they need to be added to the
-    // permanentRegs array
-    proc->permanentRegs.Append(proc->regCounter);
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
-}
-
-// Ignoring atomics for now
-RegIdx Interp_Load(Interp_Proc* proc, Interp_Type type, RegIdx addr, uint64 align, bool isVolatile)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op         = Op_Load;
-    newElement.dst        = proc->regCounter;
-    newElement.load.addr  = addr;
-    newElement.load.align = align;
-    newElement.load.type  = type;
-    
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
-}
-
-Interp_Instr* Interp_Store(Interp_Proc* proc, Interp_Type type, RegIdx addr, RegIdx val, uint64 align, bool isVolatile, bool setUpArg)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op          = Op_Store;
-    newElement.dst         = 0;
-    newElement.store.addr  = addr;
-    newElement.store.align = align;
-    newElement.store.val   = val;
-    if(setUpArg) newElement.bitfield |= InstrBF_SetUpArgs;
-    
-    return &newElement;
-}
-
-void Interp_ImmBool(Interp_Proc* proc) {}
-
-RegIdx Interp_ImmSInt(Interp_Proc* proc, Interp_Type type, int64 imm)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op         = Op_IntegerConst;
-    newElement.dst        = proc->regCounter;
-    newElement.imm.intVal = imm;
-    newElement.imm.type   = type;
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
-}
-
-RegIdx Interp_ImmUInt(Interp_Proc* proc, Interp_Type type, uint64 imm)
-{
-    // Zero out all bits which are not supposedly used
-    uint64 mask = ~0ULL >> (type.data);
-    imm &= mask;
-    
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op         = Op_IntegerConst;
-    newElement.dst        = proc->regCounter;
-    newElement.imm.intVal = imm;
-    newElement.imm.type   = type;
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
-}
-
-RegIdx Interp_ImmFloat32(Interp_Proc* proc, Interp_Type type, float imm)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op           = Op_Float32Const;
-    newElement.dst          = proc->regCounter;
-    newElement.imm.floatVal = imm;
-    newElement.imm.type     = type;
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
-}
-
-RegIdx Interp_ImmFloat64(Interp_Proc* proc, Interp_Type type, double imm)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op            = Op_Float64Const;
-    newElement.dst           = proc->regCounter;
-    newElement.imm.doubleVal = imm;
-    newElement.imm.type      = type;
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
-}
-
-// void Interp_CString(Interp_Proc* proc) {}
-
-// void Interp_String(Interp_Proc* proc) {}
-
-void Interp_MemSet(Interp_Proc* proc) {}
-
-void Interp_MemZero(Interp_Proc* proc) {}
-
-void Interp_MemCpy(Interp_Proc* proc, RegIdx dst, RegIdx src, RegIdx count, uint64 align, bool isVolatile)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op           = Op_MemCpy;
-    newElement.memcpy.dst   = dst;
-    newElement.memcpy.src   = src;
-    newElement.memcpy.count = count;
-    newElement.memcpy.align = align;
-}
-
-void Interp_ArrayAccess(Interp_Proc* proc) {}
-
-void Interp_MemberAccess(Interp_Proc* proc) {}
-
-RegIdx Interp_GetSymbolAddress(Interp_Proc* proc, Interp_Symbol* symbol)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op  = Op_GetSymbolAddress;
-    newElement.dst = proc->regCounter;
-    newElement.symAddress.symbol = symbol;
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
-}
-
-void Interp_Select(Interp_Proc* proc)
-{
-    
-}
-
-// @incomplete
-// This should support different kinds of arithmetic behavior 
-RegIdx Interp_Add(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
-{
-    return Interp_Bin(proc, Op_Add, reg1, reg2);
-}
-
-RegIdx Interp_Sub(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
-{
-    return Interp_Bin(proc, Op_Sub, reg1, reg2);
-}
-
-RegIdx Interp_Mul(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
-{
-    return Interp_Bin(proc, Op_Mul, reg1, reg2);
-}
-
-RegIdx Interp_Div(Interp_Proc* proc, RegIdx reg1, RegIdx reg2, bool signedness)
-{
-    return Interp_Bin(proc, signedness? Op_SDiv : Op_UDiv, reg1, reg2);
-}
-
-RegIdx Interp_Mod(Interp_Proc* proc, RegIdx reg1, RegIdx reg2, bool signedness)
-{
-    return Interp_Bin(proc, signedness? Op_SMod : Op_UMod, reg1, reg2);
-}
-
-void Interp_BSwap(Interp_Proc* proc)
-{
-    
-}
-
-//void Interp_CLZ(Interp_Proc* proc) {}
-
-//void Interp_CTZ(Interp_Proc* proc) {}
-
-//void Interp_PopCount(Interp_Proc* proc) {}
-
-void Interp_Not(Interp_Proc* proc)
-{
-    
-}
-
-void Interp_Neg(Interp_Proc* proc) {}
-
-void Interp_And(Interp_Proc* proc)
-{
-    
-}
-
-void Interp_Or(Interp_Proc* proc)
-{
-    
-}
-
-void Interp_Xor(Interp_Proc* proc)
-{
-    
-}
-
-void Interp_Sar(Interp_Proc* proc) {}
-
-void Interp_ShL(Interp_Proc* proc) {}
-
-void Interp_ShR(Interp_Proc* proc) {}
-
-void Interp_RoL(Interp_Proc* proc) {}
-
-void Interp_RoR(Interp_Proc* proc) {}
-
-void Interp_AtomicLoad(Interp_Proc* proc) {}
-
-void Interp_AtomicExchange(Interp_Proc* proc) {}
-
-void Interp_AtomicAdd(Interp_Proc* proc) {}
-
-void Interp_AtomicSub(Interp_Proc* proc) {}
-
-void Interp_AtomicAnd(Interp_Proc* proc) {}
-
-void Interp_AtomicXor(Interp_Proc* proc) {}
-
-void Interp_AtomicOr(Interp_Proc* proc) {}
-
-void Interp_AtomicCmpExchange(Interp_Proc* proc) {}
-
-RegIdx Interp_FAdd(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
-{
-    return Interp_Bin(proc, Op_FAdd, reg1, reg2);
-}
-
-RegIdx Interp_FSub(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
-{
-    return Interp_Bin(proc, Op_FSub, reg1, reg2);
-}
-
-RegIdx Interp_FMul(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
-{
-    return Interp_Bin(proc, Op_FMul, reg1, reg2);
-}
-
-RegIdx Interp_FDiv(Interp_Proc* proc, RegIdx reg1, RegIdx reg2)
-{
-    return Interp_Bin(proc, Op_FDiv, reg1, reg2);
-}
-
-void Interp_CmpEq(Interp_Proc* proc) {}
-
-void Interp_CmpNe(Interp_Proc* proc) {}
-
-void Interp_CmpILT(Interp_Proc* proc) {}
-
-void Interp_CmpILE(Interp_Proc* proc) {}
-
-void Interp_CmpIGT(Interp_Proc* proc) {}
-
-void Interp_CmpIGE(Interp_Proc* proc) {}
-
-void Interp_CmpFLT(Interp_Proc* proc) {}
-
-void Interp_CmpFLE(Interp_Proc* proc) {}
-
-void Interp_CmpFGT(Interp_Proc* proc) {}
-
-void Interp_CmpFGE(Interp_Proc* proc) {}
-
-// Intrinsics... Not supporting those for now
-
-void Interp_SysCall(Interp_Proc* proc) {}
-
-// Do I need the prototype here?
-RegIdx Interp_Call(Interp_Proc* proc, RegIdx target, Array<RegIdx> args)
-{
-    uint32 argIdx = Interp_AllocateRegIdxArray(proc, args);
-    
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op = Op_Call;
-    newElement.dst         = proc->regCounter;
-    newElement.call.target = target;
-    newElement.call.argCount = args.length;
-    newElement.call.argStart = argIdx;
-    
-    Interp_AdvanceReg(proc);
-    return newElement.dst;
-}
-
-void Interp_Safepoint(Interp_Proc* proc) {}
-
-Interp_Instr* Interp_Goto(Interp_Proc* proc, InstrIdx target)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op = Op_Branch;
-    newElement.branch.defaultCase = target;
-    newElement.branch.keyStart  = 0;
-    newElement.branch.caseStart = 0;
-    newElement.branch.count     = 0;
-    return &newElement;
-}
-
-Interp_Instr* Interp_Goto(Interp_Proc* proc)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op = Op_Branch;
-    newElement.branch.defaultCase = 0;
-    newElement.branch.keyStart  = 0;
-    newElement.branch.caseStart = 0;
-    newElement.branch.count     = 0;
-    return &newElement;
-}
-
-Interp_Instr* Interp_If(Interp_Proc* proc, RegIdx value, InstrIdx ifInstr, InstrIdx elseInstr)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    uint32 instrIdx = Interp_AllocateInstrIdxArray(proc, &ifInstr, 1);
-    int64 val = 0;
-    uint32 valIdx = Interp_AllocateConstArray(proc, &val, 1);
-    
-    newElement.op = Op_Branch;
-    newElement.branch.value       = value;
-    newElement.branch.defaultCase = elseInstr;
-    newElement.branch.keyStart    = valIdx;
-    newElement.branch.caseStart   = instrIdx;
-    newElement.branch.count = 1;
-    return &newElement;
-}
-
-// Patch if and else instructions index later
-Interp_Instr* Interp_If(Interp_Proc* proc, RegIdx value)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op = Op_Branch;
-    newElement.branch.value = value;
-    newElement.branch.defaultCase = 0;
-    newElement.branch.keyStart    = 0;
-    newElement.branch.caseStart   = 0;
-    newElement.branch.count       = 0;
-    return &newElement;
-}
-
-Interp_Instr* Interp_Branch(Interp_Proc* proc)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op = Op_Branch;
-    newElement.branch.value       = 0;
-    newElement.branch.defaultCase = 0;
-    newElement.branch.keyStart    = 0;
-    newElement.branch.caseStart   = 0;
-    newElement.branch.count       = 0;
-    return &newElement;
-}
-
-void Interp_Return(Interp_Proc* proc, RegIdx retValue)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op = Op_Ret;
-    newElement.unary.src = retValue;
-}
-
-void Interp_ReturnVoid(Interp_Proc* proc)
-{
-    proc->instrs.ResizeAndInit(proc->instrs.length + 1);
-    auto& newElement = proc->instrs[proc->instrs.length-1];
-    
-    newElement.op = Op_Ret;
-    newElement.bitfield |= InstrBF_RetVoid;
-    newElement.unary.src = 0;
-}
-
-////
-// AST -> bytecode conversion
-////
-
 // At this point the registers can be reused
-void Interp_EndOfExpression(Interp_Proc* proc)
+void Interp_EndOfExpression(Interp_Builder* builder)
 {
-    proc->regCounter = Interp_GetFirstUnused(proc);
+    builder->regCounter = Interp_GetFirstUnused(builder);
 }
 
-RegIdx Interp_ConvertNodeRVal(Interp_Proc* proc, Ast_Node* node)
+RegIdx Interp_ConvertNodeRVal(Interp_Builder* builder, Ast_Node* node)
 {
-    Assert(Ast_IsExpr(node));
-    auto expr = (Ast_Expr*)node;
+    Assert(Ast_IsExpr(node) || node->kind == AstKind_VarDecl);
+    TypeInfo* type = node->kind == AstKind_VarDecl ? ((Ast_VarDecl*)node)->type : ((Ast_Expr*)node)->type;
     
-    auto val = Interp_ConvertNode(proc, node);
-    return Interp_GetRVal(proc, val, expr->type);
+    auto val = Interp_ConvertNode(builder, node);
+    return Interp_GetRVal(builder, val, type);
 }
 
-Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
+// NOTE(Leo): Handles conversion for all nodes, and also takes care of
+// type conversions if the node is an expression. Called functions
+// should not handle type conversions.
+Interp_Val Interp_ConvertNode(Interp_Builder* builder, Ast_Node* node)
 {
-    Interp_Val res = { RegIdx_Unused, false };
+    Interp_Val res;
     
     switch(node->kind)
     {
         case AstKind_ProcDef:       break;  // Not handled here
         case AstKind_StructDef:     break;  // Not handled here
         case AstKind_DeclBegin:     break;
-        case AstKind_VarDecl:
-        {
-            auto varDecl = (Ast_VarDecl*)node;
-            auto type = varDecl->type;
-            
-            if(varDecl->initExpr)
-            {
-                auto dst = proc->declToAddr[varDecl->declIdx];
-                Interp_Val dstVal = { dst, true };
-                auto src = Interp_ConvertNode(proc, varDecl->initExpr);
-                Interp_Assign(proc, src, varDecl->initExpr->type, dstVal, varDecl->type);
-                
-                //auto exprReg = Interp_ConvertNodeRVal(proc, varDecl->initExpr);
-                //Interp_EndOfExpression(proc);
-                //Interp_Store(proc, Interp_ConvertType(varDecl->type), addrReg, exprReg, GetTypeAlign(type), false);
-            }
-            
-            break;
-        }
+        case AstKind_VarDecl:       res = Interp_ConvertVarDecl(builder, (Ast_VarDecl*)node); break;
         case AstKind_EnumDecl:      break;
         case AstKind_DeclEnd:       break;
         case AstKind_StmtBegin:     break;
-        case AstKind_Block:         Interp_ConvertBlock(proc, (Ast_Block*)node); break;
-        case AstKind_If:
-        {
-            auto stmt = (Ast_If*)node;
-            RegIdx value = Interp_ConvertNodeRVal(proc, stmt->condition);
-            Interp_EndOfExpression(proc);
-            
-            auto ifInstr = Interp_If(proc, value);
-            auto ifRegionIdx = Interp_Region(proc);
-            
-            uint32 instrArrayStart = Interp_AllocateInstrIdxArray(proc, &ifRegionIdx, 1);
-            int64 val = 0;
-            uint32 constArrayStart = Interp_AllocateConstArray(proc, &val, 1);
-            
-            ifInstr->branch.keyStart  = constArrayStart;
-            ifInstr->branch.caseStart = instrArrayStart;
-            ifInstr->branch.count     = 1;
-            
-            Interp_ConvertBlock(proc, stmt->thenBlock);
-            auto gotoInstr = Interp_Goto(proc);
-            
-            auto elseRegionIdx = Interp_Region(proc);
-            ifInstr->branch.defaultCase = elseRegionIdx;
-            gotoInstr->branch.defaultCase = elseRegionIdx;
-            
-            if(stmt->elseStmt)
-            {
-                Interp_ConvertNode(proc, stmt->elseStmt);
-                auto elseGotoInstr = Interp_Goto(proc);
-                auto endRegionIdx = Interp_Region(proc);
-                elseGotoInstr->branch.defaultCase = endRegionIdx;
-                gotoInstr->branch.defaultCase = endRegionIdx;
-            }
-            
-            break;
-        }
-        case AstKind_For:           break;
-        case AstKind_While:         break;
-        case AstKind_DoWhile:       break;
+        case AstKind_Block:         Interp_ConvertBlock(builder, (Ast_Block*)node); break;
+        case AstKind_If:            Interp_ConvertIf(builder, (Ast_If*)node); break;
+        case AstKind_For:           Interp_ConvertFor(builder, (Ast_For*)node); break;
+        case AstKind_While:         Interp_ConvertWhile(builder, (Ast_While*)node); break;
+        case AstKind_DoWhile:       Interp_ConvertDoWhile(builder, (Ast_DoWhile*)node); break;
         case AstKind_Switch:        break;
         case AstKind_Defer:         break;
-        case AstKind_Return:
-        {
-            auto stmt = (Ast_Return*)node;
-            if(stmt->rets.length <= 0)
-                Interp_ReturnVoid(proc);
-            else
-            {
-                auto procType = (Ast_DeclaratorProc*)proc->symbol->type;
-                
-                ScratchArena scratch;
-                Array<Interp_Val> regs = { 0, 0 };
-                for_array(i, stmt->rets)
-                {
-                    auto ret = stmt->rets[i];
-                    auto reg = Interp_ConvertNode(proc, ret);
-                    regs.Append(scratch, reg);
-                }
-                
-                for(int i = 0; i < stmt->rets.length - 1; ++i)
-                {
-                    RegIdx addr = (proc->retRule == TB_PASSING_INDIRECT) + i;
-                    Interp_BuildPreRet(proc, addr, regs[i], stmt->rets[i]->type, TB_PASSING_INDIRECT);
-                }
-                
-                int lastRet = stmt->rets.length - 1;
-                auto toRet = Interp_BuildPreRet(proc, 0, regs[lastRet], stmt->rets[lastRet]->type, proc->retRule);
-                Interp_Return(proc, toRet);
-            }
-            
-            break;
-        }
+        case AstKind_Return:        Interp_ConvertReturn(builder, (Ast_Return*)node); break;
         case AstKind_Break:         break;
         case AstKind_Continue:      break;
+        case AstKind_Fallthrough:   break;
         case AstKind_MultiAssign:   break;
         case AstKind_EmptyStmt:     break;
         case AstKind_StmtEnd:       break;
         case AstKind_ExprBegin:     break;
-        case AstKind_Ident:
-        {
-            auto expr = (Ast_IdentExpr*)node;
-            
-            if(expr->declaration->kind == AstKind_ProcDef)  // Procedure
-            {
-                auto procDef = (Ast_ProcDef*)expr->declaration;
-                auto address = Interp_GetSymbolAddress(proc, procDef->symbol);
-                
-                res.reg = address;
-            }
-            else  // Variable
-            {
-                Assert(expr->declaration->kind == AstKind_VarDecl);
-                auto decl = (Ast_VarDecl*)expr->declaration;
-                
-                bool isGlobalVariable = decl->declIdx == -1;
-                if(isGlobalVariable)
-                {
-                    Assert(false);
-                }
-                else
-                {
-                    res.reg = proc->declToAddr[decl->declIdx];
-                }
-            }
-            
-            res.isLValue = true;
-            break;
-        }
+        case AstKind_Ident:         res = Interp_ConvertIdent(builder, (Ast_IdentExpr*)node); break;
         case AstKind_FuncCall:
         {
             ScratchArena scratch;
-            auto values = Interp_ConvertCall(proc, (Ast_FuncCall*)node, scratch);
+            auto values = Interp_ConvertCall(builder, (Ast_FuncCall*)node, scratch);
             // In this context only 1 return is allowed
             Assert(values.length == 0 || values.length == 1);
             
@@ -978,95 +285,21 @@ Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
                 res = values[0];
             break;
         }
-        case AstKind_BinaryExpr:
-        {
-            auto expr = (Ast_BinaryExpr*)node;
-            
-            // TODO: put other assignments here 
-            if(expr->op == '=')
-            {
-                auto lhs = Interp_ConvertNode(proc, expr->lhs);
-                auto rhs = Interp_ConvertNode(proc, expr->rhs);
-                auto val = Interp_Assign(proc, rhs, expr->rhs->type, lhs, expr->lhs->type);
-                res = val;
-            }
-            else
-            {
-                RegIdx lhs = Interp_ConvertNodeRVal(proc, expr->lhs);
-                RegIdx rhs = Interp_ConvertNodeRVal(proc, expr->rhs);
-                Assert(lhs != RegIdx_Unused && rhs != RegIdx_Unused);
-                
-                if(IsTypeIntegral(expr->type))
-                {
-                    bool isSigned = IsTypeSigned(expr->type);
-                    switch(expr->op)
-                    {
-                        case '=': break;  // Already handled before
-                        case '+': res.reg = Interp_Add(proc, lhs, rhs); break;
-                        case '-': res.reg = Interp_Sub(proc, lhs, rhs); break;
-                        case '*': res.reg = Interp_Mul(proc, lhs, rhs); break;
-                        case '/': res.reg = Interp_Div(proc, lhs, rhs, isSigned); break;
-                        case '%': res.reg = Interp_Mod(proc, lhs, rhs, isSigned); break;
-                    }
-                }
-                else if(IsTypeFloat(expr->type))
-                {
-                    switch(expr->op)
-                    {
-                        case '=': break;  // Already handled before
-                        case '+': res.reg = Interp_FAdd(proc, lhs, rhs); break;
-                        case '-': res.reg = Interp_FSub(proc, lhs, rhs); break;
-                        case '*': res.reg = Interp_FMul(proc, lhs, rhs); break;
-                        case '/': res.reg = Interp_FDiv(proc, lhs, rhs); break;
-                        case '%': Assert(false);
-                    }
-                }
-            }
-            
-            break;
-        }
-        case AstKind_UnaryExpr:     break;
-        case AstKind_TernaryExpr:   break;
+        case AstKind_BinaryExpr:    res = Interp_ConvertBinExpr(builder, (Ast_BinaryExpr*)node); break;
+        case AstKind_UnaryExpr:     res = Interp_ConvertUnaryExpr(builder, (Ast_UnaryExpr*)node); break;
+        case AstKind_TernaryExpr:   res = Interp_ConvertTernaryExpr(builder, (Ast_TernaryExpr*)node); break;
         case AstKind_Typecast:
         {
             auto expr = (Ast_Typecast*)node;
             auto srcType = Interp_ConvertType(expr->expr->type);
-            RegIdx exprReg = Interp_ConvertNodeRVal(proc, expr->expr);
-            res.reg = Interp_ConvertTypeConversion(proc, exprReg, srcType, expr->expr->type, expr->type);
+            RegIdx exprReg = Interp_ConvertNodeRVal(builder, expr->expr);
+            res.reg = Interp_ConvertTypeConversion(builder, exprReg, srcType, expr->expr->type, expr->type);
             break;
         }
-        case AstKind_Subscript:     break;
-        case AstKind_MemberAccess:  break;
-        case AstKind_ConstValue:
-        {
-            auto expr = (Ast_ConstValue*)node;
-            Interp_Type type = Interp_ConvertType(expr->type);
-            
-            switch_nocheck(expr->type->typeId)
-            {
-                case Typeid_Int64:
-                {
-                    int64 val = *(int64*)expr->addr;
-                    res.reg = Interp_ImmSInt(proc, type, val);
-                    break;
-                }
-                case Typeid_Float:
-                {
-                    float val = *(float*)expr->addr;
-                    res.reg = Interp_ImmFloat32(proc, type, val);
-                    break;
-                }
-                case Typeid_Double:
-                {
-                    double val = *(double*)expr->addr;
-                    res.reg = Interp_ImmFloat64(proc, type, val);
-                    break;
-                }
-                default: Assert(false);
-            } switch_nocheck_end;
-            
-            break;
-        }
+        case AstKind_Subscript:     res = Interp_ConvertSubscript(builder, (Ast_Subscript*)node); break;
+        case AstKind_MemberAccess:  res = Interp_ConvertMemberAccess(builder, (Ast_MemberAccess*)node); break;
+        case AstKind_ConstValue:    res = Interp_ConvertConstValue(builder, (Ast_ConstValue*)node); break;
+        case AstKind_RunDir:        Assert(false && "Run directive codegen not implemented"); break;
         case AstKind_ExprEnd:       break;
         default: Assert(false && "Enum value out of bounds");
     }
@@ -1074,45 +307,242 @@ Interp_Val Interp_ConvertNode(Interp_Proc* proc, Ast_Node* node)
     if(Ast_IsExpr(node))
     {
         auto expr = (Ast_Expr*)node;
-        // Convert type
-        if(expr->castType->typeId != expr->type->typeId)
+        
+        if(expr->type->typeId != Typeid_Struct &&
+           expr->type->typeId != Typeid_Ident)
         {
-            res.reg = Interp_GetRVal(proc, res, expr->type);
-            res.isLValue = false;
-            
-            auto srcType = Interp_ConvertType(expr->type);
-            res.reg = Interp_ConvertTypeConversion(proc, res.reg, srcType, expr->type, expr->castType);
+            // Convert type
+            auto convType = Interp_ConvertType(expr->type);
+            auto convCastType = Interp_ConvertType(expr->castType);
+            if(convType != convCastType)
+            {
+                res.reg = Interp_GetRVal(builder, res, expr->type);
+                res.type = Interp_RValue;
+                
+                res.reg = Interp_ConvertTypeConversion(builder, res.reg, convType, expr->type, expr->castType);
+            }
         }
     }
     
     return res;
 }
 
-Interp_Val Interp_Assign(Interp_Proc* proc, Interp_Val src, TypeInfo* srcType, Interp_Val dst, TypeInfo* dstType)
+Interp_Val Interp_ConvertVarDecl(Interp_Builder* builder, Ast_VarDecl* stmt)
 {
-    Assert(dst.isLValue);
+    auto type = stmt->type;
     
-    TypeInfo* type = dstType;
-    auto size = GetTypeSize(type);
-    auto align = GetTypeAlign(type);
+    auto dst = builder->declToAddr[stmt->declIdx];
+    Interp_Val dstVal = { dst, Interp_LValue };
     
-    if(dstType->typeId == Typeid_Struct ||
-       dstType->typeId == Typeid_Ident)
+    if(stmt->initExpr)
     {
-        Assert(src.isLValue);
-        RegIdx sizeReg = Interp_ImmUInt(proc, Interp_Int64, size);
-        Interp_MemCpy(proc, dst.reg, src.reg, sizeReg, align, false);
+        auto src = Interp_ConvertNode(builder, stmt->initExpr);
+        Interp_Assign(builder, src, stmt->initExpr->type, dstVal, stmt->type);
+    }
+    
+    return dstVal;
+}
+
+void Interp_ConvertBlock(Interp_Builder* builder, Ast_Block* block)
+{
+    for_array(i, block->stmts)
+    {
+        Interp_ConvertNode(builder, block->stmts[i]);
+        // No register can persist between statements,
+        // by definition.
+        Interp_EndOfExpression(builder);
+    }
+    
+    // Handle scope stuff here
+    
+}
+
+// TODO: the generated bytecode could be improved as it could
+// just use the true and false regions from the RValuePhi type.
+// Instead it generates a phi and then jumps based on that.
+// The same goes for 'for', 'while', 'do while'
+void Interp_ConvertIf(Interp_Builder* builder, Ast_If* stmt)
+{
+    RegIdx value = Interp_ConvertNodeRVal(builder, stmt->condition);
+    
+    Interp_EndOfExpression(builder);
+    
+    auto ifInstr = Interp_If(builder, value);
+    auto ifRegionIdx = Interp_Region(builder);
+    
+    Interp_ConvertBlock(builder, stmt->thenBlock);
+    auto gotoInstr = Interp_Goto(builder);
+    
+    auto elseRegionIdx = Interp_Region(builder);
+    
+    Interp_PatchIf(builder, ifInstr, value, ifRegionIdx, elseRegionIdx);
+    Interp_PatchGoto(builder, gotoInstr, elseRegionIdx);
+    
+    if(stmt->elseStmt)
+    {
+        Interp_ConvertNode(builder, stmt->elseStmt);
+        auto elseGotoInstr = Interp_Goto(builder);
+        auto endRegionIdx = Interp_Region(builder);
+        Interp_PatchGoto(builder, elseGotoInstr, endRegionIdx);
+        Interp_PatchGoto(builder, gotoInstr, endRegionIdx);
+    }
+}
+
+void Interp_ConvertFor(Interp_Builder* builder, Ast_For* stmt)
+{
+    if(stmt->initialization)
+        Interp_ConvertNode(builder, stmt->initialization);
+    
+    InstrIdx loopBackRegion = InstrIdx_Unused;
+    InstrIdx body = InstrIdx_Unused;
+    if(stmt->condition)
+    {
+        auto gotoHeader = Interp_Goto(builder);
+        auto header = Interp_Region(builder);
+        Interp_PatchGoto(builder, gotoHeader, header);
+        
+        auto condReg = Interp_ConvertNodeRVal(builder, stmt->condition);
+        Assert(condReg != RegIdx_Unused);
+        
+        loopBackRegion = header;
+        
+        auto headerBranch = Interp_If(builder, condReg);
+        body = Interp_Region(builder);
+        
+        Interp_EndOfExpression(builder);
+        
+        Interp_ConvertBlock(builder, stmt->body);
+        Interp_EndOfExpression(builder);
+        if(stmt->update)
+            Interp_ConvertNode(builder, stmt->update);
+        
+        Interp_Goto(builder, header);
+        auto exit = Interp_Region(builder);
+        
+        Interp_PatchIf(builder, headerBranch, condReg, body, exit);
     }
     else
     {
-        auto srcRVal = Interp_GetRVal(proc, src, srcType);
-        Interp_Store(proc, Interp_ConvertType(type), dst.reg, srcRVal, align, false);
+        auto gotoBody = Interp_Goto(builder);
+        auto body = Interp_Region(builder);
+        Interp_PatchGoto(builder, gotoBody, body);
+        
+        Interp_ConvertBlock(builder, stmt->body);
+        Interp_EndOfExpression(builder);
+        if(stmt->update)
+            Interp_ConvertNode(builder, stmt->update);
+        
+        Interp_Goto(builder, body);
+        // Exit region
+        Interp_Region(builder);
     }
-    
-    return dst;
 }
 
-Array<Interp_Val> Interp_ConvertCall(Interp_Proc* proc, Ast_FuncCall* call, Arena* allocTo)
+void Interp_ConvertWhile(Interp_Builder* builder, Ast_While* stmt)
+{
+    auto gotoHeader = Interp_Goto(builder);
+    auto header = Interp_Region(builder);
+    Interp_PatchGoto(builder, gotoHeader, header);
+    
+    auto condReg = Interp_ConvertNodeRVal(builder, stmt->condition);
+    Assert(condReg != RegIdx_Unused);
+    
+    auto headerBranch = Interp_If(builder, condReg);
+    auto body = Interp_Region(builder);
+    
+    Interp_EndOfExpression(builder);
+    
+    Interp_ConvertBlock(builder, stmt->doBlock);
+    Interp_EndOfExpression(builder);
+    
+    Interp_Goto(builder, header);
+    auto exit = Interp_Region(builder);
+    
+    Interp_PatchIf(builder, headerBranch, condReg, body, exit);
+}
+
+void Interp_ConvertDoWhile(Interp_Builder* builder, Ast_DoWhile* stmt)
+{
+    auto gotoBody = Interp_Goto(builder);
+    auto body = Interp_Region(builder);
+    Interp_PatchGoto(builder, gotoBody, body);
+    
+    Interp_EndOfExpression(builder);
+    Interp_ConvertNode(builder, stmt->doStmt);
+    Interp_EndOfExpression(builder);
+    
+    auto condReg = Interp_ConvertNodeRVal(builder, stmt->condition);
+    Assert(condReg != RegIdx_Unused);
+    
+    auto headerBranch = Interp_If(builder, condReg);
+    auto exit = Interp_Region(builder);
+    Interp_PatchIf(builder, headerBranch, condReg, body, exit);
+}
+
+void Interp_ConvertReturn(Interp_Builder* builder, Ast_Return* stmt)
+{
+    auto proc = builder->proc;
+    if(stmt->rets.length <= 0)
+        Interp_ReturnVoid(builder);
+    else
+    {
+        auto procType = (Ast_ProcType*)proc->symbol->type;
+        
+        ScratchArena scratch;
+        Array<Interp_Val> regs;
+        for_array(i, stmt->rets)
+        {
+            auto ret = stmt->rets[i];
+            auto reg = Interp_ConvertNode(builder, ret);
+            regs.Append(scratch, reg);
+        }
+        
+        for(int i = 0; i < stmt->rets.length - 1; ++i)
+        {
+            RegIdx addr = (proc->retRule == TB_PASSING_INDIRECT) + i;
+            Interp_BuildPreRet(builder, addr, regs[i], stmt->rets[i]->type, TB_PASSING_INDIRECT);
+        }
+        
+        int lastRet = stmt->rets.length - 1;
+        auto toRet = Interp_BuildPreRet(builder, 0, regs[lastRet], stmt->rets[lastRet]->type, proc->retRule);
+        Interp_Return(builder, toRet);
+    }
+}
+
+Interp_Val Interp_ConvertIdent(Interp_Builder* builder, Ast_IdentExpr* expr)
+{
+    Interp_Val res;
+    
+    if(expr->declaration->kind == AstKind_ProcDef)  // Procedure
+    {
+        auto procDef = (Ast_ProcDef*)expr->declaration;
+        auto address = Interp_GetSymbolAddress(builder, procDef->symbol);
+        
+        res.reg = address;
+    }
+    else  // Variable
+    {
+        Assert(expr->declaration->kind == AstKind_VarDecl);
+        auto decl = (Ast_VarDecl*)expr->declaration;
+        
+        bool isGlobalVariable = decl->declIdx == -1;
+        if(isGlobalVariable)
+        {
+            auto address = Interp_GetSymbolAddress(builder, decl->symbol);
+            Assert(address != RegIdx_Unused);
+            res.reg = address;
+        }
+        else
+        {
+            res.reg = builder->declToAddr[decl->declIdx];
+        }
+    }
+    
+    res.type = Interp_LValue;
+    return res;
+}
+
+Array<Interp_Val> Interp_ConvertCall(Interp_Builder* builder, Ast_FuncCall* call, Arena* allocTo)
 {
     ScratchArena scratch1(allocTo);
     ScratchArena scratch2(scratch1, allocTo);
@@ -1120,31 +550,36 @@ Array<Interp_Val> Interp_ConvertCall(Interp_Proc* proc, Ast_FuncCall* call, Aren
     Array<RegIdx> args = { 0, 0 };
     
     // Generate target
-    auto target = Interp_ConvertNode(proc, call->target);
-    Assert(target.isLValue);
+    auto proc = builder->proc;
+    auto target = Interp_ConvertNode(builder, call->target);
+    Assert(target.type == Interp_LValue);
     auto targetReg = target.reg;
     
     auto procDecl = Ast_GetDeclCallTarget(call);
     rets.Resize(scratch1, procDecl->retTypes.length);
     
-    auto retDebugType = Tc_ConvertToDebugType(proc->module, procDecl->retTypes.last());
-    TB_PassingRule retRule = tb_get_passing_rule_from_dbg(proc->module, retDebugType, false);
-    
-    // Arguments related to return values first (last one is first, the rest are in order)
-    if(retRule == TB_PASSING_INDIRECT)
+    TB_PassingRule retRule = TB_PASSING_IGNORE;
+    if(procDecl->retTypes.length > 0)
     {
-        uint64 size = GetTypeSize(procDecl->retTypes.last());
-        uint64 align = GetTypeAlign(procDecl->retTypes.last());
-        auto local = Interp_Local(proc, size, align);
-        args.Append(scratch2, local);
+        auto retDebugType = Tc_ConvertToDebugType(proc->module, procDecl->retTypes.last());
+        retRule = tb_get_passing_rule_from_dbg(proc->module, retDebugType, false);
+        
+        // Arguments related to return values first (last one is first, the rest are in order)
+        if(retRule == TB_PASSING_INDIRECT)
+        {
+            uint64 size = procDecl->retTypes.last()->size;
+            uint64 align = procDecl->retTypes.last()->align;
+            auto local = Interp_Local(builder, size, align);
+            args.Append(scratch2, local);
+        }
     }
     
     for(int i = 0; i < rets.length - 1; ++i)
     {
         // The rest of the returns are all indirect
-        uint64 size = GetTypeSize(procDecl->retTypes[i]);
-        uint64 align = GetTypeAlign(procDecl->retTypes[i]);
-        auto local = Interp_Local(proc, size, align);
+        uint64 size = procDecl->retTypes[i]->size;
+        uint64 align = procDecl->retTypes[i]->align;
+        auto local = Interp_Local(builder, size, align);
         args.Append(scratch2, local);
     }
     
@@ -1155,12 +590,15 @@ Array<Interp_Val> Interp_ConvertCall(Interp_Proc* proc, Ast_FuncCall* call, Aren
         auto debugType = Tc_ConvertToDebugType(proc->module, procDecl->args[i]->type);
         TB_PassingRule rule = tb_get_passing_rule_from_dbg(proc->module, debugType, false);
         
-        auto val = Interp_ConvertNode(proc, call->args[i]);
-        auto passedArg = Interp_PassArg(proc, val, call->args[i]->type, rule, scratch1);
+        auto val = Interp_ConvertNode(builder, call->args[i]);
+        auto passedArg = Interp_PassArg(builder, val, call->args[i]->type, rule, scratch1);
         args.Append(scratch2, passedArg);
     }
     
-    RegIdx singleRet = Interp_Call(proc, target.reg, args);
+    RegIdx singleRet = Interp_Call(builder, target.reg, args);
+    
+    if(procDecl->retTypes.length <= 0)
+        return { 0, 0 };
     
     // Handle returns
     Array<TB_PassingRule> retRules;
@@ -1176,22 +614,454 @@ Array<Interp_Val> Interp_ConvertCall(Interp_Proc* proc, Ast_FuncCall* call, Aren
     for(int i = 0; i < rets.length - 1; ++i)
     {
         auto retReg = (retRule == TB_PASSING_INDIRECT) + i;
-        rets[i] = Interp_GetRet(proc, TB_PASSING_INDIRECT, retReg, procDecl->retTypes[i]);
+        rets[i] = Interp_GetRet(builder, TB_PASSING_INDIRECT, retReg, procDecl->retTypes[i]);
     }
     
-    rets[rets.length-1] = Interp_GetRet(proc, retRule, singleRet, procDecl->retTypes.last());
+    if(procDecl->retTypes.length > 0)
+        rets[rets.length-1] = Interp_GetRet(builder, retRule, singleRet, procDecl->retTypes.last());
+    
     return rets;
 }
 
-Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc)
+Interp_Val Interp_ConvertBinExpr(Interp_Builder* builder, Ast_BinaryExpr* expr)
 {
-    auto astDecl = Ast_GetDeclProc(astProc);
+    Interp_Val res;
     
-    auto proc    = Interp_MakeProc(interp);
+    // TODO: Check if there is a function associated with this operator (operator overloading)
+    // if so just call that function
+    
+    // Logical operators
+    if(expr->op == Tok_LogAnd || expr->op == Tok_LogOr)
+    {
+        // Since logical operators behave very differently
+        // from all other operators because they alter the
+        // control flow, they reside in a separate function
+        res = Interp_ConvertLogicExpr(builder, expr);
+    }
+    else  // All other operators
+    {
+        bool isAssign = false;
+        TokenType op = Ast_GetAssignUnderlyingOp((TokenType)expr->op, &isAssign);
+        auto lhsFull = Interp_ConvertNode(builder, expr->lhs);
+        auto rhsFull = Interp_ConvertNode(builder, expr->rhs);
+        
+        // If operator is '=' lhs rvalue is not needed
+        RegIdx lhs = RegIdx_Unused;
+        if(op != '=')
+        {
+            lhs = Interp_GetRVal(builder, lhsFull, expr->lhs->type);
+            Assert(lhs != RegIdx_Unused);
+        }
+        
+        auto rhs = Interp_GetRVal(builder, rhsFull, expr->rhs->type);
+        res = rhsFull;
+        
+        Assert(rhs != RegIdx_Unused);
+        
+        if(IsTypeIntegral(expr->type))
+        {
+            bool isSigned = expr->type->isSigned;
+            switch_nocheck(op)
+            {
+                case '=':        break;  // Not handled explicitly
+                case '+':        res.reg = Interp_Add(builder, lhs, rhs); break;
+                case '-':        res.reg = Interp_Sub(builder, lhs, rhs); break;
+                case '*':        res.reg = Interp_Mul(builder, lhs, rhs); break;
+                case '/':        res.reg = Interp_Div(builder, lhs, rhs, isSigned); break;
+                case '%':        res.reg = Interp_Mod(builder, lhs, rhs, isSigned); break;
+                case Tok_LShift: res.reg = Interp_ShL(builder, lhs, rhs); break;
+                case Tok_RShift: res.reg = expr->type->isSigned? Interp_Sar(builder, lhs, rhs) : Interp_ShR(builder, lhs, rhs); break;
+                case '&':        res.reg = Interp_And(builder, lhs, rhs); break;
+                case '|':        res.reg = Interp_Or(builder, lhs, rhs); break;
+                case '^':        res.reg = Interp_Xor(builder, lhs, rhs); break;
+                case Tok_EQ:     res.reg = Interp_CmpEq(builder, lhs, rhs); break;
+                case Tok_NEQ:    res.reg = Interp_CmpNe(builder, lhs, rhs); break;
+                case '<':        res.reg = Interp_CmpILT(builder, lhs, rhs, isSigned); break;
+                case '>':        res.reg = Interp_CmpIGT(builder, lhs, rhs, isSigned); break;
+                case Tok_LE:     res.reg = Interp_CmpILE(builder, lhs, rhs, isSigned); break;
+                case Tok_GE:     res.reg = Interp_CmpIGE(builder, lhs, rhs, isSigned); break;
+                default: Assert(false && "Not implemented"); break;
+            } switch_nocheck_end;
+        }
+        else if(expr->type->typeId == Typeid_Float)
+        {
+            switch_nocheck(op)
+            {
+                case '=':     break;  // Not handled explicitly
+                case '+':     res.reg = Interp_FAdd(builder, lhs, rhs); break;
+                case '-':     res.reg = Interp_FSub(builder, lhs, rhs); break;
+                case '*':     res.reg = Interp_FMul(builder, lhs, rhs); break;
+                case '/':     res.reg = Interp_FDiv(builder, lhs, rhs); break;
+                case Tok_EQ:  res.reg = Interp_CmpEq(builder, lhs, rhs); break;
+                case Tok_NEQ: res.reg = Interp_CmpNe(builder, lhs, rhs); break;
+                case '<':     res.reg = Interp_CmpFLT(builder, lhs, rhs); break;
+                case '>':     res.reg = Interp_CmpFGT(builder, lhs, rhs); break;
+                case Tok_LE:  res.reg = Interp_CmpFLE(builder, lhs, rhs); break;
+                case Tok_GE:  res.reg = Interp_CmpFGE(builder, lhs, rhs); break;
+                default: Assert(false && "Not implemented"); break;
+            } switch_nocheck_end;
+        }
+        
+        if(isAssign)
+            res = Interp_Assign(builder, res, expr->rhs->type, lhsFull, expr->lhs->type);
+        else
+            res.type = Interp_RValue;
+    }
+    
+    return res;
+}
+
+// TODO: Creating things out-of-order is kind of a pain right now.
+// It is why this function is so long.
+// Things should be modified to the API to permit slower, but more
+// convenient out-of-order insertion of operations.
+Interp_Val Interp_ConvertLogicExpr(Interp_Builder* builder, Ast_BinaryExpr* expr)
+{
+    Assert(expr->op == Tok_LogAnd || expr->op == Tok_LogOr);
+    Interp_Val res;
+    
+    auto proc = builder->proc;
+    
+    // We're adhering to the following scheme:
+    // a && b
+    //
+    //      if (a) { goto rhs  } else { goto false }
+    // rhs: if (b) { goto true } else { goto false }
+    //
+    //
+    // a || b
+    //
+    //      if (a) { goto true } else { goto rhs   }
+    // rhs: if (b) { goto true } else { goto false }
+    
+    bool isAnd = expr->op == Tok_LogAnd;
+    
+    // Evaluate first operand
+    // NOTE(Leo): Logical operators are left-to-right, so this is correct.
+    // Short-circuit logic doesn't make very much sense if the operators
+    // were right-to-left, and it's not like this will crash the program
+    // if we eventually change this. (The short circuit stuff will just not work)
+    // NOTE(Leo): We currently leave one empty instruction at the end of each
+    // region (true and false), because that's what we'll need at least. At most
+    // we need 2, one for an unconditional jump and one for an immediate instruction
+    // for a certain register. (Except when adding statements like for an if statement)
+    
+    auto lhs = Interp_ConvertNode(builder, expr->lhs);
+    
+    InstrIdx trueEndInstr = InstrIdx_Unused;
+    InstrIdx falseEndInstr = InstrIdx_Unused;
+    InstrIdx trueRegion = InstrIdx_Unused;
+    int trueRegionOffset = 0;
+    InstrIdx falseRegion = InstrIdx_Unused;
+    int falseRegionOffset = 0;
+    InstrIdx rhsRegion = InstrIdx_Unused;
+    
+    if(lhs.type == Interp_RValuePhi)
+    {
+        trueRegion = lhs.phi.trueRegion;
+        falseRegion = lhs.phi.falseRegion;
+        trueEndInstr = lhs.phi.trueEndInstr;
+        falseEndInstr = lhs.phi.falseEndInstr;
+        
+        // This is the new "final" true region for and,
+        // and the new "final" false region for or.
+        // The merge region is always the last region.
+        InstrIdx newRegion = lhs.phi.mergeRegion;
+        InstrIdx placeholder = Interp_Placeholder(builder);
+        
+        // Chain with the previous branch
+        // "Or"  chains on false,
+        // "And" chains on true
+        
+        rhsRegion = Interp_Region(builder);
+        Interp_Instr* chainWith = isAnd ? &proc->instrs[trueEndInstr] : &proc->instrs[falseEndInstr];
+        chainWith->op = Op_Branch;
+        chainWith->branch.defaultCase = rhsRegion;
+        chainWith->branch.keyStart = 0;
+        chainWith->branch.caseStart = 0;
+        chainWith->branch.count = 0;
+        
+        if(isAnd)
+        {
+            // Set true label to new region
+            trueRegion = newRegion;
+            trueRegionOffset = builder->instrOffsets[trueRegion];
+            trueEndInstr = placeholder;
+        }
+        else
+        {
+            // Set false label to new region
+            falseRegion = newRegion;
+            falseRegionOffset = builder->instrOffsets[falseRegion];
+            falseEndInstr = placeholder;
+        }
+    }
+    else
+    {
+        // There isn't an already existing branch to chain with,
+        // so we create the true and false regions here.
+        
+        auto lhsRValue = Interp_GetRVal(builder, lhs, expr->lhs->type);
+        auto ifInstr = Interp_If(builder, lhsRValue);
+        
+        trueRegion   = Interp_Region(builder);
+        trueRegionOffset = builder->instrOffsets[trueRegion];
+        trueEndInstr = Interp_Placeholder(builder);
+        
+        falseRegion   = Interp_Region(builder);
+        falseRegionOffset = builder->instrOffsets[falseRegion];
+        falseEndInstr = Interp_Placeholder(builder);
+        
+        rhsRegion = Interp_Region(builder);
+        
+        // 'And' goes to false directly if lhs is false, otherwise evaluate rhs.
+        // 'Or' goes to true directly if lhs is true, otherwise evaluate rhs.
+        Interp_PatchIf(builder, ifInstr, lhsRValue, isAnd? rhsRegion : trueRegion, isAnd? falseRegion : rhsRegion);
+    }
+    
+    // Generate the region for evaluating the rhs
+    {
+        Assert(rhsRegion != InstrIdx_Unused);
+        // We're in the rhs region now.
+        Assert(proc->instrs.length > 0 && proc->instrs.length-1 == rhsRegion);
+        
+        // Evaluate second operand
+        auto rhs = Interp_ConvertNodeRVal(builder, expr->rhs);
+        
+        // Rhs could have added instructions and changed the control flow
+        trueRegion = Interp_UpdateInstrIdx(builder, trueRegion, trueRegionOffset);
+        falseRegion = Interp_UpdateInstrIdx(builder, falseRegion, falseRegionOffset);
+        
+        auto ifInstr = Interp_If(builder, rhs, trueRegion, falseRegion);
+        
+        // Create merge region
+        auto mergeRegion = Interp_Region(builder);
+        
+        res.type = Interp_RValuePhi;
+        res.phi.trueRegion    = trueRegion;
+        res.phi.falseRegion   = falseRegion;
+        res.phi.trueEndInstr  = trueEndInstr;
+        res.phi.falseEndInstr = falseEndInstr;
+        res.phi.mergeRegion   = mergeRegion;
+    }
+    
+    // Set res.phi to be true, false, merge
+    return res;
+}
+
+// TODO: handle pointer arithmetic
+Interp_Val Interp_ConvertUnaryExpr(Interp_Builder* builder, Ast_UnaryExpr* expr)
+{
+    Interp_Val res;
+    Interp_Val applyTo = Interp_ConvertNode(builder, expr->expr);
+    
+    auto srcType = Interp_ConvertType(expr->expr->type);
+    auto srcAlign = expr->expr->type->align;
+    auto srcSize = expr->expr->type->size;
+    
+    RegIdx srcReg = RegIdx_Unused;
+    // We can avoid a load instruction here as the '&' operator only needs the address
+    if(expr->op != '&') srcReg = Interp_GetRVal(builder, applyTo, expr->expr->type);
+    
+    // TODO: I don't really understand neg vs not of tilde...
+    switch(expr->op)
+    {
+        case Tok_Increment:
+        case Tok_Decrement:
+        {
+            Assert(applyTo.type == Interp_LValue);
+            
+            // This gets complicated if we consider atomics... For now we won't
+            // support them.
+            bool isInc = expr->op == Tok_Increment;
+            
+            if(srcType.type == InterpType_Ptr) Assert(false && "Not implemented yet");
+            
+            auto stride = Interp_ImmUInt(builder, srcType, 1);
+            auto preOp  = srcReg;
+            auto postOp = isInc ? Interp_Add(builder, preOp, stride) : Interp_Sub(builder, preOp, stride);
+            
+            Interp_Store(builder, srcType, applyTo.reg, postOp, srcAlign, false);
+            
+            res.reg = expr->isPostfix ? preOp : postOp;
+            break;
+        }
+        case '+': res.reg = srcReg; break;
+        case '-':
+        {
+            if(srcType.type == InterpType_Float)
+            {
+                RegIdx constant = RegIdx_Unused;
+                if(srcType.data == FType_Flt32)
+                    constant = Interp_ImmFloat32(builder, srcType, 0);
+                else if(srcType.data == FType_Flt64)
+                    constant = Interp_ImmFloat64(builder, srcType, 0);
+                else Assert(false && "Unreachable code");
+                res.reg = Interp_FSub(builder, constant, srcReg);
+            }
+            else
+            {
+                res.reg = Interp_Sub(builder, Interp_ImmUInt(builder, srcType, 0), srcReg);
+            }
+            
+            break;
+        }
+        case '!': res.reg = Interp_CmpEq(builder, srcReg, Interp_ImmUInt(builder, srcType, 0)); break;
+        case '~': res.reg = Interp_Not(builder, srcReg); break;
+        case '*':
+        {
+            // Take the r-value and simply turn it into an r-value
+            Assert(IsTypeDereferenceable(expr->expr->type));
+            res.reg = srcReg;
+            res.type = Interp_LValue;
+            break;
+        }
+        case '&':
+        {
+            // Take the l-value and simply turn it into an r-value
+            Assert(applyTo.type == Interp_LValue);
+            res.reg = applyTo.reg;
+            res.type = Interp_RValue;
+            break;
+        }
+    }
+    
+    return res;
+}
+
+Interp_Val Interp_ConvertTernaryExpr(Interp_Builder* builder, Ast_TernaryExpr* expr)
+{
+    Interp_Val res;
+    return res;
+}
+
+Interp_Val Interp_ConvertSubscript(Interp_Builder* builder, Ast_Subscript* expr)
+{
+    Interp_Val res;
+    
+    
+    
+    return res;
+}
+
+Interp_Val Interp_ConvertMemberAccess(Interp_Builder* builder, Ast_MemberAccess* expr)
+{
+    Interp_Val res;
+    
+    auto lhs = Interp_ConvertNode(builder, expr->target);
+    Assert(Interp_IsValueValid(lhs) && lhs.type == Interp_LValue);
+    
+    RegIdx base = lhs.reg;
+    // If lhs is of pointer type, do "->" instead of simple "."
+    // (In this language that's the same thing)
+    if(IsTypeDereferenceable(expr->target->type))
+    {
+        auto baseType = GetBaseType(expr->target->type);
+        auto baseInterpType = Interp_ConvertType(baseType);
+        base = Interp_Load(builder, baseInterpType, base, baseType->align, false);
+    }
+    
+    Assert(expr->structDecl);
+    res.type = Interp_LValue;
+    // I think this will use the CompPhase system
+    int64 offset = expr->structDecl->memberOffsets[expr->memberIdx];
+    // If the offset is 0, we can just avoid the instruction altogether.
+    if(offset != 0)
+        res.reg = Interp_MemberAccess(builder, base, offset);
+    return res;
+}
+
+Interp_Val Interp_ConvertConstValue(Interp_Builder* builder, Ast_ConstValue* expr)
+{
+    Interp_Val res;
+    Interp_Type type = Interp_ConvertType(expr->type);
+    
+    switch_nocheck(expr->type->typeId)
+    {
+        case Typeid_Integer:
+        {
+            int64 val;
+            memcpy(&val, expr->addr, expr->type->size);
+            res.reg = Interp_ImmSInt(builder, type, val);
+            break;
+        }
+        case Typeid_Float:
+        {
+            if(expr->type->size == 4)
+            {
+                float val = *(float*)expr->addr;
+                res.reg = Interp_ImmFloat32(builder, type, val);
+            }
+            else if(expr->type->size == 8)
+            {
+                double val = *(double*)expr->addr;
+                res.reg = Interp_ImmFloat64(builder, type, val);
+            }
+            
+            break;
+        }
+        case Typeid_Bool:
+        {
+            bool val = *(bool*)expr->addr;
+            res.reg = Interp_ImmBool(builder, val);
+            break;
+        }
+        default: Assert(false);
+    } switch_nocheck_end;
+    
+    return res;
+}
+
+Interp_Val Interp_Assign(Interp_Builder* builder, Interp_Val src, TypeInfo* srcType, Interp_Val dst, TypeInfo* dstType)
+{
+    Assert(dst.type == Interp_LValue);
+    
+    TypeInfo* type = dstType;
+    
+    if(dstType->typeId == Typeid_Struct ||
+       dstType->typeId == Typeid_Ident)
+    {
+        Assert(src.type == Interp_LValue);
+        RegIdx sizeReg = Interp_ImmUInt(builder, Interp_Int64, type->size);
+        Interp_MemCpy(builder, dst.reg, src.reg, sizeReg, type->align, false);
+    }
+    else
+    {
+        auto srcRVal = Interp_GetRVal(builder, src, srcType);
+        Interp_Store(builder, Interp_ConvertType(type), dst.reg, srcRVal, type->align, false);
+    }
+    
+    return dst;
+}
+
+void Interp_ConvertExternProc(Interp* interp, Ast_ProcDef* astProc)
+{
+    Assert(astProc->declSpecs & Decl_Extern);
+    
     auto symbol  = Interp_MakeSymbol(interp);
+    symbol->type = Interp_ExternSym;
     symbol->decl = astProc;
     symbol->name = astProc->name->string;
-    symbol->type = astProc->type;
+    symbol->typeInfo = astProc->type;
+    astProc->symbol = symbol;
+}
+
+// @cleanup The code for handling the ABI is still very messy...
+Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc)
+{
+    Interp_Builder builderVar;
+    auto builder = &builderVar;
+    
+    auto astDecl = Ast_GetDeclProc(astProc);
+    
+    auto proc = Interp_MakeProc(interp);
+    builder->proc = proc;
+    
+    auto symbol  = Interp_MakeSymbol(interp);
+    symbol->type = Interp_ProcSym;
+    symbol->decl = astProc;
+    symbol->name = astProc->name->string;
+    symbol->typeInfo = astProc->type;
     
     astProc->symbol = symbol;
     proc->symbol = symbol;
@@ -1218,34 +1088,37 @@ Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc)
     // Reserve registers for proc arguments (including those needed for ABI)
     int argsCount = astDecl->args.length;
     // Args, the last return only if it's indirect, and the rest of the returns
-    int retArgs = (astDecl->retTypes.length - 1) + (proc->retRule == TB_PASSING_INDIRECT);
+    int retArgs = max((int64)0, astDecl->retTypes.length - 1) + (proc->retRule == TB_PASSING_INDIRECT);
     int abiArgsCount = argsCount + retArgs;
     for(int i = 0; i < abiArgsCount; ++i)
-        proc->permanentRegs.Append(i);
+        builder->permanentRegs.Append(i);
     
-    proc->regCounter = abiArgsCount;
+    if(abiArgsCount != -1)
+        builder->regCounter = abiArgsCount;
+    else
+        builder->regCounter = 0;
     
     // Insert local for each declaration (including
     // procedure arguments)
-    proc->declToAddr.Resize(astProc->block.decls.length);
-    for_array(i, astProc->block.decls)
+    builder->declToAddr.Resize(astProc->declsFlat.length);
+    for_array(i, astProc->declsFlat)
     {
         bool isArg = i < argsCount;
-        auto decl = astProc->block.decls[i];
+        auto decl = astProc->declsFlat[i];
         if(decl->kind == AstKind_VarDecl)
         {
             if(!isArg || proc->argRules[i] == TB_PASSING_DIRECT)
             {
                 auto varDecl = (Ast_VarDecl*)decl;
-                auto addr = Interp_Local(proc, GetTypeSize(varDecl->type), GetTypeAlign(varDecl->type), isArg);
+                auto addr = Interp_Local(builder, varDecl->type->size, varDecl->type->align, isArg);
                 
-                proc->declToAddr[i] = addr;
+                builder->declToAddr[i] = addr;
             }
             else if(isArg && proc->argRules[i] == TB_PASSING_INDIRECT)
             {
                 // The register itself contains the address needed
                 // (the stack allocation is performed by the caller)
-                proc->declToAddr[i] = i;
+                builder->declToAddr[i] = i;
             }
         }
     }
@@ -1262,9 +1135,9 @@ Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc)
             case TB_PASSING_IGNORE: break;
             case TB_PASSING_DIRECT:
             {
-                Interp_Store(proc, Interp_ConvertType(argType),
-                             proc->declToAddr[i], retArgs + i,
-                             GetTypeAlign(argType), false, true);
+                Interp_Store(builder, Interp_ConvertType(argType),
+                             builder->declToAddr[i], retArgs + i,
+                             argType->align, false, true);
                 
                 break;
             }
@@ -1273,7 +1146,7 @@ Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc)
     }
     
     // Block
-    Interp_ConvertBlock(proc, &astProc->block);
+    Interp_ConvertBlock(builder, &astProc->block);
     
     // Fill in these helper arrays for codegen
     if(proc->retRule == TB_PASSING_INDIRECT)
@@ -1292,71 +1165,64 @@ Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc)
         
     }
     
-    if(proc->retRule == TB_PASSING_INDIRECT)
-        proc->retType = Interp_Ptr;
-    else
-        proc->retType = Interp_ConvertType(astDecl->retTypes.last());
+    if(astDecl->retTypes.length > 0)
+    {
+        if(proc->retRule == TB_PASSING_INDIRECT)
+            proc->retType = Interp_Ptr;
+        else
+            proc->retType = Interp_ConvertType(astDecl->retTypes.last());
+    }
     
     return proc;
 }
 
-void Interp_ConvertStruct(Interp_Proc* proc, Ast_StructDef* astStruct)
-{
-    
-}
-
-void Interp_ConvertBlock(Interp_Proc* proc, Ast_Block* block)
-{
-    for_array(i, block->stmts)
-    {
-        Interp_ConvertNode(proc, block->stmts[i]);
-        // No register can persist between statements,
-        // by definition.
-        Interp_EndOfExpression(proc);
-    }
-    
-    // Handle scope stuff here
-    
-}
-
 Interp_Type Interp_ConvertType(TypeInfo* type)
 {
+    Interp_Type res = { 0, 0, 0 };
     switch(type->typeId)
     {
-        case Typeid_Bool:   return Interp_Bool;
-        case Typeid_Char:
-        case Typeid_Uint8:
-        case Typeid_Int8:   return Interp_Int8;
-        case Typeid_Uint16:
-        case Typeid_Int16:  return Interp_Int16;
-        case Typeid_Uint32:
-        case Typeid_Int32:  return Interp_Int32;
-        case Typeid_Uint64:
-        case Typeid_Int64:  return Interp_Int64;
-        case Typeid_Float:  return Interp_F32;
-        case Typeid_Double: return Interp_F64;
-        case Typeid_Ptr:    return Interp_Ptr;
-        case Typeid_Arr:    return Interp_Ptr;
-        case Typeid_None:   return Interp_Void;
-        case Typeid_Proc:
         // NOTE(Leo): If it's a struct, and we'd like to put
         // it in register, we use an integer type
+        case Typeid_Bool:
+        case Typeid_Char:
+        case Typeid_Integer:
+        case Typeid_Proc:
+        case Typeid_Ident:
         case Typeid_Struct:
-        case Typeid_Ident:  return { InterpType_Int, 0, uint16(GetTypeSize(type) * 8) };
+        case Typeid_None:    res.type = InterpType_Int;   break;
+        case Typeid_Float:   res.type = InterpType_Float; break;
+        case Typeid_Ptr:
+        case Typeid_Arr:     res.type = InterpType_Ptr;   break;
+        case Typeid_Raw:     Assert(false && "Raw type is not next to a pointer");
     }
     
-    return { 0, 0, 0 };
+    if(type->typeId == Typeid_Float)
+    {
+        if(type->size == 4)
+            res.data = FType_Flt32;
+        else if(type->size == 8)
+            res.data = FType_Flt64;
+    }
+    else if(type->typeId == Typeid_Bool)
+    {
+        res.data = 1;
+    }
+    else
+    {
+        res.data = type->size * 8;
+    }
+    
+    return res;
 }
 
-RegIdx Interp_ConvertTypeConversion(Interp_Proc* proc, RegIdx src, Interp_Type srcType, TypeInfo* srcFullType, TypeInfo* dst)
+RegIdx Interp_ConvertTypeConversion(Interp_Builder* builder, RegIdx src, Interp_Type srcType, TypeInfo* srcFullType, TypeInfo* dst)
 {
     Interp_Type dstType = Interp_ConvertType(dst);
-    bool srcIsSigned = IsTypeSigned(srcFullType);
-    bool dstIsSigned = IsTypeSigned(dst);
-    return Interp_ConvertTypeConversion(proc, src, srcType, dstType, srcIsSigned, dstIsSigned);
+    return Interp_ConvertTypeConversion(builder, src, srcType, dstType, srcFullType->isSigned, dst->isSigned);
 }
 
-RegIdx Interp_ConvertTypeConversion(Interp_Proc* proc, RegIdx src, Interp_Type srcType, Interp_Type dstType,
+// @cleanup Refactor this function to be more readable
+RegIdx Interp_ConvertTypeConversion(Interp_Builder* builder, RegIdx src, Interp_Type srcType, Interp_Type dstType,
                                     bool srcIsSigned, bool dstIsSigned)
 {
     RegIdx res = src;
@@ -1364,18 +1230,23 @@ RegIdx Interp_ConvertTypeConversion(Interp_Proc* proc, RegIdx src, Interp_Type s
     {
         if(srcType.data != dstType.data)
         {
-            if(srcType.width > dstType.width)  // Truncate
-                res = Interp_Trunc(proc, src, dstType);
+            if(srcType.data > dstType.data)  // Truncate
+            {
+                if(dstType.data == 1)
+                    res = Interp_CmpNe(builder, src, Interp_ImmUInt(builder, srcType, 0));
+                else
+                    res = Interp_Trunc(builder, src, dstType);
+            }
             else  // Extend
             {
                 if(srcType.type == InterpType_Float)
-                    res = Interp_FPExt(proc, src, dstType);
+                    res = Interp_FPExt(builder, src, dstType);
                 else if(srcType.type == InterpType_Int)
                 {
                     if(srcIsSigned)
-                        res = Interp_SExt(proc, src, dstType);
+                        res = Interp_SExt(builder, src, dstType);
                     else
-                        res = Interp_ZExt(proc, src, dstType);
+                        res = Interp_ZExt(builder, src, dstType);
                 }
             }
         }
@@ -1383,262 +1254,34 @@ RegIdx Interp_ConvertTypeConversion(Interp_Proc* proc, RegIdx src, Interp_Type s
     else if(srcType.type == InterpType_Int)
     {
         if(dstType.type == InterpType_Float)
-            res = Interp_Int2Float(proc, src, dstType, srcIsSigned);
+            res = Interp_Int2Float(builder, src, dstType, srcIsSigned);
         else if(dstType.type == InterpType_Ptr)
-            res = Interp_Int2Ptr(proc, src, dstType);
+            res = Interp_Int2Ptr(builder, src, dstType);
     }
     else if(srcType.type == InterpType_Float)
     {
         if(dstType.type == InterpType_Int)
-            res = Interp_Float2Int(proc, src, dstType, dstIsSigned);
+        {
+            if(dstType.data == 1)
+            {
+                auto constant = RegIdx_Unused;
+                if(srcType.data == FType_Flt32)
+                    constant = Interp_ImmFloat32(builder, Interp_F32, 0);
+                else if(srcType.data == FType_Flt64)
+                    constant = Interp_ImmFloat64(builder, Interp_F64, 0);
+                res = Interp_CmpNe(builder, src, constant);
+            }
+            else
+                res = Interp_Float2Int(builder, src, dstType, dstIsSigned);
+        }
     }
     else if(srcType.type == InterpType_Ptr)
     {
         if(dstType.type == InterpType_Int)
-            res = Interp_Ptr2Int(proc, src, dstType);
+            res = Interp_Ptr2Int(builder, src, dstType);
     }
     
     return res;
-}
-
-void Interp_PrintPassRule(TB_PassingRule rule)
-{
-    switch(rule)
-    {
-        case TB_PASSING_DIRECT:   printf("direct");   break;
-        case TB_PASSING_INDIRECT: printf("indirect"); break;
-        case TB_PASSING_IGNORE:   printf("ignore");   break;
-        default: Assert(false);
-    }
-}
-
-void Interp_PrintProc(Interp_Proc* proc)
-{
-    // Print proc name, etc.
-    printf("%s:\n", proc->symbol->name);
-    
-    // Print passing rules
-    printf("Arg passing rules: ");
-    for_array(i, proc->argRules)
-    {
-        RegIdx curReg = (proc->retRule == TB_PASSING_INDIRECT) + i;
-        printf("%%%d ", curReg);
-        Interp_PrintPassRule(proc->argRules[i]);
-        
-        if(i < proc->argRules.length - 1)
-            printf(", ");
-    }
-    
-    printf("\n");
-    printf("Ret passing rule: ");
-    if(proc->retRule == TB_PASSING_INDIRECT)
-        printf("%%%d ", 0);
-    Interp_PrintPassRule(proc->retRule);
-    printf("\n");
-    
-    int counter = 0;
-    const int numSpaces = 5;
-    
-    for_array(i, proc->instrs)
-    {
-        int numChars = printf("%d:", counter++);
-        for(int i = numChars; i < numSpaces; ++i)
-            printf(" ");
-        
-        Interp_PrintInstr(proc, &proc->instrs[i]);
-    }
-    
-    printf("\n");
-}
-
-void Interp_PrintInstr(Interp_Proc* proc, Interp_Instr* instr)
-{
-    if(Interp_OpUsesDst[instr->op])
-    {
-        printf("%%%d = ", instr->dst);
-    }
-    
-    if(instr->op != Op_Branch)  // Will have custom print depending on situation
-        printf("%s ", Interp_OpStrings[instr->op]);
-    
-    switch(instr->op)
-    {
-        case Op_Null:         break;
-        case Op_IntegerConst: printf("%lld", instr->imm.intVal); break;
-        case Op_Float32Const: printf("%f", instr->imm.floatVal); break;
-        case Op_Float64Const: printf("%lf", instr->imm.doubleVal); break;
-        case Op_Region:       break;
-        case Op_Call:
-        {
-            printf("%%%d (", instr->call.target);
-            
-            uint32 start = instr->call.argStart;
-            uint32 end = start + instr->call.argCount;
-            for(int i = start; i < end; ++i)
-            {
-                printf("%%%d", proc->regArrays[i]);
-                
-                if(i < end-1)
-                    printf(", ");
-            }
-            
-            printf(")");
-            
-            break;
-        }
-        case Op_SysCall:     break;
-        case Op_Store:
-        {
-            printf("%%%d ", instr->store.addr);
-            printf("(val: %%%d, align: %I64u)", instr->store.val, instr->store.align);
-            break;
-        }
-        case Op_MemCpy:
-        {
-            printf("(dst: %%%d, src: %%%d, count: %%%d, align: %lld)", instr->memcpy.dst, instr->memcpy.src, instr->memcpy.count, instr->memcpy.align);
-            break;
-        }
-        case Op_MemSet:
-        {
-            break;
-        }
-        case Op_AtomicTestAndSet:  break;
-        case Op_AtomicClear:       break;
-        case Op_AtomicLoad:        break;
-        case Op_AtomicExchange:    break;
-        case Op_AtomicAdd:         break;
-        case Op_AtomicSub:         break;
-        case Op_AtomicAnd:         break;
-        case Op_AtomicXor:         break;
-        case Op_AtomicOr:          break;
-        case Op_AtomicCompareExchange: break;
-        case Op_DebugBreak: break;
-        case Op_Branch:
-        {
-            if(instr->branch.count == 0)
-            {
-                printf("Goto @%d", instr->branch.defaultCase);
-            }
-            else
-            {
-                printf("Branch %%%d (", instr->branch.value);
-                auto start = instr->branch.keyStart;
-                auto end = start + instr->branch.count;
-                for(int i = start; i < end; ++i)
-                {
-                    printf("%lld", proc->constArrays[i]);
-                    
-                    if(i < end - 1)
-                        printf(" ");
-                }
-                
-                printf(") -> (");
-                start = instr->branch.caseStart;
-                end = start + instr->branch.count;
-                for(int i = start; i < end; ++i)
-                {
-                    printf("@%d", proc->instrArrays[i]);
-                    
-                    if(i < end - 1)
-                        printf(", ");
-                }
-                
-                printf("), default: @%d", instr->branch.defaultCase);
-            }
-            
-            break;
-        }
-        case Op_Ret:
-        {
-            if(!(instr->bitfield & InstrBF_RetVoid))
-                Interp_PrintUnary(instr);
-            break;
-        }
-        case Op_Load:
-        {
-            printf("%%%d, %llu", instr->load.addr, instr->load.align);
-            break;
-        }
-        case Op_Local:
-        {
-            printf("(idx: %d, size: %d, align: %d)", instr->dst, instr->local.size, instr->local.align);
-            break;
-        }
-        case Op_GetSymbolAddress:
-        {
-            auto symbol = instr->symAddress.symbol;
-            if(!symbol)
-                printf("NULL");
-            else
-            {
-                printf("%s",  instr->symAddress.symbol->decl->name->string);
-            }
-            break;
-        }
-        case Op_MemberAccess:
-        {
-            printf("MemberAccess ");
-            break;
-        }
-        case Op_ArrayAccess:
-        {
-            printf("ArrayAccess ");
-            break;
-        }
-        case Op_Truncate: Interp_PrintUnary(instr); break;
-        case Op_FloatExt: Interp_PrintUnary(instr); break;
-        case Op_SignExt: Interp_PrintUnary(instr); break;
-        case Op_ZeroExt: Interp_PrintUnary(instr); break;
-        case Op_Int2Ptr: Interp_PrintUnary(instr); break;
-        case Op_Uint2Float: Interp_PrintUnary(instr); break;
-        case Op_Float2Uint: Interp_PrintUnary(instr); break;
-        case Op_Int2Float: Interp_PrintUnary(instr); break;
-        case Op_Float2Int: Interp_PrintUnary(instr); break;
-        case Op_Bitcast: Interp_PrintUnary(instr); break;
-        case Op_Select: Interp_PrintBin(instr); break;
-        case Op_Not: Interp_PrintUnary(instr); break;
-        case Op_Negate: Interp_PrintUnary(instr); break;
-        case Op_And: Interp_PrintBin(instr); break;
-        case Op_Or: Interp_PrintBin(instr); break;
-        case Op_Xor: Interp_PrintBin(instr); break;
-        case Op_Add: Interp_PrintBin(instr); break;
-        case Op_Sub: Interp_PrintBin(instr); break;
-        case Op_Mul: Interp_PrintBin(instr); break;
-        case Op_ShL: Interp_PrintBin(instr); break;
-        case Op_ShR: Interp_PrintBin(instr); break;
-        case Op_Sar: Interp_PrintBin(instr); break;
-        case Op_Rol: Interp_PrintBin(instr); break;
-        case Op_Ror: Interp_PrintBin(instr); break;
-        case Op_UDiv: Interp_PrintBin(instr); break;
-        case Op_SDiv: Interp_PrintBin(instr); break;
-        case Op_UMod: Interp_PrintBin(instr); break;
-        case Op_SMod: Interp_PrintBin(instr); break;
-        case Op_FAdd: Interp_PrintBin(instr); break;
-        case Op_FSub: Interp_PrintBin(instr); break;
-        case Op_FMul: Interp_PrintBin(instr); break;
-        case Op_FDiv: Interp_PrintBin(instr); break;
-        case Op_CmpEq: Interp_PrintBin(instr); break;
-        case Op_CmpNe: Interp_PrintBin(instr); break;
-        case Op_CmpULT: Interp_PrintBin(instr); break;
-        case Op_CmpULE: Interp_PrintBin(instr); break;
-        case Op_CmpSLT: Interp_PrintBin(instr); break;
-        case Op_CmpSLE: Interp_PrintBin(instr); break;
-        case Op_CmpFLT: Interp_PrintBin(instr); break;
-        case Op_CmpFLE: Interp_PrintBin(instr); break;
-        default: printf("Unknown operation");
-    }
-    
-    printf("\n");
-}
-
-void Interp_PrintBin(Interp_Instr* instr)
-{
-    printf("%%%d, %%%d", instr->bin.src1, instr->bin.src2);
-}
-
-void Interp_PrintUnary(Interp_Instr* instr)
-{
-    printf("%%%d", instr->unary.src);
 }
 
 void Interp_ExecProc(Interp_Proc* proc)

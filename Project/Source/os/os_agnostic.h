@@ -22,4 +22,4 @@ void SetErrorColor();
 void ResetColor();
 
 // Linker
-void LaunchPlatformSpecificLinker();
+int RunPlatformSpecificLinker(char* outputPath, char** objFiles, int objFileCount);

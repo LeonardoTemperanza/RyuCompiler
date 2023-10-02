@@ -5,6 +5,17 @@
 #include "tilde_backend/Cuik/common/arena.h"
 #include "tb.h"
 
+struct Tc_Region
+{
+    TB_Node* region = 0;
+    TB_Node* phiValue1 = 0;
+    TB_Node* phiValue2 = 0;
+    RegIdx phiReg = RegIdx_Unused;
+};
+
+// TODO: @performance "bbs" should probably be a hashtable
+// or something similar, or maybe it should be an interpreter thing
+
 struct Tc_Context
 {
     TB_Module* module = 0;
@@ -14,9 +25,6 @@ struct Tc_Context
     TB_Function* mainProc = 0;
     bool emitAsm = false;
     
-    // Need address if false
-    bool needValue = true;
-    
     // Stuff for generation from bytecode
     Arena* regArena = 0;
     Arena* symArena = 0;
@@ -24,19 +32,30 @@ struct Tc_Context
     Array<TB_Node*> regs;
     Array<bool> isLValue;
     Array<Interp_Symbol*> syms;
-    Array<TB_Node*> bbs;  // Basic Blocks
+    Array<Tc_Region> bbs;  // Basic Blocks
     TB_PassingRule retPassingRule;
     Array<TB_PassingRule> argPassingRules;
+    
+    InstrIdx lastRegion = InstrIdx_Unused;
+    
+    // For logical operators (and pretty much nothing else)
+    // TODO: Can this be simplified?? I'd say probably, don't
+    // know how though, yet
+    int toMergeCount = 0;
+    RegIdx toMergeIdx = RegIdx_Unused;
+    TB_Node* mergeLhs = 0;
+    TB_Node* mergeRhs = 0;
 };
 
 Tc_Context Tc_InitCtx(TB_Module* module, bool emitAsm);
 void Tc_ResetCtx(Tc_Context* ctx);
 
-void Tc_TestCode(Ast_FileScope* file, Interp* interp);
+void Tc_CodegenAndLink(Ast_FileScope* file, Interp* interp, Array<char*> objFiles);
 
 // From bytecode
 TB_DataType Tc_ToTBType(Interp_Type type);
 void Tc_ExpandRegs(Tc_Context* ctx, int idx);
+void Tc_GenSymbol(Tc_Context* ctx, Interp_Symbol* symbol);
 void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc);
 void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc);
 

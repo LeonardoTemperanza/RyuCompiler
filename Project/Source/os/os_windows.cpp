@@ -114,7 +114,7 @@ void ResetColor()
     SetConsoleTextAttribute(win32ConsoleHandle, win32SavedScreenBufferInfo.wAttributes);
 }
 
-void LaunchPlatformSpecificLinker()
+int RunPlatformSpecificLinker(char* outputPath, char** objFiles, int objFileCount)
 {
     assert(win32Initted);
     
@@ -124,7 +124,7 @@ void LaunchPlatformSpecificLinker()
     if(findRes.windows_sdk_version == 0)
     {
         fprintf(stderr, "Linking failed: could not find Windows SDK\n");
-        return;
+        return 1;
     }
     
     // Launch subprocess with link.exe
@@ -132,24 +132,29 @@ void LaunchPlatformSpecificLinker()
     if(!findRes.vs_exe_path)
     {
         fprintf(stderr, "Linking failed: could not find VisualStudio executable path\n");
-        return;
+        return 1;
     }
     
     if(!findRes.vs_library_path)
     {
         fprintf(stderr, "Linking failed: could not find VisualStudio library path\n");
-        return;
+        return 1;
     }
     
     constexpr int cmdMaxLength = 2048;
     wchar_t cmdStr[cmdMaxLength];
+    cmdStr[cmdMaxLength-1] = 0;
     const wchar_t* linkerExeName = L"link.exe";
-    // TODO: This should actually change based on arguments and whatever
-    _snwprintf(cmdStr, cmdMaxLength,
-               L"\"%ls\\%ls\" /nologo /machine:amd64 /subsystem:console /debug:none /out:.\\output.exe /incremental:no /libpath:\"%ls\" /libpath:\"%ls\" kernel32.lib ucrt.lib msvcrt.lib vcruntime.lib ./output.o",
-               findRes.vs_exe_path, linkerExeName, findRes.windows_sdk_um_library_path, findRes.windows_sdk_ucrt_library_path);
     
-    // Spawn linker
+    int numChars = _snwprintf(cmdStr, cmdMaxLength,
+                              L"\"%ls\\%ls\" /nologo /machine:amd64 /subsystem:console /debug:none /out:%hs /incremental:no /libpath:\"%ls\" /libpath:\"%ls\" kernel32.lib ucrt.lib msvcrt.lib vcruntime.lib ",
+                              findRes.vs_exe_path, linkerExeName, outputPath, findRes.windows_sdk_um_library_path, findRes.windows_sdk_ucrt_library_path);
+    
+    // Add object file paths to the command
+    for(int i = 0; i < objFileCount; ++i)
+        numChars += _snwprintf(&cmdStr[numChars], cmdMaxLength - numChars, L"%hs ", objFiles[i]);
+    
+    // Launch linker process
     STARTUPINFOW startupInfo;
     memset(&startupInfo, 0, sizeof(startupInfo));
     startupInfo.cb = sizeof(startupInfo);
@@ -158,11 +163,15 @@ void LaunchPlatformSpecificLinker()
     if(!CreateProcessW(0, cmdStr, 0, 0, false, 0, 0, 0, &startupInfo, &processInfo))
     {
         printf("Error: Could not create process for MSVC linker\n");
-        return;
+        return 1;
     }
     
-    // Wait for the end of the process (could time the linker here, too)
+    // Wait for the end of the process
     WaitForSingleObject(processInfo.hProcess, INFINITE);
+    
+    // TODO: Get return value of the process
+    
     CloseHandle(processInfo.hProcess);
     CloseHandle(processInfo.hThread);
+    return 0;
 }

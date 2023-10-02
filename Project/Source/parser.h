@@ -17,19 +17,21 @@ struct Parser
 };
 
 Ast_FileScope* ParseFile(Parser* p);
-Ast_ProcDef* ParseProcDef(Parser* p);
-Ast_StructDef* ParseStructDef(Parser* p);
-Ast_Node* ParseDeclOrExpr(Parser* p, bool forceInit = false, bool ignoreInit = false);
-Ast_VarDecl* ParseVarDecl(Parser* p, bool forceInit = false, bool ignoreInit = false);
+Ast_ProcDef* ParseProcDef(Parser* p, Ast_DeclSpec specs);
+Ast_StructDef* ParseStructDef(Parser* p, Ast_DeclSpec specs);
+Ast_Node* ParseDeclOrExpr(Parser* p, Ast_DeclSpec specs, bool forceInit = false, bool ignoreInit = false);
+Ast_VarDecl* ParseVarDecl(Parser* p, Ast_DeclSpec specs, bool forceInit = false, bool ignoreInit = false);
 Ast_Stmt* ParseStatement(Parser* p);
 Ast_If* ParseIf(Parser* p);
 Ast_For* ParseFor(Parser* p);
 Ast_While* ParseWhile(Parser* p);
 Ast_DoWhile* ParseDoWhile(Parser* p);
+Ast_Switch* ParseSwitch(Parser* p);
 Ast_Defer* ParseDefer(Parser* p);
 Ast_Return* ParseReturn(Parser* p);
 Ast_Break* ParseBreak(Parser* p);
 Ast_Continue* ParseContinue(Parser* p);
+Ast_Fallthrough* ParseFallthrough(Parser* p);
 Ast_Block* ParseBlock(Parser* p);
 Ast_Block* ParseOneOrMoreStmtBlock(Parser* p);  // Used for blocks in e.g. if stmts
 
@@ -37,9 +39,11 @@ Ast_Expr* ParseExpression(Parser* p, int prec = INT_MAX, bool ignoreEqual = fals
 Ast_Expr* ParsePostfixExpression(Parser* p);
 Ast_Expr* ParsePrimaryExpression(Parser* p);
 TypeInfo* ParseType(Parser* p, Token** outIdent);
-// Do i even need these to be values and not pointers anymore?
-Ast_DeclaratorProc ParseDeclProc(Parser* p, Token** outIdent, bool forceArgNames = true);
-Ast_DeclaratorStruct ParseDeclStruct(Parser* p, Token** outIdent);
+// Do I even need these to be values and not pointers anymore?
+Ast_ProcType ParseDeclProc(Parser* p, Token** outIdent, bool forceArgNames = true);
+Ast_StructType ParseDeclStruct(Parser* p, Token** outIdent);
+Ast_DeclSpec ParseDeclSpecs(Parser* p);
+void CheckDeclSpecs(Parser* p, Ast_DeclSpec specs, Ast_DeclSpec allowedSpecs);
 
 // Inserts the string and the associated atom address to patch later
 // in the parser array (internArray)
@@ -47,11 +51,12 @@ void DeferStringInterning(Parser* p, String string, Atom** atom);
 
 // Operators
 
-// TODO: @temporary Put other declaration keywords here
+// NOTE: Declaration keywords need to be inserted here
 inline bool IsTokStartOfDecl(TokenType tokType)
 {
-    return tokType == '^' || tokType == '[' || tokType == Tok_Struct || tokType == Tok_Proc;
-};
+    return tokType == '^' || tokType == '[' || tokType == Tok_Struct || tokType == Tok_Proc
+        || tokType == Tok_Extern || tokType == Tok_Var;
+}
 
 int GetOperatorPrec(TokenType tokType);
 bool IsOpPrefix(TokenType tokType);

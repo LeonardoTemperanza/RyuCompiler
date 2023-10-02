@@ -1,8 +1,13 @@
 
 #include "base.h"
 #include "interpreter.h"
+#include "cmdline_args.h"
 
 #include "tilde_codegen.h"
+
+#ifndef UnityBuild
+extern CmdLineArgs cmdLineArgs;
+#endif
 
 Tc_Context Tc_InitCtx(TB_Module* module, bool emitAsm)
 {
@@ -12,8 +17,11 @@ Tc_Context Tc_InitCtx(TB_Module* module, bool emitAsm)
     return result;
 }
 
-void Tc_TestCode(Ast_FileScope* file, Interp* interp)
+void Tc_CodegenAndLink(Ast_FileScope* file, Interp* interp, Array<char*> objFiles)
 {
+    ScratchArena scratch;
+    objFiles = objFiles.CopyToArena(scratch);
+    
     // See TB_FeatureSet, this allows us to tell the code generator
     // what extensions are active in the platform, an example is enabling
     // AVX or BF16
@@ -24,9 +32,8 @@ void Tc_TestCode(Ast_FileScope* file, Interp* interp)
     TB_Module* module = tb_module_create(arch, sys, &featureSet, false);
     
     TB_ExecutableType exeType = TB_EXECUTABLE_PE;
-    const bool useTbLinker = false;
     
-    Tc_Context ctx = Tc_InitCtx(module, false);
+    Tc_Context ctx = Tc_InitCtx(module, cmdLineArgs.emitAsm);
     
     Arena regArena = Arena_VirtualMemInit(MB(512), MB(2));
     Arena symArena = Arena_VirtualMemInit(MB(512), MB(2));
@@ -35,32 +42,52 @@ void Tc_TestCode(Ast_FileScope* file, Interp* interp)
     ctx.symArena = &symArena;
     ctx.flagArena = &flagArena;
     
-    for_array(i, interp->procs)
+    // Generate symbols
+    for_array(i, interp->symbols)
     {
-        auto proc = &interp->procs[i];
-        Tc_GenProc(&ctx, proc);
+        Tc_GenSymbol(&ctx, &interp->symbols[i]);
     }
     
-    int numFuncs = tb_module_get_function_count(module);
-    printf("Num funcs: %d\n", numFuncs);
+    // Generate implementations
+    for_array(i, interp->procs)
+    {
+        Tc_GenProc(&ctx, &interp->procs[i]);
+    }
     
     if(!ctx.mainProc)
     {
-        printf("No main procedure was found.\n");
+        SetErrorColor();
+        fprintf(stderr, "Error");
+        ResetColor();
+        fprintf(stderr, ": No main procedure was found.\n");
         return;
     }
     
     // Linking
-    if(useTbLinker)
+    if(cmdLineArgs.useTildeLinker)  // Tilde backend linker
     {
-        // TB Linker is still extremely early in development,
-        // does not seem to work at this moment. (Function calls
-        // seem to break executables)
-        
         TB_Linker* linker = tb_linker_create(exeType, arch);
         defer(tb_linker_destroy(linker));
         
         tb_linker_append_module(linker, ctx.module);
+        
+        for_array(i, objFiles)
+        {
+            // Load object file into memory and feed it to the linker
+            FILE* objContent = fopen(objFiles[i], "rb");
+            if(!objContent)
+            {
+                SetErrorColor();
+                fprintf(stderr, "Error");
+                ResetColor();
+                fprintf(stderr, ": Failed to open object file '%s', will be ignored.\n", objFiles[i]);
+            }
+            
+            TB_Slice name = { strlen(objFiles[i]), (uint8*)objFiles[i] };
+            TB_Slice content = { GetFileSize(objContent), (uint8*)objContent };
+            tb_linker_append_object(linker, name, content);
+        }
+        
         // Append user defined object files to the module
         
         // C run-time library
@@ -71,30 +98,73 @@ void Tc_TestCode(Ast_FileScope* file, Interp* interp)
         TB_ExportBuffer buffer = tb_linker_export(linker);
         defer(tb_export_buffer_free(buffer));
         
-        if(!tb_export_buffer_to_file(buffer, "output.exe"))
+        if(!tb_export_buffer_to_file(buffer, cmdLineArgs.outputFile))
         {
-            printf("Tilde Backend: Failed to export the file!\n");
+            SetErrorColor();
+            fprintf(stderr, "Error");
+            ResetColor();
+            fprintf(stderr, ": Failed to export executable file.\n");
             return;
         }
-        
-        printf("Tilde Backend: Successfully created executable file!\n");
     }
-    else
+    else  // Platform specific linker
     {
         // Export object file
         TB_ExportBuffer buffer = tb_module_object_export(module, debugFmt);
         defer(tb_export_buffer_free(buffer));
         if(!tb_export_buffer_to_file(buffer, "output.o"))
         {
-            printf("Tilde Backend: Failed to export the file!\n");
+            SetErrorColor();
+            fprintf(stderr, "Error");
+            ResetColor();
+            fprintf(stderr, ": Failed to export object file.\n");
             return;
         }
         
-        printf("Tilde Backend: Successfully created object file!\n");
+        // Add newly created object file
+        objFiles.Append(scratch, "output.o");
         
         // Pass object file to linker
-        LaunchPlatformSpecificLinker();
+        RunPlatformSpecificLinker(cmdLineArgs.outputFile, objFiles.ptr, objFiles.length);
     }
+}
+
+void Tc_GenSymbol(Tc_Context* ctx, Interp_Symbol* symbol)
+{
+    TB_Symbol* res = 0;
+    switch(symbol->type)
+    {
+        case Interp_ProcSym:
+        {
+            auto proc = (Ast_ProcDef*)symbol->decl;
+            
+            TB_Function* tbProc = tb_function_create(ctx->module, -1, proc->symbol->name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
+            
+            res = (TB_Symbol*)tbProc;
+            break;
+        }
+        case Interp_ExternSym:
+        {
+            auto decl = (Ast_Declaration*)symbol->decl;
+            TB_External* tbExtern = tb_extern_create(ctx->module, -1, decl->name->string, TB_EXTERNAL_SO_EXPORT);
+            
+            res = (TB_Symbol*)tbExtern;
+            break;
+        }
+        case Interp_GlobalSym:
+        {
+            auto global = (Ast_VarDecl*)symbol->decl;
+            
+            auto debugType = Tc_ConvertToDebugType(ctx->module, global->type);
+            TB_Global* tbGlobal = tb_global_create(ctx->module, -1, global->symbol->name, debugType, TB_LINKAGE_PUBLIC);
+            tb_global_set_storage(ctx->module, tb_module_get_data(ctx->module), tbGlobal, global->type->size, global->type->align, 1);
+            
+            res = (TB_Symbol*)tbGlobal;
+            break;
+        }
+    }
+    
+    symbol->tildeSymbol = res;
 }
 
 void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
@@ -104,22 +174,22 @@ void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
     // Generate procedure itself
     tb_arena_create(&ctx->procArena, MB(1));
     
+    auto curProc = (TB_Function*)proc->symbol->tildeSymbol;
+    
     // Debug type is still needed for debugging, but ABI is already handled
     // in the interpreter instructions.
-    TB_DebugType* procType = Tc_ConvertProcToDebugType(ctx->module, proc->symbol->type);
-    
-    TB_Function* curProc = tb_function_create(ctx->module, -1, proc->symbol->name, TB_LINKAGE_PUBLIC, TB_COMDAT_MATCH_ANY);
-    
-    proc->symbol->tildeProc = curProc;
+    TB_DebugType* procType = Tc_ConvertProcToDebugType(ctx->module, proc->symbol->typeInfo);
     
     // @robustness Just doing this for now because it's easier, should
     // generate the prototype directly from the interp procedure
     size_t paramCount = 0;
     TB_Node** paramNodes = tb_function_set_prototype_from_dbg(curProc, procType, &ctx->procArena, &paramCount);
     
-    Assert(proc->symbol->type->typeId == Typeid_Proc);
-    auto procDecl = (Ast_DeclaratorProc*)proc->symbol->type;
+    Assert(proc->symbol->typeInfo->typeId == Typeid_Proc);
+    auto procDecl = (Ast_ProcType*)proc->symbol->typeInfo;
     int abiArgsCount = (proc->retRule == TB_PASSING_INDIRECT) + procDecl->retTypes.length - 1 + procDecl->args.length;
+    if(procDecl->retTypes.length <= 0)
+        abiArgsCount = procDecl->args.length;
     
     ctx->regs.Resize(ctx->regArena, abiArgsCount);
     for(int i = 0; i < abiArgsCount; ++i)
@@ -130,8 +200,8 @@ void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
     {
         if(proc->argRules[i] == TB_PASSING_DIRECT)
         {
-            Tc_ExpandRegs(ctx, proc->declToAddr[i]);
-            ctx->regs[proc->declToAddr[i]] = paramNodes[i];
+            Tc_ExpandRegs(ctx, i);
+            ctx->regs[i] = paramNodes[i];
         }
     }
     
@@ -143,25 +213,47 @@ void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
     // Init arrays
     
     // Get all basic blocks
-    ctx->bbs.ptr = Arena_AllocArray(scratch, proc->instrs.length, TB_Node*);
+    ctx->bbs.ptr = Arena_AllocArray(scratch, proc->instrs.length, Tc_Region);
     ctx->bbs.length = proc->instrs.length;
     
     for_array(i, proc->instrs)
     {
         if(proc->instrs[i].op == Op_Region)
-            ctx->bbs[i] = tb_inst_region(curProc);
+        {
+            ctx->bbs[i].region = tb_inst_region(curProc);
+            ctx->bbs[i].phiValue1 = 0;
+            ctx->bbs[i].phiValue2 = 0;
+            ctx->bbs[i].phiReg = RegIdx_Unused;
+        }
         else
-            ctx->bbs[i] = 0;
+        {
+            ctx->bbs[i] = { 0, 0, 0, RegIdx_Unused };
+        }
     }
     
     // Generate its instructions
     Tc_GenInstrs(ctx, curProc, proc);
     
     // Perform optimization and codegen passes
-    TB_Passes* passes = tb_pass_enter(curProc, &ctx->procArena);
-    tb_pass_print(passes);
-    TB_FunctionOutput* output = tb_pass_codegen(passes, ctx->emitAsm);
-    tb_pass_exit(passes);
+    
+    TB_Passes* p = tb_pass_enter(curProc, &ctx->procArena);
+    if(cmdLineArgs.emitIr)
+    {
+        tb_pass_print(p);
+        fflush(stdout);
+    }
+    
+    if(cmdLineArgs.optLevel >= 1)
+    {
+        // @bug Peephole optimizations break tilde at the moment.
+        //tb_pass_optimize(p);
+        
+        tb_pass_sroa(p);
+        tb_pass_mem2reg(p);
+    }
+    
+    TB_FunctionOutput* output = tb_pass_codegen(p, ctx->emitAsm);
+    tb_pass_exit(p);
     
     if(ctx->emitAsm)
     {
@@ -205,7 +297,7 @@ TB_Node** Tc_GetBBArray(Tc_Context* ctx, Interp_Proc* proc, int arrayStart, int 
 {
     auto nodes = Arena_AllocArray(allocTo, arrayCount, TB_Node*);
     for(int i = 0; i < arrayCount; ++i)
-        nodes[i] = ctx->bbs[proc->instrArrays[arrayStart + i]];
+        nodes[i] = ctx->bbs[proc->instrArrays[arrayStart + i]].region;
     
     return nodes;
 }
@@ -234,22 +326,20 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
         
         switch(instr.op)
         {
-            case Op_Null: break;
+            case Op_Null: Assert(false && "Unable to convert null operations to tb op"); break;
             case Op_IntegerConst:
             {
-                dst = tb_inst_sint(tildeProc,
-                                   Tc_ToTBType(instr.imm.type),
-                                   instr.imm.intVal);
+                dst = tb_inst_sint(tildeProc, Tc_ToTBType(instr.imm.type), instr.imm.intVal);
                 break;
             }
             case Op_Float32Const: dst = tb_inst_float32(tildeProc, instr.imm.floatVal); break;
             case Op_Float64Const: dst = tb_inst_float64(tildeProc, instr.imm.doubleVal); break;
-            case Op_Region:       tb_inst_set_control(tildeProc, bbs[i]); break;
+            case Op_Region:       tb_inst_set_control(tildeProc, bbs[i].region); ctx->lastRegion = i; break;
             case Op_Call:
             {
                 auto symbol = syms[instr.call.target];
                 
-                auto debugProto = Tc_ConvertProcToDebugType(ctx->module, symbol->type);
+                auto debugProto = Tc_ConvertProcToDebugType(ctx->module, symbol->typeInfo);
                 auto proto = tb_prototype_from_dbg(ctx->module, debugProto);
                 
                 auto nodes = Tc_GetNodeArray(ctx, proc, instr.call.argStart, instr.call.argCount, scratch);
@@ -263,8 +353,14 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
                 {
                     dst = outputs.single;
                 }
-                else  // 0 or >= 2
+                else if(outputs.count == 0)
+                {
+                    dst = 0;
+                }
+                else  // >= 2
+                {
                     Assert(false);
+                }
                 
                 break;
             }
@@ -276,14 +372,22 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
                               instr.store.align, false);
                 break;
             }
+            
             case Op_MemCpy:
             {
                 tb_inst_memcpy(tildeProc, regs[instr.memcpy.dst],
                                regs[instr.memcpy.src], regs[instr.memcpy.count],
-                               instr.memcpy.align, false);
+                               instr.memcpy.align);
                 break;
             }
-            case Op_MemSet:       break;
+            case Op_MemSet:
+            {
+                tb_inst_memset(tildeProc, regs[instr.memset.dst],
+                               regs[instr.memset.val], regs[instr.memset.count],
+                               instr.memset.align);
+                
+                break;
+            }
             case Op_AtomicTestAndSet: break;
             case Op_AtomicClear: break;
             case Op_AtomicLoad: break;
@@ -300,13 +404,13 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
                 // I think this could just be general and it would be fine.
                 
                 if(instr.branch.count == 0)
-                    tb_inst_goto(tildeProc, bbs[instr.branch.defaultCase]);
+                    tb_inst_goto(tildeProc, bbs[instr.branch.defaultCase].region);
                 else if(instr.branch.count == 1)
                 {
                     auto value = regs[instr.branch.value];
                     auto conds = proc->constArrays[instr.branch.keyStart];
-                    auto caseBB = bbs[proc->instrArrays[instr.branch.caseStart]];
-                    tb_inst_if(tildeProc, value, caseBB, bbs[instr.branch.defaultCase]);
+                    auto caseBB = bbs[proc->instrArrays[instr.branch.caseStart]].region;
+                    tb_inst_if(tildeProc, value, caseBB, bbs[instr.branch.defaultCase].region);
                 }
                 else
                 {
@@ -330,6 +434,7 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
                 else
                     tb_inst_ret(tildeProc, 0, 0);
                 
+                break;
             }
             case Op_Load:
             {
@@ -343,19 +448,20 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
             case Op_Local: dst = tb_inst_local(tildeProc, instr.local.size, instr.local.align); break;
             case Op_GetSymbolAddress:
             {
-                auto tildeSymbol = (TB_Symbol*)instr.symAddress.symbol->tildeProc;
+                auto tildeSymbol = (TB_Symbol*)instr.symAddress.symbol->tildeSymbol;
                 dst = tb_inst_get_symbol_address(tildeProc, tildeSymbol);
                 ctx->syms[instr.dst] = instr.symAddress.symbol;
                 
                 break;
             }
-            case Op_MemberAccess: break;
+            case Op_MemberAccess: dst = tb_inst_member_access(tildeProc, regs[instr.memacc.base], instr.memacc.offset); break;
             case Op_ArrayAccess: break;
             case Op_Truncate: dst = tb_inst_trunc(tildeProc, unarySrc, unaryType); break;
             case Op_FloatExt: dst = tb_inst_fpxt(tildeProc, unarySrc, unaryType); break;
             case Op_SignExt: dst = tb_inst_sxt(tildeProc, unarySrc, unaryType); break;
             case Op_ZeroExt: dst = tb_inst_zxt(tildeProc, unarySrc, unaryType); break;
             case Op_Int2Ptr: dst = tb_inst_int2ptr(tildeProc, unarySrc); break;
+            case Op_Ptr2Int: dst = tb_inst_ptr2int(tildeProc, unarySrc, unaryType); break;
             case Op_Uint2Float: dst = tb_inst_int2float(tildeProc, unarySrc, unaryType, false); break;
             case Op_Float2Uint: dst = tb_inst_float2int(tildeProc, unarySrc, unaryType, false); break;
             case Op_Int2Float: dst = tb_inst_int2float(tildeProc, unarySrc, unaryType, true); break;
@@ -392,6 +498,32 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
             case Op_CmpFLT: dst = tb_inst_cmp_flt(tildeProc, src1, src2); break;
             case Op_CmpFLE: dst = tb_inst_cmp_fle(tildeProc, src1, src2); break;
         }
+        
+        if(instr.bitfield & InstrBF_ViolatesSSA)
+        {
+            Assert(i != proc->instrs.length - 1);
+            
+            // Next instruction has to be branch
+            auto& nextInstr = proc->instrs[i+1];
+            Assert(nextInstr.op == Op_Branch);
+            
+            auto& destination = bbs[nextInstr.branch.defaultCase];
+            Assert(!destination.phiValue1 || !destination.phiValue2);
+            
+            if(!destination.phiValue1)
+                destination.phiValue1 = dst;
+            else
+                destination.phiValue2 = dst;
+            
+            destination.phiReg = instr.dst;
+        }
+        
+        if(instr.bitfield & InstrBF_MergeSSA)
+        {
+            auto& region = bbs[ctx->lastRegion];
+            Assert(region.phiValue1 && region.phiValue2);
+            regs[region.phiReg] = tb_inst_phi2(tildeProc, region.region, region.phiValue1, region.phiValue2);
+        }
     }
 }
 
@@ -404,41 +536,41 @@ TB_DebugType* Tc_ConvertToDebugType(TB_Module* module, TypeInfo* type)
     
     if(IsTypeIntegral(type))
     {
-        bool isSigned = IsTypeSigned(type);
-        int bits = GetTypeSizeBits(type);
+        bool isSigned = type->isSigned;
+        int bits = type->size * 8;
         return tb_debug_get_integer(module, isSigned, bits);
     }
     
-    if(type->typeId == Typeid_Float)  return tb_debug_get_float(module, TB_FLT_32);
-    if(type->typeId == Typeid_Double) return tb_debug_get_float(module, TB_FLT_64);
+    if(type->typeId == Typeid_Float)
+        return tb_debug_get_float(module, type->size == 4 ? TB_FLT_32 : TB_FLT_64);
     
     // Compound types
     
     if(type->typeId == Typeid_Ptr)
     {
-        auto base = Tc_ConvertToDebugType(module, ((Ast_DeclaratorPtr*)type)->baseType);
+        auto base = Tc_ConvertToDebugType(module, ((Ast_PtrType*)type)->baseType);
         return tb_debug_create_ptr(module, base);
     }
     
     if(type->typeId == Typeid_Arr)
     {
         // @temporary All arrays are size 5 for now
-        auto base = Tc_ConvertToDebugType(module, ((Ast_DeclaratorArr*)type)->baseType);
+        auto base = Tc_ConvertToDebugType(module, ((Ast_ArrType*)type)->baseType);
         return tb_debug_create_array(module, base, 5);
     }
     
     TB_DebugType* structType = 0;
-    Ast_DeclaratorStruct* astType = 0;
+    Ast_StructType* astType = 0;
     
     // TODO: Support unions
     if(type->typeId == Typeid_Struct)
     {
-        astType = (Ast_DeclaratorStruct*)type;
+        astType = (Ast_StructType*)type;
         structType = tb_debug_create_struct(module, -1, "");
     }
     else if(type->typeId == Typeid_Ident)
     {
-        auto identType = (Ast_DeclaratorIdent*)type;
+        auto identType = (Ast_IdentType*)type;
         auto structDef = identType->structDef;
         astType = Ast_GetDeclStruct(structDef);
         structType = tb_debug_create_struct(module, -1, structDef->name->string);
@@ -454,7 +586,7 @@ TB_DebugType* Tc_ConvertToDebugType(TB_Module* module, TypeInfo* type)
             types[i] = tb_debug_create_field(module, fillWith, -1, astType->memberNames[i]->string, astType->memberOffsets[i]);
         }
         
-        tb_debug_record_end(structType, GetTypeSize(astType), GetTypeAlign(astType));
+        tb_debug_record_end(structType, astType->size, astType->align);
         return structType;
     }
     
@@ -469,9 +601,11 @@ TB_DebugType* Tc_ConvertProcToDebugType(TB_Module* module, TypeInfo* type)
     Assert(type->typeId == Typeid_Proc);
     ScratchArena scratch;
     
-    auto procDecl = (Ast_DeclaratorProc*)type;
+    auto procDecl = (Ast_ProcType*)type;
     int numArgs = procDecl->args.length + procDecl->retTypes.length - 1;
-    TB_DebugType* procType = tb_debug_create_func(module, TB_CDECL, numArgs, 1, false);
+    if(procDecl->retTypes.length <= 0) numArgs = procDecl->args.length;
+    int numTbRets = (procDecl->retTypes.length > 0);
+    TB_DebugType* procType = tb_debug_create_func(module, TB_CDECL, numArgs, numTbRets, false);
     TB_DebugType** paramTypesToFill = tb_debug_func_params(procType);
     TB_DebugType** returnTypesToFill = tb_debug_func_returns(procType);
     
@@ -488,7 +622,7 @@ TB_DebugType* Tc_ConvertProcToDebugType(TB_Module* module, TypeInfo* type)
     
     for_array(i, procDecl->args)
     {
-        int j = i + procDecl->retTypes.length - 1;
+        int j = max((int64)i, i + procDecl->retTypes.length - 1);
         
         TypeInfo* curType = procDecl->args[i]->type;
         auto debugType = Tc_ConvertToDebugType(module, curType);
@@ -497,8 +631,11 @@ TB_DebugType* Tc_ConvertProcToDebugType(TB_Module* module, TypeInfo* type)
                                                     procDecl->args[i]->name->string, 0);
     }
     
-    auto retDebugType = Tc_ConvertToDebugType(module, procDecl->retTypes.last());
-    returnTypesToFill[0] = retDebugType;
+    if(procDecl->retTypes.length > 0)
+    {
+        auto retDebugType = Tc_ConvertToDebugType(module, procDecl->retTypes.last());
+        returnTypesToFill[0] = retDebugType;
+    }
     
     return procType;
 }

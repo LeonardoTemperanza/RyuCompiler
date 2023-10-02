@@ -1,49 +1,39 @@
 
-struct teststr
+proc putchar(int c)->int c;
+proc puts(^char str)->int numChars;
+proc malloc(uint64 size)->^raw;
+proc free(^raw ptr);
+
+int a = 2;
+
+proc test()
 {
-    int a; int b;
+    ++a;
+    return;
 }
 
-
-proc add(int a, int b, teststr str2)->teststr
+proc test2(int num)
 {
-    teststr str;
-    return str;
-}
-
-proc add_int(int a, int b)->float
-{
-    return a+b + 0.2;
-}
-
-proc add_float()->int
-{
-    return 40;
+    int a = 97;
+    putchar(a + num);
+    
+    return;
 }
 
 proc main()->int
 {
-    //float f = 3.4;
-    //int i = f + 2;
+    ^char str = cast(^char) malloc(5);
+    defer free(str);
     
-    teststr str;
-    teststr str2;
-    //*str;
-    str = str2;
-    //str + 2;
+    *str = 97;
+    *(str+1) = 98;
+    *(str+2) = 99;
+    *(str+3) = 100;
+    *(str+4) = 0;
+    puts(str);
     
-    float f = 4.8d * cast(int) 5.3;
-    int i = f;
+    int prova = *str;
     
-    //teststr input;
-    //teststr str = add(3,4, input);
-    
-    //float f = 3.4 +
-    //return 3.4;
-    
-    return add_int(3.4d, 4.7);
-    
-    //teststr str;
-    //add(2, 3, str);
-    //return 2+6*2+ add_int(2+2,2+3);
+    free(str);
+    return 0;
 }

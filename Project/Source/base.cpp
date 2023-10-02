@@ -30,6 +30,17 @@ char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName)
     return result;
 }
 
+size_t GetFileSize(FILE* file)
+{
+    if(!file) return 0;
+    
+    size_t prev = ftell(file);
+    fseek(file, 0, SEEK_END);
+    size_t res = ftell(file);
+    fseek(file, 0, prev);
+    return res;
+}
+
 // Array utilities
 template<typename t>
 void Array<t>::Append(Arena* a, t element)
@@ -141,6 +152,30 @@ void DynArray<t>::Append(t element)
 }
 
 template<typename t>
+void DynArray<t>::InsertAtIdx(Array<t> elements, int idx)
+{
+    Assert(idx < this->length);
+    this->Resize(this->length + elements.length);
+    
+    int count = this->length - idx - 1;
+    int shiftBy = elements.length;
+    memmove(&this->ptr[idx + shiftBy], &this->ptr[idx], count*sizeof(t));
+    memcpy(&this->ptr[idx], elements.ptr, elements.length);
+}
+
+// Specialized for single element, probably faster
+template<typename t>
+void DynArray<t>::InsertAtIdx(t element, int idx)
+{
+    Assert(idx < this->length && idx >= 0);
+    this->Resize(this->length + 1);
+    
+    int count = this->length - idx - 1;
+    memmove(&this->ptr[idx + 1], &this->ptr[idx], count*sizeof(t));
+    this->ptr[idx] = element;
+}
+
+template<typename t>
 t* DynArray<t>::Reserve()
 {
     this->Resize(this->length + 1);
@@ -149,6 +184,7 @@ t* DynArray<t>::Reserve()
 
 // TODO: the buffer doesn't shrink when reducing
 // the size
+
 template<typename t>
 void DynArray<t>::Resize(uint32 newSize)
 {
@@ -161,6 +197,7 @@ void DynArray<t>::Resize(uint32 newSize)
             this->capacity = this->length * 3 / 2;
         
         this->ptr = (t*)realloc(this->ptr, sizeof(t) * this->capacity);
+        Assert(this->ptr && "realloc failed");
     }
 }
 
@@ -178,7 +215,8 @@ void DynArray<t>::ResizeAndInit(uint32 newSize)
 template<typename t>
 Array<t> DynArray<t>::ConvertToArray()
 {
-    return (Array<t>) { this->ptr, this->length };
+    Array<t> res = { this->ptr, this->length };
+    return res;
 }
 
 template<typename t>
@@ -279,6 +317,17 @@ bool String_FirstCharsMatchEntireString(char* stream, String str)
     for(int i = 0; i < str.length; ++i)
     {
         if(stream[i] == 0 || stream[i] != str[i])
+            return false;
+    }
+    
+    return true;
+}
+
+bool String_FirstCharsMatchEntireString(String stream, char* str)
+{
+    for(int i = 0; str[i] != 0; ++i)
+    {
+        if(i >= stream.length || stream[i] != str[i])
             return false;
     }
     
