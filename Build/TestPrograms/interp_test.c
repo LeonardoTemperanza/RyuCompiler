@@ -17,11 +17,16 @@ proc test2(int num)
     int a = 97;
     putchar(a + num);
     
-    return;
+    if(!a)
+        return;
+    
+    putchar(97);
 }
 
 proc main()->int
 {
+    test2(0);
+    
     ^char str = cast(^char) malloc(5);
     defer free(str);
     

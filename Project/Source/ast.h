@@ -1,8 +1,8 @@
 
-// TODO(Leo): @refactor notes:
+// TODO(Leo): @refactor notes (more like ramblings):
 // Should struct and ident just be the same? I mean, they are indeed exactly
 // the same. It should just be an unnamed struct.
-// But i guess it's because structs are considered declarations....
+// But I guess it's because structs are considered declarations....
 // I think the issue with the code is this:
 // We always know when we're expecting a type, right?
 // So, maybe type lookup should be different, as a procedure.
@@ -78,7 +78,7 @@ enum Ast_DeclSpecEnum
 
 typedef uint8 Ast_DeclSpec;
 
-// Allowed specifier
+// Allowed specifiers
 constexpr auto localVarDeclSpecs  = (Ast_DeclSpec) Decl_Persist;
 constexpr auto globalVarDeclSpecs = (Ast_DeclSpec)(Decl_Extern | Decl_CExtern);
 constexpr auto procDeclSpecs      = (Ast_DeclSpec)(Decl_Extern | Decl_CExtern);

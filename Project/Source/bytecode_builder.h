@@ -44,6 +44,14 @@ struct Interp_Builder
     // at the end)
     Builder_MiddleInsert middleInsert = { 0, { 0, 0 } };
     
+    // Whether to skip next statements in the block or not.
+    // Important for correctness, not just code size
+    bool genJump = false;
+    
+    DynArray<InstrIdx> breaks;
+    DynArray<InstrIdx> continues;
+    DynArray<InstrIdx> fallthroughs;
+    
     // NOTE: Used for getting the passing rules for arguments and return values
     TB_Module* module;
     
@@ -52,6 +60,9 @@ struct Interp_Builder
         declToAddr.FreeAll();
         permanentRegs.FreeAll();
         instrOffsets.FreeAll();
+        breaks.FreeAll();
+        continues.FreeAll();
+        fallthroughs.FreeAll();
     }
 };
 

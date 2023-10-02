@@ -1,4 +1,6 @@
 
+// @refactor @cleanup ABI-related stuff is very messy and should be refactored.
+
 #include "base.h"
 #include "interpreter.h"
 #include "bytecode_builder.h"
@@ -263,12 +265,12 @@ Interp_Val Interp_ConvertNode(Interp_Builder* builder, Ast_Node* node)
         case AstKind_For:           Interp_ConvertFor(builder, (Ast_For*)node); break;
         case AstKind_While:         Interp_ConvertWhile(builder, (Ast_While*)node); break;
         case AstKind_DoWhile:       Interp_ConvertDoWhile(builder, (Ast_DoWhile*)node); break;
-        case AstKind_Switch:        break;
-        case AstKind_Defer:         break;
+        case AstKind_Switch:        Interp_ConvertSwitch(builder, (Ast_Switch*)node); break;
+        case AstKind_Defer:         Interp_ConvertDefer(builder, (Ast_Defer*)node); break;
         case AstKind_Return:        Interp_ConvertReturn(builder, (Ast_Return*)node); break;
-        case AstKind_Break:         break;
-        case AstKind_Continue:      break;
-        case AstKind_Fallthrough:   break;
+        case AstKind_Break:         Interp_ConvertSimpleJump(builder, builder->breaks); break;
+        case AstKind_Continue:      Interp_ConvertSimpleJump(builder, builder->continues); break;
+        case AstKind_Fallthrough:   Interp_ConvertSimpleJump(builder, builder->fallthroughs); break;
         case AstKind_MultiAssign:   break;
         case AstKind_EmptyStmt:     break;
         case AstKind_StmtEnd:       break;
@@ -347,6 +349,10 @@ void Interp_ConvertBlock(Interp_Builder* builder, Ast_Block* block)
 {
     for_array(i, block->stmts)
     {
+        // Ignore statements
+        if(builder->genJump)
+            break;
+        
         Interp_ConvertNode(builder, block->stmts[i]);
         // No register can persist between statements,
         // by definition.
@@ -371,20 +377,28 @@ void Interp_ConvertIf(Interp_Builder* builder, Ast_If* stmt)
     auto ifRegionIdx = Interp_Region(builder);
     
     Interp_ConvertBlock(builder, stmt->thenBlock);
-    auto gotoInstr = Interp_Goto(builder);
+    bool thenBlockRet = builder->genJump;
+    builder->genJump = false;
+    
+    InstrIdx gotoInstr = InstrIdx_Unused;
+    if(!thenBlockRet) gotoInstr = Interp_Goto(builder);
     
     auto elseRegionIdx = Interp_Region(builder);
     
     Interp_PatchIf(builder, ifInstr, value, ifRegionIdx, elseRegionIdx);
-    Interp_PatchGoto(builder, gotoInstr, elseRegionIdx);
+    if(!thenBlockRet) Interp_PatchGoto(builder, gotoInstr, elseRegionIdx);
     
     if(stmt->elseStmt)
     {
         Interp_ConvertNode(builder, stmt->elseStmt);
-        auto elseGotoInstr = Interp_Goto(builder);
+        bool elseBlockRet = builder->genJump;
+        builder->genJump = false;
+        
+        InstrIdx elseGotoInstr = InstrIdx_Unused;
+        if(!elseBlockRet) elseGotoInstr = Interp_Goto(builder);
         auto endRegionIdx = Interp_Region(builder);
-        Interp_PatchGoto(builder, elseGotoInstr, endRegionIdx);
-        Interp_PatchGoto(builder, gotoInstr, endRegionIdx);
+        if(!elseBlockRet) Interp_PatchGoto(builder, elseGotoInstr, endRegionIdx);
+        if(!thenBlockRet) Interp_PatchGoto(builder, gotoInstr, endRegionIdx);
     }
 }
 
@@ -410,13 +424,20 @@ void Interp_ConvertFor(Interp_Builder* builder, Ast_For* stmt)
         body = Interp_Region(builder);
         
         Interp_EndOfExpression(builder);
-        
         Interp_ConvertBlock(builder, stmt->body);
-        Interp_EndOfExpression(builder);
-        if(stmt->update)
-            Interp_ConvertNode(builder, stmt->update);
+        bool blockGenJump = builder->genJump;
+        builder->genJump = false;
         
-        Interp_Goto(builder, header);
+        Interp_EndOfExpression(builder);
+        
+        if(!blockGenJump)
+        {
+            if(stmt->update)
+                Interp_ConvertNode(builder, stmt->update);
+            
+            Interp_Goto(builder, header);
+        }
+        
         auto exit = Interp_Region(builder);
         
         Interp_PatchIf(builder, headerBranch, condReg, body, exit);
@@ -453,9 +474,12 @@ void Interp_ConvertWhile(Interp_Builder* builder, Ast_While* stmt)
     Interp_EndOfExpression(builder);
     
     Interp_ConvertBlock(builder, stmt->doBlock);
+    bool blockGenJump = builder->genJump;
+    builder->genJump = false;
+    
     Interp_EndOfExpression(builder);
     
-    Interp_Goto(builder, header);
+    if(!blockGenJump) Interp_Goto(builder, header);
     auto exit = Interp_Region(builder);
     
     Interp_PatchIf(builder, headerBranch, condReg, body, exit);
@@ -469,18 +493,34 @@ void Interp_ConvertDoWhile(Interp_Builder* builder, Ast_DoWhile* stmt)
     
     Interp_EndOfExpression(builder);
     Interp_ConvertNode(builder, stmt->doStmt);
+    bool blockGenJump = builder->genJump;
+    builder->genJump = false;
+    
     Interp_EndOfExpression(builder);
     
     auto condReg = Interp_ConvertNodeRVal(builder, stmt->condition);
     Assert(condReg != RegIdx_Unused);
     
-    auto headerBranch = Interp_If(builder, condReg);
+    InstrIdx headerBranch = InstrIdx_Unused;
+    if(!blockGenJump) headerBranch = Interp_If(builder, condReg);
     auto exit = Interp_Region(builder);
-    Interp_PatchIf(builder, headerBranch, condReg, body, exit);
+    if(!blockGenJump) Interp_PatchIf(builder, headerBranch, condReg, body, exit);
+}
+
+void Interp_ConvertSwitch(Interp_Builder* builder, Ast_Switch* stmt)
+{
+    
+}
+
+void Interp_ConvertDefer(Interp_Builder* builder, Ast_Defer* stmt)
+{
+    
 }
 
 void Interp_ConvertReturn(Interp_Builder* builder, Ast_Return* stmt)
 {
+    builder->genJump = true;
+    
     auto proc = builder->proc;
     if(stmt->rets.length <= 0)
         Interp_ReturnVoid(builder);
@@ -507,6 +547,11 @@ void Interp_ConvertReturn(Interp_Builder* builder, Ast_Return* stmt)
         auto toRet = Interp_BuildPreRet(builder, 0, regs[lastRet], stmt->rets[lastRet]->type, proc->retRule);
         Interp_Return(builder, toRet);
     }
+}
+
+void Interp_ConvertSimpleJump(Interp_Builder* builder, DynArray<InstrIdx> toPatch)
+{
+    Assert(false && "Not implemented");
 }
 
 Interp_Val Interp_ConvertIdent(Interp_Builder* builder, Ast_IdentExpr* expr)
@@ -938,9 +983,6 @@ Interp_Val Interp_ConvertTernaryExpr(Interp_Builder* builder, Ast_TernaryExpr* e
 Interp_Val Interp_ConvertSubscript(Interp_Builder* builder, Ast_Subscript* expr)
 {
     Interp_Val res;
-    
-    
-    
     return res;
 }
 
@@ -1147,6 +1189,12 @@ Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc)
     
     // Block
     Interp_ConvertBlock(builder, &astProc->block);
+    
+    // If return instruction was not generated,
+    // (which is the only jump that a procedure can have)
+    // a fictitious one is generated for correctness
+    if(!builder->genJump) Interp_ReturnVoid(builder);
+    builder->genJump = true;
     
     // Fill in these helper arrays for codegen
     if(proc->retRule == TB_PASSING_INDIRECT)
