@@ -43,6 +43,7 @@ struct Ast_Fallthrough;
 // Declarations
 struct Ast_Declaration;
 struct Ast_VarDecl;
+struct Ast_ProcDecl;
 struct Ast_ProcDef;
 struct Ast_StructDef;
 
@@ -105,6 +106,7 @@ enum Ast_NodeKind : uint8
     // Declarations
     AstKind_DeclBegin,
     AstKind_StructDef,
+    AstKind_ProcDecl,
     AstKind_ProcDef,
     AstKind_VarDecl,
     AstKind_EnumDecl,
@@ -279,10 +281,13 @@ struct Ast_Block : public Ast_Stmt
 {
     Ast_Block() { kind = AstKind_Block; };
     
-    DynArray<Ast_Declaration*> decls;
+    // NOTE(Leo): These are sorted by position in the file,
+    // their 'where' pointer can be used to compare positions
+    // and detect "use before decl" scenarios.
+    Array<Ast_Declaration*> decls;
     
     Ast_Block* enclosing = 0;
-    Array<Ast_Node*> stmts = { 0, 0 };
+    Slice<Ast_Node*> stmts = { 0, 0 };
 };
 
 struct Ast_FileScope
@@ -303,7 +308,7 @@ struct Ast_If : public Ast_Stmt
     Ast_If() { kind = AstKind_If; };
     
     Ast_Node* condition;  // Declaration or expression
-    Ast_Block* thenBlock;  // This needs to be a block because the condition might possibly have a declaration
+    Ast_Block* thenBlock;  // This needs to be a block because the condition can have a declaration
     Ast_Stmt* elseStmt = 0;
 };
 
@@ -338,8 +343,9 @@ struct Ast_Switch : public Ast_Stmt
     Ast_Switch() { kind = AstKind_Switch; };
     
     Ast_Expr* switchExpr;
-    Array<Ast_Expr*> cases = { 0, 0 };
-    Array<Ast_Stmt*> stmts = { 0, 0 };
+    Slice<Ast_Expr*> cases = { 0, 0 };
+    Slice<Ast_Stmt*> stmts = { 0, 0 };
+    int64 defaultIdx = -1;  // -1 if no default
 };
 
 struct Ast_Defer : public Ast_Stmt
@@ -354,7 +360,7 @@ struct Ast_Return : public Ast_Stmt
     Ast_Return() { kind = AstKind_Return; };
     
     //Ast_Expr* expr = 0;
-    Array<Ast_Expr*> rets = { 0, 0 };
+    Slice<Ast_Expr*> rets = { 0, 0 };
 };
 
 struct Ast_Break : public Ast_Stmt
@@ -376,8 +382,8 @@ struct Ast_MultiAssign : public Ast_Stmt
 {
     Ast_MultiAssign() { kind = AstKind_MultiAssign; };
     
-    Array<Ast_Node*> lefts;  // Each can be a VarDecl or an Expr
-    Array<Ast_Expr*> rights;
+    Slice<Ast_Node*> lefts;  // Each can be a VarDecl or an Expr
+    Slice<Ast_Expr*> rights;
 };
 
 // Syntax-Trees related to types
@@ -403,7 +409,8 @@ struct Ast_ArrType : public TypeInfo
     Ast_Expr* sizeExpr;
     
     // TODO: This will also be replaced with a constValue
-    // Filled in later in the size stage
+    
+    // Filled in later in the sizing stage
     uint64 sizeValue = 0;
 };
 
@@ -413,8 +420,8 @@ struct Ast_ProcType : public TypeInfo
     
     bool isOperator;
     
-    Array<Ast_Declaration*> args = { 0, 0 };
-    Array<TypeInfo*> retTypes = { 0, 0 };
+    Slice<Ast_Declaration*> args = { 0, 0 };
+    Slice<TypeInfo*> retTypes = { 0, 0 };
     
     // Codegen
     TB_FunctionPrototype* tildeProto = 0;
@@ -426,7 +433,7 @@ struct Ast_IdentType : public TypeInfo
     
     Atom* ident;
     
-    Array<Ast_Expr*> polyParams = { 0, 0 };
+    Slice<Ast_Expr*> polyParams = { 0, 0 };
     
     // Filled in by the typechecker
     Ast_StructDef* structDef = 0;
@@ -436,14 +443,14 @@ struct Ast_StructType : public TypeInfo
 {
     Ast_StructType() { typeId = Typeid_Struct; };
     
-    Array<TypeInfo*> memberTypes = { 0, 0 };
-    Array<Atom*>     memberNames = { 0, 0 };
+    Slice<TypeInfo*> memberTypes = { 0, 0 };
+    Slice<Atom*>     memberNames = { 0, 0 };
     
     // For errors?
-    Array<Token*> memberNameTokens = { 0, 0 };
+    Slice<Token*> memberNameTokens = { 0, 0 };
     
     // Filled in later in the sizing stage 
-    Array<uint32> memberOffsets = { 0, 0 };
+    Slice<uint32> memberOffsets = { 0, 0 };
 };
 
 // Declarations
@@ -473,20 +480,31 @@ struct Ast_VarDecl : public Ast_Declaration
     Interp_Symbol* symbol;
 };
 
-struct Ast_ProcDef : public Ast_Declaration
+struct Ast_ProcDecl : public Ast_Declaration
+{
+    Ast_ProcDecl() { kind = AstKind_ProcDecl; };
+    
+    Interp_Symbol* symbol = 0;
+};
+
+struct Ast_ProcDef : public Ast_Node
 {
     Ast_ProcDef() { kind = AstKind_ProcDef; };
+    Ast_ProcDecl* decl;
     
     Ast_Block block;
     
     // Flattened form of all declarations in the
     // procedure. Useful for codegen
-    DynArray<Ast_Declaration*> declsFlat;
+    Array<Ast_Declaration*> declsFlat;
+    
+    // Array of types which don't known their respective
+    // size yet. This is useful in the sizing stage
+    Array<TypeInfo*> toSize;
     
     // Codegen stuff (later some stuff will be removed)
     // This stuff could just be in a PtrMap
     TB_Function* tildeProc = 0;
-    Interp_Symbol* symbol = 0;
 };
 
 struct Ast_StructDef : public Ast_Declaration
@@ -503,7 +521,7 @@ struct Ast_BinaryExpr : public Ast_Expr
     Ast_Expr* lhs;
     Ast_Expr* rhs;
     
-    // Filled in by the typechecker, if needed and possible
+    // Filled in by the typechecker
     Ast_FuncCall* overloaded = 0;
 };
 
@@ -515,7 +533,7 @@ struct Ast_UnaryExpr : public Ast_Expr
     bool isPostfix;
     Ast_Expr* expr;
     
-    // Filled in by the typechecker, if needed and possible
+    // Filled in by the typechecker
     Ast_FuncCall* overloaded = 0;
 };
 
@@ -528,7 +546,7 @@ struct Ast_TernaryExpr : public Ast_Expr
     Ast_Expr* expr2;
     Ast_Expr* expr3;
     
-    // Filled in by the overload resolver, if needed and possible
+    // Filled in by the typechecker
     Ast_FuncCall* overloaded = 0;
 };
 
@@ -537,9 +555,9 @@ struct Ast_FuncCall : public Ast_Expr
     Ast_FuncCall() { kind = AstKind_FuncCall; };
     
     Ast_Expr* target;
-    Array<Ast_Expr*> args = { 0, 0 };
+    Slice<Ast_Expr*> args = { 0, 0 };
     
-    // Filled in by the typechecker (or overload resolver?)
+    // Filled in by the typechecker
     Ast_ProcDef* called = 0;
 };
 
@@ -628,6 +646,7 @@ inline bool Ast_IsExprBitManipulation(Ast_BinaryExpr* expr)
 template<typename t>
 t* Ast_MakeNode(Arena* arena, Token* token);
 Ast_Node* Ast_MakeNode(Arena* arena, Token* token, Ast_NodeKind kind);
+
 template<typename t>
 t Ast_InitNode(Token* token);
 
@@ -636,20 +655,10 @@ t Ast_InitNode(Token* token);
 // A procedure definition is guaranteed (by the parser) to have an Ast_ProcType
 // as the declaration type. It's only a declaration because it can be used for generic
 // symbol lookup functions.
-cforceinline Ast_ProcType* Ast_GetDeclProc(Ast_ProcDef* procDef)
-{
-    return (Ast_ProcType*)procDef->type;
-}
-
-cforceinline Ast_StructType* Ast_GetDeclStruct(Ast_StructDef* structDef)
-{
-    return (Ast_StructType*)structDef->type;
-}
-
-cforceinline Ast_ProcType* Ast_GetDeclCallTarget(Ast_FuncCall* call)
-{
-    return (Ast_ProcType*)call->target->type;
-}
+cforceinline Ast_ProcType* Ast_GetProcType(Ast_ProcDecl* procDecl) { return (Ast_ProcType*)procDecl->type; }
+cforceinline Ast_ProcType* Ast_GetProcDefType(Ast_ProcDef* procDef) { return (Ast_ProcType*)procDef->decl->type; }
+cforceinline Ast_StructType* Ast_GetStructType(Ast_StructDef* structDef) { return (Ast_StructType*)structDef->type; }
+cforceinline Ast_ProcType* Ast_GetCallType(Ast_FuncCall* call) { return (Ast_ProcType*)call->target->type; }
 
 cforceinline Token* Ast_GetVarDeclTypeToken(Ast_VarDecl* decl)
 {

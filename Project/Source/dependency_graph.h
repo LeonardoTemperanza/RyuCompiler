@@ -10,6 +10,7 @@ struct Parser;
 struct Ast_FileScope;
 
 struct Typer;
+struct Interp;
 
 struct DepGraph;
 typedef uint32 Dg_Idx;
@@ -27,7 +28,8 @@ enum CompPhase : uint8
     CompPhase_Parse,
     CompPhase_Typecheck,
     CompPhase_ComputeSize,
-    CompPhase_Codegen,
+    CompPhase_Bytecode,
+    CompPhase_Run,
     
     CompPhase_EnumSize
 };
@@ -41,33 +43,26 @@ struct Dg_IdxGen
 struct Dg_Dependency
 {
     Dg_Idx idx;
-    Dg_Gen gen;
     CompPhase neededPhase;
+};
+
+enum EntityFlags
+{
+    Entity_OnStack = 1 << 0,
+    Entity_Error   = 1 << 1
 };
 
 struct Dg_Entity
 {
-    // Invalidates all references to this entity
-    // once it's removed
-    Dg_Gen gen = 0;
-    union
-    {
-        struct
-        {
-            // @temporary This will be in a union with other pointers
-            // (for example in the run stage we're interested in bytecode,
-            // not in the ast)
-            Ast_Node* node;
-            
-            DynArray<Dg_Dependency> waitFor;
-            
-            // Tarjan visit
-            uint32 stackIdx;
-            uint32 sccIdx;  // Strongly Connected Component
-            bool onStack;  // @performance This could be in a bitfield along with other things
-        };
-        Dg_Idx nextFree = Dg_Null;  // Only used when current node is not used
-    };
+    Ast_Node* node;
+    
+    Array<Dg_Dependency> waitFor;
+    
+    // Tarjan visit
+    CompPhase phase;
+    uint32 stackIdx;
+    uint32 sccIdx;  // Strongly Connected Component
+    uint8 flags;
 };
 
 struct Queue
@@ -76,9 +71,9 @@ struct Queue
     Arena* processingArena;
     Arena* outputArena;  // This is the same as the input arena of the next stage
     
-    Array<Dg_Idx> input;
-    Array<Dg_Idx> processing;
-    Array<Dg_Idx> output;
+    Slice<Dg_Idx> input;
+    Slice<Dg_Idx> processing;
+    Slice<Dg_Idx> output;
     
     CompPhase phase;
     bool isDone = false;
@@ -89,7 +84,7 @@ struct DepGraph
     Arena arena;  // Where to allocate entities (items)
     
     // Entity pool
-    Array<Dg_Entity> items = { 0, 0 };
+    Slice<Dg_Entity> items = { 0, 0 };
     Dg_Idx firstFree = Dg_Null;
     Dg_Idx lastFree  = Dg_Null;
     
@@ -102,20 +97,24 @@ struct DepGraph
     Dg_Idx curIdx = 0;
     
     Typer* typer;
+    Interp* interp;
+    
+    bool status = true;
 };
 
 DepGraph Dg_InitGraph(Arena* phaseArenas[CompPhase_EnumSize][2]);
-Dg_IdxGen Dg_NewNode(DepGraph* g, Ast_Node* node);
-void Dg_RemoveNode(DepGraph* g, Dg_Idx idx);
+Dg_IdxGen Dg_NewNode(Ast_Node* node, Arena* allocTo, Slice<Dg_Entity>* entities);
 void Dg_UpdateQueueArrays(DepGraph* g, Queue* q);
-void Dg_CompletedAllStages(DepGraph* g, Dg_Idx entityIdx);
 void Dg_Yield(DepGraph* g, Ast_Node* yieldUpon, CompPhase neededPhase);
-void Dg_Error(DepGraph* g, Ast_Node* entity);
+void Dg_Error(DepGraph* g);
 void Dg_PerformStage(DepGraph* g, Queue* q);
 bool Dg_DetectCycle(DepGraph* g, Queue* queue);
-void Dg_TarjanVisit(DepGraph* g, Dg_Entity* node, Array<Dg_Entity*>* stack, Arena* stackArena);
+void Dg_TarjanVisit(DepGraph* g, Dg_Entity* node, Slice<Dg_Entity*>* stack, Arena* stackArena);
 void Dg_TopologicalSort(DepGraph* g, Queue* queue);  // Assumes that 'stackIdx' is populated
-bool Dg_IsDependencyBreakable(DepGraph* g, Queue* q, Dg_Entity* source, Dg_Idx target);
+// Prints an error message for the user
 void Dg_ExplainCyclicDependency(DepGraph* g, Queue* q, Dg_Idx start, Dg_Idx end);
+String Dg_CompPhase2Str(CompPhase phase, bool pastTense = false);
+// For debugging purposes
+void Dg_DebugPrintDependencies(DepGraph* g);
 
-int MainDriver(Parser* p, Ast_FileScope* file);
+int MainDriver(Parser* p, Interp* interp, Ast_FileScope* file);

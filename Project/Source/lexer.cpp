@@ -21,6 +21,7 @@ X("case", Tok_Case)               \
 X("break", Tok_Break)             \
 X("continue", Tok_Continue)       \
 X("fallthrough", Tok_Fallthrough) \
+X("default", Tok_Default)         \
 X("defer", Tok_Defer)             \
 X("const", Tok_Const)             \
 X("struct", Tok_Struct)           \
@@ -393,10 +394,6 @@ void PrintFileLine(Token* token, char* fileContents)
 
 void CompileError(Tokenizer* t, Token* token, String message)
 {
-    if(t->status == CompStatus_Error)
-        return;
-    t->status = CompStatus_Error;
-    
     if(token->type == Tok_EOF || token->type == Tok_Error)
     {
         printf("Reached unexpected EOF\n");
@@ -421,7 +418,6 @@ void CompileError(Tokenizer* t, Token* token, String message)
 
 void CompileErrorContinue(Tokenizer* t, Token* token, String message)
 {
-    t->status = CompStatus_Error;
     if(!t->compileErrorPrinted)
         return;
     t->compileErrorPrinted = false;

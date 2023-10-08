@@ -2,6 +2,7 @@
 #pragma once
 
 #include "ast.h"
+#include "dependency_graph.h"
 
 struct Parser
 {
@@ -10,14 +11,24 @@ struct Parser
     Token* at;  // Current analyzed token in the stream
     
     Ast_Block* scope = 0;  // Current scope
-    Ast_Block* globalScope = 0;
+    Ast_Block* fileScope = 0;
+    Ast_ProcDef* curProc = 0;
+    
+    Arena* entityArena;
+    Slice<Dg_Entity> entities;
     
     Arena* internArena;
-    Array<ToIntern> internArray = { 0, 0 };
+    Slice<ToIntern> internArray = { 0, 0 };
+    
+    // False if in error mode
+    bool status = true;
 };
 
+template<typename t>
+t* Ast_MakeEntityNode(Parser* p, Token* token);
+
 Ast_FileScope* ParseFile(Parser* p);
-Ast_ProcDef* ParseProcDef(Parser* p, Ast_DeclSpec specs);
+Ast_ProcDecl* ParseProc(Parser* p, Ast_DeclSpec specs);
 Ast_StructDef* ParseStructDef(Parser* p, Ast_DeclSpec specs);
 Ast_Node* ParseDeclOrExpr(Parser* p, Ast_DeclSpec specs, bool forceInit = false, bool ignoreInit = false);
 Ast_VarDecl* ParseVarDecl(Parser* p, Ast_DeclSpec specs, bool forceInit = false, bool ignoreInit = false);
@@ -29,9 +40,7 @@ Ast_DoWhile* ParseDoWhile(Parser* p);
 Ast_Switch* ParseSwitch(Parser* p);
 Ast_Defer* ParseDefer(Parser* p);
 Ast_Return* ParseReturn(Parser* p);
-Ast_Break* ParseBreak(Parser* p);
-Ast_Continue* ParseContinue(Parser* p);
-Ast_Fallthrough* ParseFallthrough(Parser* p);
+template<typename t> Ast_Stmt* ParseJump(Parser* p);  // Used for break, continue, and fallthrough
 Ast_Block* ParseBlock(Parser* p);
 Ast_Block* ParseOneOrMoreStmtBlock(Parser* p);  // Used for blocks in e.g. if stmts
 
@@ -40,8 +49,8 @@ Ast_Expr* ParsePostfixExpression(Parser* p);
 Ast_Expr* ParsePrimaryExpression(Parser* p);
 TypeInfo* ParseType(Parser* p, Token** outIdent);
 // Do I even need these to be values and not pointers anymore?
-Ast_ProcType ParseDeclProc(Parser* p, Token** outIdent, bool forceArgNames = true);
-Ast_StructType ParseDeclStruct(Parser* p, Token** outIdent);
+Ast_ProcType ParseProcType(Parser* p, Token** outIdent, bool forceArgNames = true);
+Ast_StructType ParseStructType(Parser* p, Token** outIdent);
 Ast_DeclSpec ParseDeclSpecs(Parser* p);
 void CheckDeclSpecs(Parser* p, Ast_DeclSpec specs, Ast_DeclSpec allowedSpecs);
 

@@ -17,7 +17,7 @@ Tc_Context Tc_InitCtx(TB_Module* module, bool emitAsm)
     return result;
 }
 
-void Tc_CodegenAndLink(Ast_FileScope* file, Interp* interp, Array<char*> objFiles)
+void Tc_CodegenAndLink(Ast_FileScope* file, Interp* interp, Slice<char*> objFiles)
 {
     ScratchArena scratch;
     objFiles = objFiles.CopyToArena(scratch);
@@ -136,7 +136,7 @@ void Tc_GenSymbol(Tc_Context* ctx, Interp_Symbol* symbol)
     {
         case Interp_ProcSym:
         {
-            auto proc = (Ast_ProcDef*)symbol->decl;
+            auto proc = (Ast_ProcDecl*)symbol->decl;
             
             TB_Function* tbProc = tb_function_create(ctx->module, -1, proc->symbol->name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
             
@@ -187,7 +187,7 @@ void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
     
     Assert(proc->symbol->typeInfo->typeId == Typeid_Proc);
     auto procDecl = (Ast_ProcType*)proc->symbol->typeInfo;
-    int abiArgsCount = (proc->retRule == TB_PASSING_INDIRECT) + procDecl->retTypes.length - 1 + procDecl->args.length;
+    int abiArgsCount = (proc->retRule == TB_PASSING_INDIRECT) + max((int64)0, procDecl->retTypes.length - 1) + procDecl->args.length;
     if(procDecl->retTypes.length <= 0)
         abiArgsCount = procDecl->args.length;
     
@@ -201,7 +201,7 @@ void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
         if(proc->argRules[i] == TB_PASSING_DIRECT)
         {
             Tc_ExpandRegs(ctx, i);
-            ctx->regs[i] = paramNodes[i];
+            ctx->regs[i + abiArgsCount] = paramNodes[i];
         }
     }
     
@@ -300,6 +300,20 @@ TB_Node** Tc_GetBBArray(Tc_Context* ctx, Interp_Proc* proc, int arrayStart, int 
         nodes[i] = ctx->bbs[proc->instrArrays[arrayStart + i]].region;
     
     return nodes;
+}
+
+TB_SwitchEntry* Tc_GetSwitchEntries(Tc_Context* ctx, Interp_Proc* proc, Interp_Instr instr, Arena* allocTo)
+{
+    Assert(instr.op == Op_Branch);
+    
+    auto res = Arena_AllocArray(allocTo, instr.branch.count, TB_SwitchEntry);
+    for(int i = 0; i < instr.branch.count; ++i)
+    {
+        res[i].key   = proc->constArrays[instr.branch.keyStart + i];
+        res[i].value = ctx->bbs[proc->instrArrays[instr.branch.caseStart + i]].region;
+    }
+    
+    return res;
 }
 
 void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
@@ -414,13 +428,10 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
                 }
                 else
                 {
-                    Assert(false && "Switch codegen not implemented");
-#if 0
-                    auto keys = Tc_GetNodeArray(ctx, proc, instr.branch.keyStart, instr.branch.count, scratch);
-                    auto cases = Tc_GetBBArray(ctx, proc, instr.branch.caseStart, instr.branch.count, scratch);
+                    //Assert(false && "Switch codegen not implemented");
+                    TB_SwitchEntry* entries = Tc_GetSwitchEntries(ctx, proc, instr, scratch);
                     
-                    tb_inst_branch(tildeProc, keys[0]->dt, regs[instr.branch.value], regs[instr.branch.defaultCase], instr.branch.count, keys);
-#endif
+                    tb_inst_branch(tildeProc, entries[0].value->dt, regs[instr.branch.value], bbs[instr.branch.defaultCase].region, instr.branch.count, entries);
                 }
                 
                 break;
@@ -572,7 +583,7 @@ TB_DebugType* Tc_ConvertToDebugType(TB_Module* module, TypeInfo* type)
     {
         auto identType = (Ast_IdentType*)type;
         auto structDef = identType->structDef;
-        astType = Ast_GetDeclStruct(structDef);
+        astType = Ast_GetStructType(structDef);
         structType = tb_debug_create_struct(module, -1, structDef->name->string);
     }
     

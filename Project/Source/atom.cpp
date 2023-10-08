@@ -2,7 +2,7 @@
 #include "base.h"
 #include "atom.h"
 
-void Atom_InternStrings(Array<Array<ToIntern>> intern)
+void Atom_InternStrings(Slice<Slice<ToIntern>> intern)
 {
     ProfileFunc(prof);
     

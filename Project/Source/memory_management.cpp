@@ -121,9 +121,22 @@ void* Arena_ResizeLastAlloc(Arena* arena, void* oldMemory, size_t oldSize, size_
     {
         if((arena->buffer + arena->prevOffset) == oldMem)
         {
+            auto prevOffset = arena->offset;
             arena->offset = arena->prevOffset + newSize;
             if(newSize > oldSize)
             {
+                // Commit if needed
+                if(arena->commitSize > 0)
+                {
+                    uintptr commitAligned = arena->offset - (arena->offset %
+                                                             arena->commitSize); 
+                    if(commitAligned > prevOffset)
+                    {
+                        size_t toCommit = commitAligned + arena->commitSize;
+                        CommitMemory(arena->buffer, toCommit);
+                    }
+                }
+                
                 // Zero new memory for debugging
 #ifdef Debug
                 memset(&arena->buffer[arena->offset], 0, newSize - oldSize);
@@ -147,7 +160,7 @@ void* Arena_ResizeLastAlloc(Arena* arena, void* oldMemory, size_t oldSize, size_
 }
 
 template<typename t>
-cforceinline void Arena_ResizeLastAllocatedArray(Arena* arena, Array<t>* array, size_t newLength, size_t align)
+cforceinline void Arena_ResizeLastAllocatedSlice(Arena* arena, Slice<t>* array, size_t newLength, size_t align)
 {
     array->ptr = (t*)Arena_ResizeLastAlloc(arena, array->ptr, sizeof(t) * array->length, sizeof(t) * newLength, align);
     array->length = newLength;

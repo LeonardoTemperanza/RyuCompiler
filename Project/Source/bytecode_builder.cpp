@@ -46,7 +46,7 @@ Interp_Instr* Interp_InsertInstr(Interp_Builder* builder)
     if(builder->middleInsert.arena)
     {
         Arena* arena = builder->middleInsert.arena;
-        Array<Interp_Instr>& instrs = builder->middleInsert.instrs;
+        Slice<Interp_Instr>& instrs = builder->middleInsert.instrs;
         instrs.ResizeAndInit(arena, instrs.length - 1);
         res = &instrs[proc->instrs.length - 1];
     }
@@ -125,7 +125,7 @@ uint32 Interp_AllocateRegIdxArray(Interp_Builder* builder, RegIdx* values, uint1
     return oldLength;
 }
 
-uint32 Interp_AllocateRegIdxArray(Interp_Builder* builder, Array<RegIdx> values)
+uint32 Interp_AllocateRegIdxArray(Interp_Builder* builder, Slice<RegIdx> values)
 {
     return Interp_AllocateRegIdxArray(builder, values.ptr, values.length);
 }
@@ -145,7 +145,7 @@ uint32 Interp_AllocateInstrIdxArray(Interp_Builder* builder, InstrIdx* values, u
     return oldLength;
 }
 
-uint32 Interp_AllocateInstrIdxArray(Interp_Builder* builder, Array<InstrIdx> instrs)
+uint32 Interp_AllocateInstrIdxArray(Interp_Builder* builder, Slice<InstrIdx> instrs)
 {
     return Interp_AllocateInstrIdxArray(builder, instrs.ptr, instrs.length);
 }
@@ -165,7 +165,7 @@ uint32 Interp_AllocateConstArray(Interp_Builder* builder, int64* values, uint32 
     return oldLength;
 }
 
-uint32 Interp_AllocateConstArray(Interp_Builder* builder, Array<int64> consts)
+uint32 Interp_AllocateConstArray(Interp_Builder* builder, Slice<int64> consts)
 {
     return Interp_AllocateConstArray(builder, consts.ptr, consts.length);
 }
@@ -682,7 +682,7 @@ RegIdx Interp_CmpFGE(Interp_Builder* builder, RegIdx reg1, RegIdx reg2)
 RegIdx Interp_SysCall(Interp_Builder* builder) {return RegIdx_Unused;}
 
 // Do I need the prototype here?
-RegIdx Interp_Call(Interp_Builder* builder, RegIdx target, Array<RegIdx> args)
+RegIdx Interp_Call(Interp_Builder* builder, RegIdx target, Slice<RegIdx> args)
 {
     auto proc = builder->proc;
     uint32 argIdx = Interp_AllocateRegIdxArray(builder, args);
@@ -765,6 +765,20 @@ void Interp_PatchGoto(Interp_Builder* builder, InstrIdx gotoInstr, InstrIdx targ
     auto& instr = builder->proc->instrs[gotoInstr];
     instr.op = Op_Branch;
     instr.branch.defaultCase = target;
+}
+
+void Interp_PatchBranch(Interp_Builder* builder, InstrIdx branchInstr, Slice<int64> values, Slice<InstrIdx> regions, InstrIdx defaultRegion)
+{
+    uint32 instrIdx = Interp_AllocateInstrIdxArray(builder, regions);
+    int64 val = 0;
+    uint32 valIdx = Interp_AllocateConstArray(builder, values);
+    
+    auto& instr = builder->proc->instrs[branchInstr];
+    instr.op = Op_Branch;
+    instr.branch.defaultCase = defaultRegion;
+    instr.branch.keyStart    = valIdx;
+    instr.branch.caseStart   = instrIdx;
+    instr.branch.count = regions.length;
 }
 
 // Patch if and else instructions index later
@@ -1054,7 +1068,7 @@ void Interp_PrintProc(Interp_Proc* proc)
     printf("\n");
     
     int counter = 0;
-    const int numSpaces = 5;
+    const int numSpaces = numDigits(proc->instrs.length - 1) + 3;
     
     for_array(i, proc->instrs)
     {

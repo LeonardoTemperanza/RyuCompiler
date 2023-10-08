@@ -2,6 +2,7 @@
 #include "base.h"
 #include "lexer.h"
 #include "memory_management.h"
+#include "dependency_graph.h"
 #include "parser.h"
 
 // @architecture Do we want to do a conversion between syntactic declarators
@@ -22,10 +23,20 @@ t* Ast_MakeNode(Arena* arena, Token* token)
 Ast_Node* Ast_MakeNode(Arena* arena, Token* token, Ast_NodeKind kind)
 {
     // Pack the nodes for better cache locality
-    auto result = Arena_AllocAndInitPack(arena, Ast_Node);
+    auto result   = Arena_AllocAndInitPack(arena, Ast_Node);
     result->kind  = kind;
     result->where = token;
     
+    return result;
+}
+
+template<typename t>
+t* Ast_MakeEntityNode(Parser* p, Token* token)
+{
+    auto result   = Arena_AllocAndInitPack(p->arena, t);
+    result->where = token;
+    
+    Dg_NewNode(result, p->entityArena, &p->entities);
     return result;
 }
 
@@ -43,12 +54,12 @@ Ast_FileScope* ParseFile(Parser* p)
     ScratchArena scratch;
     
     auto root = Arena_AllocAndInitPack(p->arena, Ast_FileScope);
-    //auto root = Ast_MakeNode<Ast_FileScope>(p->arena, p->at);
-    root->scope.enclosing = p->globalScope;
-    p->scope = &root->scope;
+    root->scope.enclosing = 0;
+    p->fileScope = &root->scope;
+    p->scope = p->fileScope;
     defer(p->scope = p->scope->enclosing);
     
-    Array<Ast_Node*> result = { 0, 0 };
+    Slice<Ast_Node*> result = { 0, 0 };
     p->at = p->tokenizer->tokens.ptr;
     
     bool quit = false;
@@ -61,8 +72,8 @@ Ast_FileScope* ParseFile(Parser* p)
         switch_nocheck(p->at->type)
         {
             case ';':          ++p->at; break;
-            case Tok_Proc:     node = ParseProcDef(p, declSpecs); break;
-            case Tok_Operator: node = ParseProcDef(p, declSpecs); break;
+            case Tok_Proc:     node = ParseProc(p, declSpecs); break;
+            case Tok_Operator: node = ParseProc(p, declSpecs); break;
             case Tok_Struct:   node = ParseStructDef(p, declSpecs); break;
             case Tok_EOF:      quit = true; break;
             // If none of those keywords, must be
@@ -85,7 +96,7 @@ Ast_FileScope* ParseFile(Parser* p)
     return root;
 }
 
-Ast_ProcDef* ParseProcDef(Parser* p, Ast_DeclSpec specs)
+Ast_ProcDecl* ParseProc(Parser* p, Ast_DeclSpec specs)
 {
     ProfileFunc(prof);
     ScratchArena scratch;
@@ -95,37 +106,62 @@ Ast_ProcDef* ParseProcDef(Parser* p, Ast_DeclSpec specs)
     if(p->at->type != Tok_Proc && p->at->type != Tok_Operator)
         ExpectedTokenError(p, p->at, Tok_Proc);
     
-    auto proc = Ast_MakeNode<Ast_ProcDef>(p->arena, p->at);
-    proc->declSpecs = specs;
+    auto procDecl = Ast_MakeEntityNode<Ast_ProcDecl>(p, p->at);
+    procDecl->declSpecs = specs;
+    p->scope->decls.Append(procDecl);
     
     Token* ident = 0;
     TypeInfo* typeInfo = ParseType(p, &ident);
+    Assert(typeInfo->typeId == Typeid_Proc);
     if(!isOperator && !IsTokIdent(ident->type))
         ExpectedTokenError(p, ident, Tok_Ident);
     else if(isOperator && !IsTokOperator(ident->type))
         ParseError(p, ident, StrLit("Expecting operator"));
     
-    proc->type = typeInfo;
-    DeferStringInterning(p, ident->ident, &proc->name);
-    
-    Ast_Block& block = proc->block;
-    block.stmts = { 0, 0 };
-    block.enclosing = p->scope;
-    p->scope = &proc->block;
-    defer(p->scope = p->scope->enclosing);  // Revert to original scope
+    procDecl->where = ident;
+    procDecl->type = typeInfo;
+    DeferStringInterning(p, ident->ident, &procDecl->name);
     
     if(p->at->type == ';')
     {
-        proc->declSpecs |= Decl_Extern;
+        procDecl->declSpecs |= Decl_Extern;
         ++p->at;
     }
     else
     {
+        auto procDef = Ast_MakeEntityNode<Ast_ProcDef>(p, procDecl->where);
+        procDef->decl = procDecl;
+        auto procType = (Ast_ProcType*)typeInfo;
+        
+        // Special error for this token
+        bool hasMultipleReturns = ((Ast_ProcType*)typeInfo)->retTypes.length > 1;
+        if(!hasMultipleReturns && p->at->type == ',')
+            ParseError(p, p->at, StrLit("Multiple return values should be wrapped with '()' parentheses."));
+        else
+            EatRequiredToken(p, '{');
+        
+        // Set scope
+        Ast_Block& block = procDef->block;
+        block.stmts = { 0, 0 };
+        block.enclosing = p->scope;
+        p->scope = &procDef->block;
+        defer(p->scope = p->scope->enclosing);  // Revert to original scope
+        
+        // NOTE(Leo): Adding arguments as declarations in the procedure body
+        for_array(i, procType->args)
+        {
+            procDef->block.decls.Append(procType->args[i]);
+            procDef->declsFlat.Append(procType->args[i]);
+        }
+        
+        // Set current procedure
+        auto prevProc = p->curProc;
+        p->curProc = procDef;
+        defer(p->curProc = prevProc);
+        
         // Disable extern if there is a body.
         // TODO: ideally an error should be printed for this.
-        proc->declSpecs &= ~proc->declSpecs;
-        
-        EatRequiredToken(p, '{');
+        procDecl->declSpecs &= ~Decl_Extern;
         
         while(p->at->type != '}' && p->at->type != Tok_EOF)
         {
@@ -138,7 +174,7 @@ Ast_ProcDef* ParseProcDef(Parser* p, Ast_DeclSpec specs)
         EatRequiredToken(p, '}');
     }
     
-    return proc;
+    return procDecl;
 }
 
 Ast_StructDef* ParseStructDef(Parser* p, Ast_DeclSpec specs)
@@ -148,7 +184,7 @@ Ast_StructDef* ParseStructDef(Parser* p, Ast_DeclSpec specs)
     if(p->at->type != Tok_Struct)
         ExpectedTokenError(p, p->at, Tok_Struct);
     
-    auto structDef = Ast_MakeNode<Ast_StructDef>(p->arena, p->at);
+    auto structDef = Ast_MakeEntityNode<Ast_StructDef>(p, p->at);
     structDef->declSpecs = specs;
     
     Token* ident = 0;
@@ -158,6 +194,7 @@ Ast_StructDef* ParseStructDef(Parser* p, Ast_DeclSpec specs)
     
     structDef->type = typeInfo;
     DeferStringInterning(p, ident->ident, &structDef->name);
+    p->scope->decls.Append(structDef);
     return structDef;
 }
 
@@ -219,10 +256,23 @@ Ast_VarDecl* ParseVarDecl(Parser* p, Ast_DeclSpec specs, bool forceInit, bool ig
     if(!IsTokIdent(t->type))
         ExpectedTokenError(p, t, Tok_Ident);
     
-    auto decl  = Ast_MakeNode<Ast_VarDecl>(p->arena, t);
+    // A global variable should be its own separate entity
+    bool isGlobal = !p->curProc;
+    auto decl  = isGlobal? Ast_MakeEntityNode<Ast_VarDecl>(p, t) : Ast_MakeNode<Ast_VarDecl>(p->arena, t);
     decl->type = type;
     decl->declSpecs = specs;
     DeferStringInterning(p, t->ident, &decl->name);
+    
+    p->scope->decls.Append(decl);
+    
+    if(isGlobal)
+        decl->declIdx = -1;
+    else
+    {
+        Assert(p->curProc);
+        p->curProc->declsFlat.Append(decl);
+        decl->declIdx = p->curProc->declsFlat.length - 1;
+    }
     
     if(!ignoreInit)
     {
@@ -254,9 +304,9 @@ Ast_Stmt* ParseStatement(Parser* p)
         case Tok_Switch:      stmt = ParseSwitch(p); break;
         case Tok_Defer:       stmt = ParseDefer(p); break;
         case Tok_Return:      stmt = ParseReturn(p); break;
-        case Tok_Break:       stmt = ParseBreak(p); break;
-        case Tok_Continue:    stmt = ParseContinue(p); break;
-        case Tok_Fallthrough: stmt = ParseFallthrough(p); break;
+        case Tok_Break:       stmt = ParseJump<Ast_Break>(p); break;
+        case Tok_Continue:    stmt = ParseJump<Ast_Continue>(p); break;
+        case Tok_Fallthrough: stmt = ParseJump<Ast_Fallthrough>(p); break;
         case '{':             stmt = ParseBlock(p); break;
         case ';':
         {
@@ -276,8 +326,8 @@ Ast_Stmt* ParseStatement(Parser* p)
                 auto multiAssign = Ast_MakeNode<Ast_MultiAssign>(p->arena, start);
                 
                 ScratchArena scratch;
-                Array<Ast_Node*> lefts = { 0, 0 };
-                Array<Ast_Expr*> rights = { 0, 0 };
+                Slice<Ast_Node*> lefts = { 0, 0 };
+                Slice<Ast_Expr*> rights = { 0, 0 };
                 
                 lefts.Append(scratch, stmt);
                 stmt = multiAssign;
@@ -425,7 +475,8 @@ Ast_DoWhile* ParseDoWhile(Parser* p)
 Ast_Switch* ParseSwitch(Parser* p)
 {
     ProfileFunc(prof);
-    ScratchArena scratch;
+    ScratchArena caseScratch(0);
+    ScratchArena stmtScratch(1);
     
     auto stmt = Ast_MakeNode<Ast_Switch>(p->arena, p->at);
     
@@ -436,15 +487,25 @@ Ast_Switch* ParseSwitch(Parser* p)
     
     EatRequiredToken(p, '{');
     
-    while(p->at->type == Tok_Case)
+    while(p->at->type == Tok_Case || p->at->type == Tok_Default)
     {
-        ++p->at;
-        stmt->cases.Append(p->arena, ParseExpression(p));
+        if(p->at->type == Tok_Default)
+        {
+            stmt->defaultIdx = stmt->cases.length;
+            ++p->at;
+        }
+        else
+        {
+            ++p->at;
+            stmt->cases.Append(caseScratch, ParseExpression(p));
+        }
+        
         EatRequiredToken(p, ':');
-        stmt->stmts.Append(scratch, ParseStatement(p));
+        stmt->stmts.Append(stmtScratch, ParseStatement(p));
     }
     
     stmt->stmts = stmt->stmts.CopyToArena(p->arena);
+    stmt->cases = stmt->cases.CopyToArena(p->arena);
     
     EatRequiredToken(p, '}');
     
@@ -472,7 +533,7 @@ Ast_Return* ParseReturn(Parser* p)
     
     if(p->at->type != ';')
     {
-        Array<Ast_Expr*> exprs = { 0, 0 };
+        Slice<Ast_Expr*> exprs = { 0, 0 };
         while(true)
         {
             auto expr = ParseExpression(p);
@@ -489,32 +550,14 @@ Ast_Return* ParseReturn(Parser* p)
     return stmt;
 }
 
-Ast_Break* ParseBreak(Parser* p)
+template<typename t>
+Ast_Stmt* ParseJump(Parser* p)
 {
     ProfileFunc(prof);
     
-    auto stmt = Ast_MakeNode<Ast_Break>(p->arena, p->at);
-    EatRequiredToken(p, Tok_Break);
-    EatRequiredToken(p, ';');
-    return stmt;
-}
-
-Ast_Continue* ParseContinue(Parser* p)
-{
-    ProfileFunc(prof);
+    auto stmt = Ast_MakeNode<t>(p->arena, p->at);
+    ++p->at;
     
-    auto stmt = Ast_MakeNode<Ast_Continue>(p->arena, p->at);
-    EatRequiredToken(p, Tok_Continue);
-    EatRequiredToken(p, ';');
-    return stmt;
-}
-
-Ast_Fallthrough* ParseFallthrough(Parser* p)
-{
-    ProfileFunc(prof);
-    
-    auto stmt = Ast_MakeNode<Ast_Fallthrough>(p->arena, p->at);
-    EatRequiredToken(p, Tok_Fallthrough);
     EatRequiredToken(p, ';');
     return stmt;
 }
@@ -812,11 +855,11 @@ Ast_Expr* ParsePrimaryExpression(Parser* p)
     
     String tokType = TokTypeToString(p->at->type, scratch.arena());
     
-    StringBuilder strBuilder;
+    StringBuilder strBuilder(scratch);
     
-    strBuilder.Append(StrLit("Unexpected '"), scratch.arena());
-    strBuilder.Append(tokType, scratch.arena());
-    strBuilder.Append(StrLit("', expecting expression"), scratch.arena());
+    strBuilder.Append("Unexpected '");
+    strBuilder.Append(tokType);
+    strBuilder.Append("', expecting expression");
     ParseError(p, p->at, strBuilder.string);
     
     return 0;
@@ -885,7 +928,7 @@ TypeInfo* ParseType(Parser* p, Token** outIdent)
             case Tok_Operator:
             {
                 Token* ident = 0;
-                Ast_ProcType decl = ParseDeclProc(p, &ident, false);
+                Ast_ProcType decl = ParseProcType(p, &ident, false);
                 auto tmp = Arena_FromStackPack(p->arena, decl);
                 if(ident)
                     *outIdent = ident;
@@ -899,7 +942,7 @@ TypeInfo* ParseType(Parser* p, Token** outIdent)
             case Tok_Struct:
             {
                 Token* ident = 0;
-                Ast_StructType decl = ParseDeclStruct(p, &ident);
+                Ast_StructType decl = ParseStructType(p, &ident);
                 auto tmp = Arena_FromStackPack(p->arena, decl);
                 if(ident)
                     *outIdent = ident;
@@ -936,7 +979,7 @@ TypeInfo* ParseType(Parser* p, Token** outIdent)
     return type;
 }
 
-Ast_ProcType ParseDeclProc(Parser* p, Token** outIdent, bool forceArgNames)
+Ast_ProcType ParseProcType(Parser* p, Token** outIdent, bool forceArgNames)
 {
     ProfileFunc(prof);
     
@@ -954,11 +997,10 @@ Ast_ProcType ParseDeclProc(Parser* p, Token** outIdent, bool forceArgNames)
     {
         String tokType = TokTypeToString(p->at->type, scratch.arena());
         
-        StringBuilder strBuilder;
-        
-        strBuilder.Append(StrLit("Unexpected '"), scratch.arena());
-        strBuilder.Append(tokType, scratch.arena());
-        strBuilder.Append(StrLit("', expecting 'proc', or 'operator'"), scratch.arena());
+        StringBuilder strBuilder(scratch);
+        strBuilder.Append("Unexpected '");
+        strBuilder.Append(tokType);
+        strBuilder.Append("', expecting 'proc', or 'operator'");
         ParseError(p, p->at, strBuilder.string);
     }
     
@@ -981,10 +1023,22 @@ Ast_ProcType ParseDeclProc(Parser* p, Token** outIdent, bool forceArgNames)
     // Parse arguments
     if(p->at->type != ')')
     {
-        Array<Ast_Declaration*> args = { 0, 0 };
+        Slice<Ast_Declaration*> args = { 0, 0 };
         while(true)
         {
-            auto argDecl = ParseVarDecl(p, (Ast_DeclSpec)0, false, true);
+            Ast_DeclSpec specs = ParseDeclSpecs(p);
+            
+            Token* t = 0;
+            auto type = ParseType(p, &t);
+            if(!IsTokIdent(t->type))
+                ExpectedTokenError(p, t, Tok_Ident);
+            
+            //auto argDecl = ParseVarDecl(p, (Ast_DeclSpec)0, false, true);
+            auto argDecl = Ast_MakeNode<Ast_VarDecl>(p->arena, t);
+            argDecl->type = type;
+            argDecl->declSpecs = specs;
+            DeferStringInterning(p, t->ident, &argDecl->name);
+            
             args.Append(scratch, argDecl);
             
             if(p->at->type == ',') ++p->at;
@@ -1032,7 +1086,7 @@ Ast_ProcType ParseDeclProc(Parser* p, Token** outIdent, bool forceArgNames)
     return decl;
 }
 
-Ast_StructType ParseDeclStruct(Parser* p, Token** outIdent)
+Ast_StructType ParseStructType(Parser* p, Token** outIdent)
 {
     ProfileFunc(prof);
     
@@ -1058,8 +1112,8 @@ Ast_StructType ParseDeclStruct(Parser* p, Token** outIdent)
     ScratchArena typeScratch(0);
     ScratchArena tokenScratch(1);
     
-    Array<TypeInfo*> types = { 0, 0 };
-    Array<Token*> tokens = { 0, 0 };
+    Slice<TypeInfo*> types = { 0, 0 };
+    Slice<Token*> tokens = { 0, 0 };
     
     while(p->at->type != '}' && p->at->type != Tok_EOF)
     {
@@ -1287,8 +1341,10 @@ Token* SkipParens(Token* start, char openParen, char closeParen)
 
 inline void ParseError(Parser* p, Token* token, String message)
 {
-    CompileError(p->tokenizer, token, message);
+    if(p->status)
+        CompileError(p->tokenizer, token, message);
     
+    p->status   = false;
     p->at->type = Tok_EOF;
 }
 
@@ -1317,8 +1373,8 @@ inline void ExpectedTokenError(Parser* p, Token* tok, TokenType tokType)
         ScratchArena scratch;
         String tokTypeStr = TokTypeToString(tokType, scratch.arena());
         
-        StringBuilder strBuilder;
-        strBuilder.Append(scratch.arena(), 3, StrLit("Expecting '"), tokTypeStr, StrLit("'"));
+        StringBuilder strBuilder(scratch);
+        strBuilder.Append(3, StrLit("Expecting '"), tokTypeStr, StrLit("'"));
         ParseError(p, tok, strBuilder.string);
     }
 }

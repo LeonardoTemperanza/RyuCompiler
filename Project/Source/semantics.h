@@ -24,6 +24,8 @@ struct Typer
     bool inDeferBlock  = false;
     
     DepGraph* graph;
+    
+    bool status = true;
 };
 
 Typer InitTyper(Arena* arena, Parser* parser);
@@ -58,6 +60,7 @@ inline bool IsNodeLValue(Ast_Node* node)
 bool IsNodeConst(Typer* t, Ast_Node* node);
 
 bool CheckNode(Typer* t, Ast_Node* node);
+bool CheckProcDecl(Typer* t, Ast_ProcDecl* decl);
 bool CheckProcDef(Typer* t, Ast_ProcDef* proc);
 bool CheckStructDef(Typer* t, Ast_StructDef* structDef);
 bool CheckVarDecl(Typer* t, Ast_VarDecl* decl);
@@ -86,11 +89,13 @@ TypeInfo* CheckCondition(Typer* t, Ast_Node* node);
 bool CheckType(Typer* t, TypeInfo* type, Token* where);
 bool ComputeSize(Typer* t, Ast_Node* node);
 struct ComputeSize_Ret { uint64 size; uint64 align; };
+bool FillInTypeSize(Typer* t, TypeInfo* type, Token* errTok);
 ComputeSize_Ret ComputeStructSize(Typer* t, Ast_StructType* declStruct, Token* errTok, bool* outcome);
 
 // Identifier resolution
-Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Atom* ident);
+Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Token* where, Atom* ident);
 bool AddDeclaration(Typer* t, Ast_Block* scope, Ast_Declaration* decl);
+bool CheckNotAlreadyDeclared(Typer* t, Ast_Block* scope, Ast_Declaration* decl);
 
 // Types
 cforceinline bool IsTypeScalar(TypeInfo* type)

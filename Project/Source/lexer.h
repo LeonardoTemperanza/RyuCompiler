@@ -74,6 +74,7 @@ enum TokenType
     Tok_Break,
     Tok_Continue,
     Tok_Fallthrough,
+    Tok_Default,
     Tok_Defer,
     Tok_Return,
     Tok_Cast,
@@ -130,9 +131,7 @@ struct Tokenizer
     
     Arena* arena;
     // Stream of tokens which compose the entire file
-    Array<Token> tokens = { 0, 0 };
-    
-    ParseStatus status = CompStatus_Success;
+    Slice<Token> tokens = { 0, 0 };
     
     String fullFilePath = { 0, 0 };
     bool compileErrorPrinted = false;

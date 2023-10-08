@@ -17,11 +17,16 @@ CmdLineArgs cmdLineArgs;
 
 struct FilePaths
 {
-    DynArray<char*> srcFiles;
-    DynArray<char*> objFiles;
+    Array<char*> srcFiles;
+    Array<char*> objFiles;
 };
 
-FilePaths ParseCmdLineArgs(Array<char*> args);
+struct Timings
+{
+    
+};
+
+FilePaths ParseCmdLineArgs(Slice<char*> args);
 void PrintHelp();
 template<typename t>
 void PrintArg(char* argName, char* desc, t defVal, int lpad, int rpad);
@@ -79,80 +84,60 @@ int main(int argCount, char** argValue)
     
     size_t size = GB(1);
     size_t commitSize = MB(2);
-    
     Arena astArena = Arena_VirtualMemInit(size, commitSize);
     Arena internArena = Arena_VirtualMemInit(size, commitSize);
+    Arena entityArena = Arena_VirtualMemInit(size, commitSize);
     
     Tokenizer tokenizer = { fileContents, fileContents };
     tokenizer.arena = &astArena;
     Parser parser = { &astArena, &tokenizer };
     parser.internArena = &internArena;
+    parser.entityArena = &entityArena;
     
     // Main stuff
-    Ast_Block globalScope;
-    parser.globalScope = &globalScope;
-    
     LexFile(&tokenizer);
     Ast_FileScope* fileAst = ParseFile(&parser);
     
-    if(tokenizer.status != CompStatus_Success)
+    if(!parser.status)
     {
         printf("There were syntax errors!\n");
         return 1;
     }
     
+#ifdef Debug
+    fflush(stdout);
+    fflush(stderr);
+#endif
+    
     // Interning
-    Array<Array<ToIntern>> intern = { &parser.internArray, 1 };
+    Slice<Slice<ToIntern>> intern = { &parser.internArray, 1 };
     Atom_InternStrings(intern);
     
     // Main program loop
-    int outcome = MainDriver(&parser, fileAst);
+    Interp interp = Interp_Init();
+    bool status = MainDriver(&parser, &interp, fileAst);
     
-    if(outcome != 0)
+    if(!status)
     {
         printf("There were semantic errors!\n");
         return 1;
     }
     
-    Interp interp = Interp_Init();
-    for_array(i, fileAst->scope.stmts)
-    {
-        auto node = fileAst->scope.stmts[i];
-        if(node->kind == AstKind_ProcDef)
-        {
-            auto astProc = (Ast_ProcDef*)node;
-            if(astProc->declSpecs & Decl_Extern)
-                Interp_ConvertExternProc(&interp, astProc);
-            else
-            {
-                auto proc = Interp_ConvertProc(&interp, astProc);
-                if(cmdLineArgs.emitBytecode)
-                    Interp_PrintProc(proc);
-            }
-        }
-        else if(node->kind == AstKind_VarDecl)
-        {
-            // TODO: initialization i guess
-            auto decl = (Ast_VarDecl*)node;
-            Interp_Symbol* sym = Interp_MakeSymbol(&interp);
-            sym->type = Interp_GlobalSym;
-            sym->decl = decl;
-            sym->name = decl->name->string;
-            sym->typeInfo = decl->type;
-            decl->symbol = sym;
-        }
-    }
+#ifdef Debug
+    fflush(stdout);
+    fflush(stderr);
+#endif
     
-    Tc_CodegenAndLink(fileAst, &interp, filePaths.objFiles.ConvertToArray());
+    Tc_CodegenAndLink(fileAst, &interp, filePaths.objFiles);
     
-    return outcome;
+    return !status;
 }
 
 template<typename t>
-t ParseArg(Array<char*> args, int* at) { static_assert(false, "Unknown command line argument type"); }
-template<> int ParseArg<int>(Array<char*> args, int* at) { int val = atoi(args[*at]); ++*at; return val; }
-template<> bool ParseArg<bool>(Array<char*> args, int* at) { return true; }
-template<> char* ParseArg<char*>(Array<char*> args, int* at) { char* val = args[*at]; ++*at; return val; }
+t ParseArg(Slice<char*> args, int* at) { static_assert(false, "Unknown command line argument type"); }
+template<> int ParseArg<int>(Slice<char*> args, int* at) { int val = atoi(args[*at]); ++*at; return val; }
+template<> bool ParseArg<bool>(Slice<char*> args, int* at) { return true; }
+template<> char* ParseArg<char*>(Slice<char*> args, int* at) { char* val = args[*at]; ++*at; return val; }
 
 enum FileExtension
 {
@@ -198,7 +183,7 @@ FileExtension GetExtensionFromPath(char* path, char** outExt)
     return File_Unknown;
 }
 
-FilePaths ParseCmdLineArgs(Array<char*> args)
+FilePaths ParseCmdLineArgs(Slice<char*> args)
 {
     FilePaths paths;
     
@@ -234,6 +219,7 @@ if(strcmp(argStr.ptr, string) == 0) { ++at; cmdLineArgs.varName = ParseArg<type>
         
         CmdLineArgsInfo
             
+            // If not any other case
         {
             ++at;
             fprintf(stderr, "Unknown command line argument: '%.*s', will be ignored.\n", (int)argStr.length, argStr.ptr);
@@ -250,7 +236,7 @@ void PrintHelp()
     constexpr int rpad = 40;
     
     printf("Ryu Compiler v0.0\n");
-    printf("Usage: ryu file1.ryu, ... [ options ] \n");
+    printf("Usage: ryu file1.ryu [ options ]\n");
     
     printf("Options:\n");
     
@@ -288,10 +274,10 @@ void PrintArg(char* argName, char* desc, t defVal, int lpad, int rpad)
     printf("\n");
 }
 
-Array<char*> ParseSrcFilePaths(Array<char*> args)
+Slice<char*> ParseSrcFilePaths(Slice<char*> args)
 {
     ScratchArena scratch;
-    Array<char*> res = { 0, 0 };
+    Slice<char*> res = { 0, 0 };
     
     // The first argument is the name of the executable
     for(int i = 1; i < args.length; ++i)
@@ -303,7 +289,7 @@ Array<char*> ParseSrcFilePaths(Array<char*> args)
     return res;
 }
 
-Array<char*> ParseObjFilePaths(Array<char*> args)
+Slice<char*> ParseObjFilePaths(Slice<char*> args)
 {
     Assert(false);
     return { 0, 0 };

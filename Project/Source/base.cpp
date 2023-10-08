@@ -41,9 +41,9 @@ size_t GetFileSize(FILE* file)
     return res;
 }
 
-// Array utilities
+// Slice utilities
 template<typename t>
-void Array<t>::Append(Arena* a, t element)
+void Slice<t>::Append(Arena* a, t element)
 {
     // If empty, allocate a new array
     if(this->length == 0)
@@ -62,7 +62,7 @@ void Array<t>::Append(Arena* a, t element)
 }
 
 template<typename t>
-void Array<t>::Resize(Arena* a, uint32 newSize)
+void Slice<t>::Resize(Arena* a, uint32 newSize)
 {
     // If empty, allocate a new array
     if(this->length == 0)
@@ -80,7 +80,7 @@ void Array<t>::Resize(Arena* a, uint32 newSize)
 }
 
 template<typename t>
-void Array<t>::ResizeAndInit(Arena* a, uint32 newSize)
+void Slice<t>::ResizeAndInit(Arena* a, uint32 newSize)
 {
     uint32 oldLength = this->length;
     this->Resize(a, newSize);
@@ -91,9 +91,9 @@ void Array<t>::ResizeAndInit(Arena* a, uint32 newSize)
 }
 
 template<typename t>
-Array<t> Array<t>::CopyToArena(Arena* to)
+Slice<t> Slice<t>::CopyToArena(Arena* to)
 {
-    Array<t> result = *this;
+    Slice<t> result = *this;
     result.ptr = (t*)Arena_AllocAndCopy(to, this->ptr, sizeof(t) * this->length);
     return result;
 }
@@ -143,16 +143,16 @@ String String::CopyToArena(Arena* to)
     return result;
 }
 
-// Array utilities
+// Slice utilities
 template<typename t>
-void DynArray<t>::Append(t element)
+void Array<t>::Append(t element)
 {
     this->Resize(this->length + 1);
     this->ptr[this->length - 1] = element;
 }
 
 template<typename t>
-void DynArray<t>::InsertAtIdx(Array<t> elements, int idx)
+void Array<t>::InsertAtIdx(Slice<t> elements, int idx)
 {
     Assert(idx < this->length);
     this->Resize(this->length + elements.length);
@@ -165,7 +165,7 @@ void DynArray<t>::InsertAtIdx(Array<t> elements, int idx)
 
 // Specialized for single element, probably faster
 template<typename t>
-void DynArray<t>::InsertAtIdx(t element, int idx)
+void Array<t>::InsertAtIdx(t element, int idx)
 {
     Assert(idx < this->length && idx >= 0);
     this->Resize(this->length + 1);
@@ -176,7 +176,7 @@ void DynArray<t>::InsertAtIdx(t element, int idx)
 }
 
 template<typename t>
-t* DynArray<t>::Reserve()
+t* Array<t>::Reserve()
 {
     this->Resize(this->length + 1);
     return &this->ptr[this->length - 1];
@@ -186,13 +186,13 @@ t* DynArray<t>::Reserve()
 // the size
 
 template<typename t>
-void DynArray<t>::Resize(uint32 newSize)
+void Array<t>::Resize(uint32 newSize)
 {
     this->length = newSize;
     if(this->capacity < this->length)
     {
-        if(this->capacity < DynArray_MinCapacity)
-            capacity = DynArray_MinCapacity;
+        if(this->capacity < Array_MinCapacity)
+            capacity = Array_MinCapacity;
         else
             this->capacity = this->length * 3 / 2;
         
@@ -202,7 +202,7 @@ void DynArray<t>::Resize(uint32 newSize)
 }
 
 template<typename t>
-void DynArray<t>::ResizeAndInit(uint32 newSize)
+void Array<t>::ResizeAndInit(uint32 newSize)
 {
     uint32 oldLength = this->length;
     this->Resize(newSize);
@@ -213,14 +213,7 @@ void DynArray<t>::ResizeAndInit(uint32 newSize)
 }
 
 template<typename t>
-Array<t> DynArray<t>::ConvertToArray()
-{
-    Array<t> res = { this->ptr, this->length };
-    return res;
-}
-
-template<typename t>
-void DynArray<t>::FreeAll()
+void Array<t>::FreeAll()
 {
     free(this->ptr);
     this->ptr      = 0;
@@ -228,11 +221,26 @@ void DynArray<t>::FreeAll()
     this->length   = 0;
 }
 
-void StringBuilder::Append(String str, Arena* dest)
+int numDigits(int n)
+{
+    int r = 1;
+    if(n < 0)
+        n = (n == INT_MIN) ? INT_MAX : -n;
+    
+    while(n > 9)
+    {
+        n /= 10;
+        r++;
+    }
+    
+    return r;
+}
+
+void StringBuilder::Append(String str)
 {
     if(this->string.ptr)
     {
-        auto ptr = (char*)Arena_ResizeLastAlloc(dest, this->string.ptr,
+        auto ptr = (char*)Arena_ResizeLastAlloc(this->arena, this->string.ptr,
                                                 sizeof(char) * this->string.length,
                                                 sizeof(char) * (this->string.length + str.length));
         Assert(ptr == this->string.ptr && "Appending to a string that was not the last allocation performed in the linear arena is not allowed");
@@ -242,13 +250,56 @@ void StringBuilder::Append(String str, Arena* dest)
     }
     else
     {
-        this->string.ptr = Arena_AllocArray(dest, str.length, char);
+        this->string.ptr = Arena_AllocArray(this->arena, str.length, char);
         memcpy(this->string.ptr, str.ptr, str.length);
         this->string.length = str.length;
     }
 }
 
-void StringBuilder::Append(Arena* dest, int numStr, ...)
+void StringBuilder::Append(char* str)
+{
+    auto strLength = strlen(str);
+    if(this->string.ptr)
+    {
+        auto ptr = (char*)Arena_ResizeLastAlloc(this->arena, this->string.ptr,
+                                                sizeof(char) * this->string.length,
+                                                sizeof(char) * (this->string.length + strLength));
+        
+        Assert(ptr == this->string.ptr && "Appending to a string that was not the last allocation performed in the linear arena is not allowed");
+        this->string.ptr = ptr;
+        memcpy((void*)(this->string.ptr + this->string.length), str, strLength);
+        this->string.length += strLength;
+    }
+    else
+    {
+        this->string.ptr = Arena_AllocArray(this->arena, strLength, char);
+        memcpy(this->string.ptr, str, strLength);
+        this->string.length = strLength;
+    }
+}
+
+void StringBuilder::Append(char c)
+{
+    if(this->string.ptr)
+    {
+        auto ptr = (char*)Arena_ResizeLastAlloc(this->arena, this->string.ptr,
+                                                sizeof(char) * this->string.length,
+                                                sizeof(char) * (this->string.length + 1));
+        
+        Assert(ptr == this->string.ptr && "Appending to a string that was not the last allocation performed in the linear arena is not allowed");
+        this->string.ptr = ptr;
+        this->string.ptr[this->string.length] = c;
+        this->string.length += 1;
+    }
+    else
+    {
+        this->string.ptr = Arena_AllocArray(this->arena, 1, char);
+        this->string.ptr[0] = c;
+        this->string.length = 1;
+    }
+}
+
+void StringBuilder::Append(int numStr, ...)
 {
     Assert(numStr > 0);
     
@@ -256,7 +307,7 @@ void StringBuilder::Append(Arena* dest, int numStr, ...)
     va_start(list, numStr);
     
     for(int i = 0; i < numStr; ++i)
-        this->Append(va_arg(list, String), dest);
+        this->Append(va_arg(list, String));
     
     va_end(list);
 }

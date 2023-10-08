@@ -29,12 +29,12 @@ struct Tc_Context
     Arena* regArena = 0;
     Arena* symArena = 0;
     Arena* flagArena = 0;
-    Array<TB_Node*> regs;
-    Array<bool> isLValue;
-    Array<Interp_Symbol*> syms;
-    Array<Tc_Region> bbs;  // Basic Blocks
+    Slice<TB_Node*> regs;
+    Slice<bool> isLValue;
+    Slice<Interp_Symbol*> syms;
+    Slice<Tc_Region> bbs;  // Basic Blocks
     TB_PassingRule retPassingRule;
-    Array<TB_PassingRule> argPassingRules;
+    Slice<TB_PassingRule> argPassingRules;
     
     InstrIdx lastRegion = InstrIdx_Unused;
     
@@ -50,7 +50,7 @@ struct Tc_Context
 Tc_Context Tc_InitCtx(TB_Module* module, bool emitAsm);
 void Tc_ResetCtx(Tc_Context* ctx);
 
-void Tc_CodegenAndLink(Ast_FileScope* file, Interp* interp, Array<char*> objFiles);
+void Tc_CodegenAndLink(Ast_FileScope* file, Interp* interp, Slice<char*> objFiles);
 
 // From bytecode
 TB_DataType Tc_ToTBType(Interp_Type type);

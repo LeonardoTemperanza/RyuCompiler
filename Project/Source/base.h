@@ -117,7 +117,7 @@ struct ProfileFuncGuard
 
 // Generic data structures
 template<typename t>
-struct Array
+struct Slice
 {
     t* ptr = 0;
     int64 length = 0;
@@ -125,7 +125,7 @@ struct Array
     void Append(Arena* a, t element);
     void Resize(Arena* a, uint32 newSize);
     void ResizeAndInit(Arena* a, uint32 newSize);
-    Array<t> CopyToArena(Arena* to);
+    Slice<t> CopyToArena(Arena* to);
     cforceinline t last() { return this->ptr[this->length-1]; };
     
 #ifdef BoundsChecking
@@ -144,24 +144,21 @@ struct Array
 #define for_array(loopVar, array) for(int loopVar = 0; loopVar < (array).length; ++loopVar)
 
 // Used for dynamic arrays with unknown/variable lifetimes
-#define DynArray_MinCapacity 16
+#define Array_MinCapacity 16
 template<typename t>
-struct DynArray
+struct Array : public Slice<t>
 {
-    t* ptr = 0;
-    int64 length = 0;
     int64 capacity = 0;
     
     // All of the below functions assume that the array is initialized
     void Init(int64 initCapacity = DynArray_MinCapacity) { ptr = (t*)malloc(sizeof(t)*initCapacity); capacity = initCapacity; };
     void Append(t element);
-    void InsertAtIdx(Array<t> elements, int idx);
+    void InsertAtIdx(Slice<t> elements, int idx);
     void InsertAtIdx(t element, int idx);
     t* Reserve();
     void Resize(uint32 numElements);
     void ResizeAndInit(uint32 numElements);
     cforceinline t last() { return this->ptr[this->length-1]; };
-    Array<t> ConvertToArray();  // Returns the array as a "slice" of the current DynArray
     //Array<t> CopyToArena(Arena* to);
     void FreeAll();
     
@@ -193,7 +190,7 @@ struct PtrMapEntry
 template<typename k, typename v>
 struct PtrMap
 {
-    Array<uint32> hashes;
+    Slice<uint32> hashes;
     PtrMapEntry<k, v>* entries;
     uint32 count;
     uint32 capacity;
@@ -237,6 +234,8 @@ cforceinline t max(t i, t j) { return i < j? j : i; }
 template<typename t>
 cforceinline t min(t i, t j) { return i > j? j : i; }
 
+int numDigits(int n);
+
 // I/O utilities
 size_t GetFileSize(FILE* file);
 char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName);
@@ -253,8 +252,15 @@ char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName);
 struct StringBuilder
 {
     String string = { 0, 0 };
-    void Append(String str, Arena* dest);
-    void Append(Arena* dest, int numStr, ...);
+    Arena* arena;
+    
+    StringBuilder() = delete;
+    StringBuilder(Arena* arena) { this->arena = arena; }
+    void Reset() { this->string = { 0, 0 }; }
+    void Append(String str);
+    void Append(char* str);
+    void Append(char c);
+    void Append(int numStr, ...);
     String ToString(Arena* dest);
 };
 
@@ -321,7 +327,8 @@ Defer<F> DeferFunc(F&& f)
 //    // delete will be executed here
 //    }
 
-// Using this so that comparisons can be inlined
+
+// Using this quicksort implementation so that comparisons can be inlined
 
 ////////////////////////////////////////////////////////////
 ///////////  qsort as C Macro implementation ///////////////

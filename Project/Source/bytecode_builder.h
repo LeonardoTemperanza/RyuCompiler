@@ -10,7 +10,7 @@ struct Builder_MiddleInsert
     // will then get copied and inserted
     // in the middle of the array
     Arena* arena = 0;
-    Array<Interp_Instr> instrs = { 0, 0 };
+    Slice<Interp_Instr> instrs = { 0, 0 };
     int insertPoint = 0;
     
     // Use offset array to shift the insertion point
@@ -22,15 +22,15 @@ struct Interp_Builder
 {
     // Maps declaration indices to registers that contain their
     // addresses.
-    DynArray<RegIdx> declToAddr;
+    Array<RegIdx> declToAddr;
     
     // Registers used for local addresses, argument values
     // and whatnot. These are ordered, by construction.
-    DynArray<RegIdx> permanentRegs;
+    Array<RegIdx> permanentRegs;
     
     // Used for updating indices after inserting elements in
     // the middle of the instruction array.
-    DynArray<RegIdx> instrOffsets;
+    Array<RegIdx> instrOffsets;
     
     // Tells us which register to currently use.
     // Must be reset after the end of an expression
@@ -48,9 +48,11 @@ struct Interp_Builder
     // Important for correctness, not just code size
     bool genJump = false;
     
-    DynArray<InstrIdx> breaks;
-    DynArray<InstrIdx> continues;
-    DynArray<InstrIdx> fallthroughs;
+    Array<InstrIdx> breaks;
+    Array<InstrIdx> continues;
+    Array<InstrIdx> fallthroughs;
+    Array<Ast_Node*> deferStack;
+    int curDeferIdx = 0;
     
     // NOTE: Used for getting the passing rules for arguments and return values
     TB_Module* module;
@@ -72,11 +74,11 @@ Interp_Instr* Interp_InsertInstr(Interp_Builder* builder);
 void Interp_AdvanceReg(Interp_Builder* builder);
 RegIdx Interp_GetFirstUnused(Interp_Builder* builder);
 uint32 Interp_AllocateRegIdxArray(Interp_Builder* builder, RegIdx* values, uint16 arrayCount);
-uint32 Interp_AllocateRegIdxArray(Interp_Builder* builder, Array<RegIdx> values);
+uint32 Interp_AllocateRegIdxArray(Interp_Builder* builder, Slice<RegIdx> values);
 uint32 Interp_AllocateInstrIdxArray(Interp_Builder* builder, InstrIdx* values, uint32 arrayCount);
-uint32 Interp_AllocateInstrIdxArray(Interp_Builder* builder, Array<InstrIdx> instrs);
+uint32 Interp_AllocateInstrIdxArray(Interp_Builder* builder, Slice<InstrIdx> instrs);
 uint32 Interp_AllocateConstArray(Interp_Builder* builder, int64* values, uint32 count);
-uint32 Interp_AllocateConstArray(Interp_Builder* builder, Array<int64> consts);
+uint32 Interp_AllocateConstArray(Interp_Builder* builder, Slice<int64> consts);
 InstrIdx Interp_UpdateInstrIdx(Interp_Builder* builder, InstrIdx idx, int oldOffset);
 InstrIdx Interp_Placeholder(Interp_Builder* builder);
 InstrIdx Interp_Region(Interp_Builder* builder);
@@ -151,7 +153,7 @@ RegIdx Interp_CmpFGT(Interp_Builder* builder, RegIdx reg1, RegIdx reg2);
 RegIdx Interp_CmpFGE(Interp_Builder* builder, RegIdx reg1, RegIdx reg2);
 // Intrinsics... Not supporting those for now
 RegIdx Interp_SysCall(Interp_Builder* builder);
-RegIdx Interp_Call(Interp_Builder* builder, RegIdx target, Array<RegIdx> args);
+RegIdx Interp_Call(Interp_Builder* builder, RegIdx target, Slice<RegIdx> args);
 void Interp_Safepoint(Interp_Builder* builder);
 InstrIdx Interp_Goto(Interp_Builder* builder, InstrIdx target);
 InstrIdx Interp_Goto(Interp_Builder* builder);
@@ -159,15 +161,9 @@ InstrIdx Interp_If(Interp_Builder* builder, RegIdx value, InstrIdx ifInstr, Inst
 InstrIdx Interp_If(Interp_Builder* builder, RegIdx value);
 void Interp_PatchIf(Interp_Builder* builder, InstrIdx ifInstr, RegIdx value, InstrIdx thenInstr, InstrIdx elseInstr);
 void Interp_PatchGoto(Interp_Builder* builder, InstrIdx gotoInstr, InstrIdx target);
+void Interp_PatchBranch(Interp_Builder* builder, InstrIdx branchInstr, Slice<int64> values, Slice<InstrIdx> regions, InstrIdx defaultRegion);
 InstrIdx Interp_Branch(Interp_Builder* builder);
 void Interp_Return(Interp_Builder* builder, RegIdx retValue);
-
-Interp_Val Interp_Assign(Interp_Builder* builder, Interp_Val src, TypeInfo* srcType, Interp_Val dst, TypeInfo* dstType);
-void Interp_ConvertExternProc(Interp* interp, Ast_ProcDef* astProc);
-Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc);
-Interp_Type Interp_ConvertType(TypeInfo* type);
-RegIdx Interp_ConvertTypeConversion(Interp_Builder* builder, RegIdx src, Interp_Type srcType, TypeInfo* srcFullType, TypeInfo* dst);
-RegIdx Interp_ConvertTypeConversion(Interp_Builder* builder, RegIdx src, Interp_Type srcType, Interp_Type dstType, bool srcIsSigned, bool dstIsSigned);
 
 // Print Utilities
 void Interp_PrintProc(Interp_Proc* proc);

@@ -450,18 +450,18 @@ struct Interp_Proc
 {
     // These are per-proc for parallelism
     // and also so that indices can be smaller
-    DynArray<InstrIdx> instrArrays;
-    DynArray<RegIdx> regArrays;
-    DynArray<int64> constArrays;
+    Array<InstrIdx> instrArrays;
+    Array<RegIdx> regArrays;
+    Array<int64> constArrays;
     
     // This will be used even if the tilde codegen is not used.
     // It's for generating ABI-compliant bytecode, which can then
     // be seamlessly (hopefully) converted to any other IR for codegen.
     // This is for bytecode gen, and actually matches the AST arguments
-    DynArray<TB_PassingRule> argRules;
+    Array<TB_PassingRule> argRules;
     TB_PassingRule retRule;
     
-    DynArray<Interp_Instr> instrs;
+    Array<Interp_Instr> instrs;
     
     // NOTE: Used for getting the passing rules for arguments and return values
     TB_Module* module;
@@ -470,7 +470,7 @@ struct Interp_Proc
     Interp_Symbol* symbol;
     
     // Function description used for codegen
-    DynArray<Interp_Type> argTypes;
+    Array<Interp_Type> argTypes;
     Interp_Type retType;
 };
 
@@ -492,25 +492,20 @@ struct Interp_Register
 
 struct Interp
 {
-    Typer* typer;
-    DepGraph* graph;
-    
     // NOTE: This is here just because
     // the tb functions that are used to get
     // the ABI-compliant signatures require a module
     TB_Module* module;
     
-    DynArray<Interp_Symbol> symbols;
-    DynArray<Interp_Proc> procs;
-    
-    Array<Interp_Instr> globalInstrs;
+    Array<Interp_Symbol> symbols;
+    Array<Interp_Proc> procs;
 };
 
 struct VirtualMachine
 {
     Arena stackArena;
     
-    DynArray<Interp_Register> registers;
+    Array<Interp_Register> registers;
     
     uchar* retStack;
     size_t stackFrameAddress;
@@ -557,6 +552,7 @@ cforceinline bool Interp_IsValueValid(Interp_Val val)
 
 // Code generation
 Interp Interp_Init();
+void GenBytecode(Interp* interp, Ast_Node* node);
 Interp_Proc* Interp_MakeProc(Interp_Builder* builder, Interp* interp);
 Interp_Symbol* Interp_MakeSymbol(Interp* interp);
 RegIdx Interp_BuildPreRet(Interp_Builder* builder, RegIdx arg, Interp_Val val, TypeInfo* type, TB_PassingRule rule);
@@ -565,6 +561,13 @@ Interp_Val Interp_GetRet(Interp_Builder* builder, TB_PassingRule rule, RegIdx re
 RegIdx Interp_GetRVal(Interp_Builder* builder, Interp_Val val, TypeInfo* type);
 void Interp_EndOfExpression(Interp_Builder* builder);  // At this point registers can be reused
 RegIdx Interp_ConvertNodeRVal(Interp_Builder* builder, Ast_Node* node);
+
+Interp_Val Interp_Assign(Interp_Builder* builder, Interp_Val src, TypeInfo* srcType, Interp_Val dst, TypeInfo* dstType);
+void Interp_ConvertExternProc(Interp* interp, Ast_ProcDecl* astProc);
+Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc);
+Interp_Type Interp_ConvertType(TypeInfo* type);
+RegIdx Interp_ConvertTypeConversion(Interp_Builder* builder, RegIdx src, Interp_Type srcType, TypeInfo* srcFullType, TypeInfo* dst);
+RegIdx Interp_ConvertTypeConversion(Interp_Builder* builder, RegIdx src, Interp_Type srcType, Interp_Type dstType, bool srcIsSigned, bool dstIsSigned);
 
 // NOTE(Leo): Handles conversion for all nodes, and also takes care of
 // type conversions if the node is an expression. Called functions
@@ -577,11 +580,11 @@ void Interp_ConvertFor(Interp_Builder* builder, Ast_For* stmt);
 void Interp_ConvertWhile(Interp_Builder* builder, Ast_While* stmt);
 void Interp_ConvertDoWhile(Interp_Builder* builder, Ast_DoWhile* stmt);
 void Interp_ConvertSwitch(Interp_Builder* builder, Ast_Switch* stmt);
-void Interp_ConvertDefer(Interp_Builder* builder, Ast_Defer* stmt);
 void Interp_ConvertReturn(Interp_Builder* builder, Ast_Return* stmt);
-void Interp_ConvertSimpleJump(Interp_Builder* builder, DynArray<InstrIdx> toPatch);
+void Interp_ConvertSimpleJump(Interp_Builder* builder, Array<InstrIdx>* toPatch);
+void Interp_PatchJumps(Interp_Builder* builder, InstrIdx region, Array<InstrIdx>* toPatch);
 Interp_Val Interp_ConvertIdent(Interp_Builder* builder, Ast_IdentExpr* expr);
-Array<Interp_Val> Interp_ConvertCall(Interp_Builder* builder, Ast_FuncCall* call, Arena* allocTo);
+Slice<Interp_Val> Interp_ConvertCall(Interp_Builder* builder, Ast_FuncCall* call, Arena* allocTo);
 Interp_Val Interp_ConvertBinExpr(Interp_Builder* builder, Ast_BinaryExpr* expr);
 Interp_Val Interp_ConvertLogicExpr(Interp_Builder* builder, Ast_BinaryExpr* expr);
 Interp_Val Interp_ConvertUnaryExpr(Interp_Builder* builder, Ast_UnaryExpr* expr);

@@ -49,6 +49,7 @@ bool CheckNode(Typer* t, Ast_Node* node)
     
     switch(node->kind)
     {
+        case AstKind_ProcDecl:      outcome = CheckProcDecl(t, (Ast_ProcDecl*)node); break;
         case AstKind_ProcDef:       outcome = CheckProcDef(t, (Ast_ProcDef*)node); break;
         case AstKind_StructDef:     outcome = CheckStructDef(t, (Ast_StructDef*)node); break;
         case AstKind_DeclBegin:     break;
@@ -94,46 +95,63 @@ bool CheckNode(Typer* t, Ast_Node* node)
     return outcome;
 }
 
+bool CheckProcDecl(Typer* t, Ast_ProcDecl* decl)
+{
+    // TODO: Ok, this is getting ridiculous. Types
+    // should just have a Token* I think
+    
+    auto procType = Ast_GetProcType(decl);
+    
+    // Look up return types
+    if(procType->retTypes.length > 0)
+    {
+        if(!CheckType(t, procType->retTypes[0], decl->where))
+            return false;
+    }
+    
+    // Look up argument types
+    for(int i = 0; i < procType->args.length; ++i)
+    {
+        if(!CheckType(t, procType->args[i]->type, decl->where))
+            return false;
+    }
+    
+    if(!CheckNotAlreadyDeclared(t, t->curScope, decl)) return false;
+    
+    for_array(i, procType->args)
+    {
+        for(int j = 0; j < i; ++j)
+        {
+            if(procType->args[i]->name == procType->args[j]->name)
+            {
+                SemanticError(t, procType->args[i]->where, StrLit("Found duplicate argument name: this argument has the same name..."));
+                SemanticErrorContinue(t, procType->args[j]->where, StrLit("... as this one."));
+                return false;
+            }
+        }
+    }
+    
+    return true;
+}
+
 bool CheckProcDef(Typer* t, Ast_ProcDef* proc)
 {
     t->currentProc = proc;
     t->checkedReturnStmt = false;
     
-    auto declProc = Ast_GetDeclProc(proc);
-    
-    // TODO: Ok, this is getting ridiculous. Types
-    // should just have a Token* I think
-    
-    // Look up return types
-    if(declProc->retTypes.length > 0)
+    if(proc->decl->phase < CompPhase_Typecheck)
     {
-        if(!CheckType(t, declProc->retTypes[0], proc->where))
-            return false;
+        Dg_Yield(t->graph, proc->decl, CompPhase_Typecheck);
+        return false;
     }
     
-    // Look up argument types
-    for(int i = 0; i < declProc->args.length; ++i)
-    {
-        if(!CheckType(t, declProc->args[i]->type, proc->where))
-            return false;
-    }
+    // TODO: Add declarations to the block
     
-    if(!AddDeclaration(t, t->curScope, proc)) return false;
-    
-    for(int i = 0; i < declProc->args.length; ++i)
-    {
-        if(!AddDeclaration(t, &proc->block, declProc->args[i]))
-            return false;
-    }
-    
-    // Skip the definition if it's marked as external
-    if(proc->declSpecs & Decl_Extern)
-        return true;
     
     // Definition
     if(!CheckBlock(t, &proc->block)) return false;
     
-    auto retTypes = Ast_GetDeclProc(proc)->retTypes;
+    auto retTypes = Ast_GetProcDefType(proc)->retTypes;
     if(retTypes.length > 0 && !t->checkedReturnStmt)
     {
         SemanticError(t, t->currentProc->where, StrLit("Procedure has a return type but no return statement was found."));
@@ -145,7 +163,7 @@ bool CheckProcDef(Typer* t, Ast_ProcDef* proc)
 
 bool CheckStructDef(Typer* t, Ast_StructDef* structDef)
 {
-    auto structType = Ast_GetDeclStruct(structDef);
+    auto structType = Ast_GetStructType(structDef);
     for_array(i, structType->memberTypes)
     {
         if(!CheckType(t, structType->memberTypes[i], structDef->where))
@@ -158,7 +176,7 @@ bool CheckStructDef(Typer* t, Ast_StructDef* structDef)
 bool CheckVarDecl(Typer* t, Ast_VarDecl* decl)
 {
     if(!CheckType(t, decl->type, Ast_GetVarDeclTypeToken(decl))) return false;
-    if(!AddDeclaration(t, t->curScope, decl)) return false;
+    if(!CheckNotAlreadyDeclared(t, t->curScope, decl)) return false;
     
     if(decl->initExpr)
     {
@@ -191,6 +209,7 @@ bool CheckBlock(Typer* t, Ast_Block* block)
     {
         Ast_Node* node = block->stmts[i];
         result &= CheckNode(t, node);
+        if(!result) break;
     }
     
     return result;
@@ -216,6 +235,13 @@ bool CheckIf(Typer* t, Ast_If* stmt)
             
             if(stmt->elseStmt)
             {
+                // If the else statement contains a single declaration,
+                // it will be added to this ficticious scope
+                Ast_Block tmpBlock;
+                tmpBlock.enclosing = t->curScope;
+                t->curScope = &tmpBlock;
+                defer(tmpBlock.decls.FreeAll());
+                
                 if(!CheckNode(t, stmt->elseStmt))
                     return false;
             }
@@ -292,6 +318,15 @@ bool CheckDoWhile(Typer* t, Ast_DoWhile* stmt)
     t->inLoopBlock = true;
     defer(t->inLoopBlock = wasInLoopBlock);
     
+    // If the do statement is a single declaration,
+    // it will be added to this ficticious block
+    Ast_Block tmpBlock;
+    tmpBlock.enclosing = t->curScope;
+    auto prevScope = t->curScope;
+    t->curScope = &tmpBlock;
+    defer(t->curScope = prevScope;
+          tmpBlock.decls.FreeAll(););
+    
     if(!CheckNode(t, stmt->doStmt))    return false;
     if(!CheckNode(t, stmt->condition)) return false;
     stmt->condition->castType = &Typer_Bool;
@@ -363,6 +398,13 @@ bool CheckDefer(Typer* t, Ast_Defer* stmt)
     t->inDeferBlock = true;
     defer(t->inDeferBlock = false);
     
+    // If the defer statement contains a single declaration, it will
+    // be added to this ficticious scope.
+    Ast_Block tmpBlock;
+    tmpBlock.enclosing = t->curScope;
+    auto prevScope = t->curScope;
+    t->curScope = &tmpBlock;
+    defer(t->curScope = prevScope);
     if(!CheckNode(t, stmt->stmt)) return false;
     
     return true;
@@ -381,7 +423,7 @@ bool CheckReturn(Typer* t, Ast_Return* stmt)
     t->checkedReturnStmt = true;
     
     auto retStmt = (Ast_Return*)stmt;
-    Array<TypeInfo*> retTypes = Ast_GetDeclProc(t->currentProc)->retTypes;
+    Slice<TypeInfo*> retTypes = Ast_GetProcDefType(t->currentProc)->retTypes;
     
     // Mismatching
     if(retTypes.length != retStmt->rets.length)
@@ -461,7 +503,7 @@ bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt)
     
     // Check all declarations
     ScratchArena scratch;
-    Array<TypeInfo*> leftTypes;
+    Slice<TypeInfo*> leftTypes;
     for_array(i, lefts)
     {
         TypeInfo* type = CheckDeclOrExpr(t, lefts[i]);
@@ -474,7 +516,7 @@ bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt)
     int rightCounter = 0;
     while(leftCounter < lefts.length && rightCounter < rights.length)
     {
-        Array<TypeInfo*> toCheck;  // > 1 if there's a function call with multiple return values, = 1 for anything else
+        Slice<TypeInfo*> toCheck;  // > 1 if there's a function call with multiple return values, = 1 for anything else
         
         // Current rhs (which means, zero or more types due to multiple returns)
         if(stmt->rights[rightCounter]->kind == AstKind_FuncCall)
@@ -483,7 +525,7 @@ bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt)
             auto call = (Ast_FuncCall*)stmt->rights[rightCounter];
             if(!CheckFuncCall(t, call, true)) return false;
             
-            auto procDecl = Ast_GetDeclCallTarget(call);
+            auto procDecl = Ast_GetCallType(call);
             toCheck = procDecl->retTypes;
         }
         else
@@ -530,10 +572,7 @@ bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt)
     
     if(leftCounter != lefts.length || rightCounter != rights.length)
     {
-        bool tempPrint = t->tokenizer->status != CompStatus_Error;
-        SemanticError(t, stmt->where, StrLit("Mismatching number of left-hand and right-hand side values (x and y, respectively)"));
-        if(tempPrint) fprintf(stderr, "%d %d\n", leftCounter, rightCounter);
-        
+        SemanticError(t, stmt->where, StrLit("Mismatching number of left-hand and right-hand side values (%d and %d, respectively)"), lefts.length, rightCounter);
         return false;
     }
     
@@ -549,10 +588,17 @@ Ast_Declaration* CheckIdent(Typer* t, Ast_IdentExpr* expr)
 {
     ProfileFunc(prof);
     
-    auto node = IdentResolution(t, t->curScope, expr->ident);
+    auto node = IdentResolution(t, t->curScope, expr->where, expr->ident);
     if(!node)
     {
         SemanticError(t, expr->where, StrLit("Undeclared identifier."));
+        return 0;
+    }
+    
+    // Check the compPhase only if it's an independent entity (so, != Dg_Null)
+    if(node->entityIdx != Dg_Null && node->phase < CompPhase_Typecheck)
+    {
+        Dg_Yield(t->graph, node, CompPhase_Typecheck);
         return 0;
     }
     
@@ -686,9 +732,12 @@ bool CheckBinExpr(Typer* t, Ast_BinaryExpr* bin)
                         ScratchArena scratch;
                         String ltypeStr = TypeInfo2String(ltype, scratch);
                         String rtypeStr = TypeInfo2String(rtype, scratch);
-                        StringBuilder b;
-                        b.Append(scratch, 5, StrLit("Cannot apply binary operator to '"), ltypeStr,
-                                 StrLit("' and '"), rtypeStr, StrLit("'"));
+                        StringBuilder b(scratch);
+                        b.Append("Cannot apply binary operator to '");
+                        b.Append(ltypeStr);
+                        b.Append("' and '");
+                        b.Append(rtypeStr);
+                        b.Append("'");
                         SemanticError(t, bin->where, b.string);
                         return false;
                     }
@@ -1072,9 +1121,6 @@ TypeInfo* CheckCondition(Typer* t, Ast_Node* node)
 
 bool CheckType(Typer* t, TypeInfo* type, Token* where)
 {
-    // TODO: this should be modified in the future to yield
-    // in particular cases (#run directive for instance, or #type_of)
-    
     // Check if there is a pure 'raw' type
     {
         if(type->typeId == Typeid_Raw)
@@ -1110,10 +1156,10 @@ bool CheckType(Typer* t, TypeInfo* type, Token* where)
     if(baseType->typeId == Typeid_Ident)
     {
         auto identDecl = (Ast_IdentType*)baseType;
-        auto node = IdentResolution(t, t->curScope, identDecl->ident);
+        auto node = IdentResolution(t, t->curScope, where, identDecl->ident);
         if(!node || node->kind != AstKind_StructDef)
         {
-            SemanticError(t, where, StrLit("Struct with such name was not found."));
+            SemanticError(t, where, StrLit("Type with such name was not found."));
             return false;
         }
         
@@ -1125,55 +1171,84 @@ bool CheckType(Typer* t, TypeInfo* type, Token* where)
 
 bool ComputeSize(Typer* t, Ast_Node* node)
 {
-    if(node->kind == AstKind_StructDef)
+    switch_nocheck(node->kind)
     {
-        bool outcome = true;
-        auto structDef = (Ast_StructDef*)node;
-        auto declStruct = Ast_GetDeclStruct(structDef);
-        ComputeSize_Ret ret = ComputeStructSize(t, declStruct, structDef->where, &outcome);
-        
-        if(outcome)
+        case AstKind_StructDef:
         {
-            declStruct->size = ret.size;
-            declStruct->align = ret.align;
-            //printf("Outcome = true, Size: %d\n", ret.size);
-        }
-        else
-        {
-            //printf("Outcome = false\n");
-        }
-        
-        return outcome;
-    }
-    // Fill in all of the proc's declarations with the appropriate sizes
-    else if(node->kind == AstKind_ProcDef)
-    {
-        auto procDef = (Ast_ProcDef*)node;
-        for_array(i, procDef->declsFlat)
-        {
-            // TODO: this currently doesn't work with arrays
+            bool outcome = true;
+            auto structDef = (Ast_StructDef*)node;
+            auto declStruct = Ast_GetStructType(structDef);
+            ComputeSize_Ret ret = ComputeStructSize(t, declStruct, structDef->where, &outcome);
             
-            auto decl = procDef->declsFlat[i];
-            if(decl->type->typeId == Typeid_Ident)
+            if(outcome)
             {
-                auto identDecl = (Ast_IdentType*)decl->type;
-                auto referTo = identDecl->structDef;
-                if(referTo->phase < CompPhase_ComputeSize)
-                {
-                    Dg_Yield(t->graph, referTo, CompPhase_ComputeSize);
-                    return false;
-                }
-                
-                // The struct we're referring to has passed the ComputeSize phase
-                decl->type->size = referTo->type->size;
-                decl->type->align = referTo->type->align;
+                declStruct->size = ret.size;
+                declStruct->align = ret.align;
+                //printf("Outcome = true, Size: %d\n", ret.size);
             }
+            else
+            {
+                //printf("Outcome = false\n");
+            }
+            
+            return outcome;
         }
-        
-        return true;
-    }
+        case AstKind_VarDecl:
+        {
+            auto varDecl = (Ast_VarDecl*)node;
+            return FillInTypeSize(t, varDecl->type, Ast_GetVarDeclTypeToken(varDecl));
+        }
+        case AstKind_ProcDecl:
+        {
+            return true;
+        }
+        case AstKind_ProcDef:
+        {
+            auto procDef = (Ast_ProcDef*)node;
+            for_array(i, procDef->declsFlat)
+            {
+                // TODO: this currently doesn't work with arrays
+                
+                auto decl = procDef->declsFlat[i];
+                if(decl->type->typeId == Typeid_Ident)
+                {
+                    auto identDecl = (Ast_IdentType*)decl->type;
+                    auto referTo = identDecl->structDef;
+                    if(referTo->phase < CompPhase_ComputeSize)
+                    {
+                        Dg_Yield(t->graph, referTo, CompPhase_ComputeSize);
+                        return false;
+                    }
+                    
+                    // The struct we're referring to has passed the ComputeSize phase
+                    decl->type->size = referTo->type->size;
+                    decl->type->align = referTo->type->align;
+                }
+            }
+            
+            return true;
+        }
+    } switch_nocheck_end;
     
     return false;
+}
+
+bool FillInTypeSize(Typer* t, TypeInfo* type, Token* errTok)
+{
+    if(type->typeId == Typeid_Ident)
+    {
+        auto structType = (Ast_StructType*)type;
+        //structType = 
+    }
+    else if(type->typeId == Typeid_Arr)
+    {
+        // Recursively call fill in type size for subtype and then figure out if the count is usable
+        
+        SemanticError(t, errTok, StrLit("aaah! arrays don't work atm"));
+        return false;
+    }
+    
+    return true;
 }
 
 ComputeSize_Ret ComputeStructSize(Typer* t, Ast_StructType* declStruct, Token* errTok, bool* outcome)
@@ -1220,7 +1295,7 @@ ComputeSize_Ret ComputeStructSize(Typer* t, Ast_StructType* declStruct, Token* e
         {
             auto itIdent = (Ast_IdentType*)it;
             auto structDef = itIdent->structDef;
-            auto structDecl = Ast_GetDeclStruct(structDef);
+            auto structDecl = Ast_GetStructType(structDef);
             if(structDef->phase < CompPhase_ComputeSize)
             {
                 Dg_Yield(t->graph, structDef, CompPhase_ComputeSize);
@@ -1256,14 +1331,28 @@ ComputeSize_Ret ComputeStructSize(Typer* t, Ast_StructType* declStruct, Token* e
 // This will later use a hash-table.
 // Each scope will have its own hash-table, and the search will just be
 // a linked-list traversal of hash-tables (or arrays if the number of decls is low)
-Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Atom* ident)
+Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Token* where, Atom* ident)
 {
     ProfileFunc(prof);
     
     for(Ast_Block* curScope = scope; curScope; curScope = curScope->enclosing)
     {
-        for(int i = 0; i < curScope->decls.length; ++i)
+        auto& decls = curScope->decls;
+        
+        for(int i = 0; i < decls.length; ++i)
         {
+            bool applyOrderConstraint = false;
+            applyOrderConstraint |= decls[i]->kind == AstKind_ProcDef;
+            applyOrderConstraint |= decls[i]->kind == AstKind_StructDef;
+            if(decls[i]->kind == AstKind_VarDecl)
+            {
+                auto var = (Ast_VarDecl*)decls[i];
+                applyOrderConstraint |= (var->declIdx == -1);  // If it's a global variable declaration it doesn't matter
+            }
+            
+            if(applyOrderConstraint && curScope->decls[i]->where < where)
+                continue;
+            
             if(curScope->decls[i]->name == ident)
                 return curScope->decls[i];
         }
@@ -1272,45 +1361,24 @@ Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Atom* ident)
     return 0;
 }
 
-bool AddDeclaration(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
+bool CheckNotAlreadyDeclared(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
 {
-    // Check redefinition
-    bool redefinition = false;
-    bool alreadyDefined = false;
-    for(int i = 0; i < scope->decls.length; ++i)
+    for(int i = 0; i < scope->decls.length && scope->decls[i]->where < decl->where; ++i)
     {
-        // Doesn't count as redefinition if we just find ourselves,
-        // somebody could have added us earlier to the symbol table
         if(scope->decls[i]->name == decl->name)
         {
             if(scope->decls[i] != decl)
             {
                 SemanticError(t, decl->where, StrLit("Redefinition, this symbol was already defined in this scope, ..."));
                 SemanticErrorContinue(t, scope->decls[i]->where, StrLit("... here"));
-                redefinition = true;
+                return false;
             }
-            else
-                alreadyDefined = true;
         }
     }
     
-    if(!redefinition && !alreadyDefined)
-    {
-        scope->decls.Append(decl);
-        // currentProc == null means we're top level
-        if(t->currentProc && decl->kind == AstKind_VarDecl)
-        {
-            auto varDecl = (Ast_VarDecl*)decl;
-            t->currentProc->declsFlat.Append(decl);
-            varDecl->declIdx = t->currentProc->declsFlat.length - 1;
-        }
-    }
-    
-    return !redefinition;
+    return true;
 }
 
-// TODO: I actually assumed that this was a shallow check only, which is not true
-// so I should check all the calls to this function to make sure it's used correctly
 TypeInfo* GetBaseType(TypeInfo* type)
 {
     while(true)
@@ -1349,7 +1417,7 @@ bool TypesCompatible(Typer* t, TypeInfo* src, TypeInfo* dst)
     
     if(src == dst) return true;
     
-    // Zero can convert into anything
+    // TODO: Zero can convert into anything
     
     
     // @cleanup This should just get cleaned up
@@ -1408,7 +1476,7 @@ bool TypesCompatible(Typer* t, TypeInfo* src, TypeInfo* dst)
     else if(src->typeId == Typeid_Ptr)
     {
         // If the destination is a raw pointer, anything works.
-        if(GetBaseType(dst)->typeId == Typeid_Raw)
+        if(GetBaseTypeShallow(dst)->typeId == Typeid_Raw)
             return true;
         
         return TypesIdentical(t, src, dst);
@@ -1586,7 +1654,7 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
     ScratchArena scratch(dest);
     ScratchArena scratch2(dest, scratch);
     
-    StringBuilder strBuilder;
+    StringBuilder strBuilder(scratch);
     
     bool quit = false;
     while(!quit)
@@ -1596,28 +1664,36 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
             if(type->typeId == Typeid_Float)
             {
                 if(type->size == 4)
-                    strBuilder.Append(StrLit("float"), scratch);
+                    strBuilder.Append("float");
                 else if(type->size == 8)
-                    strBuilder.Append(StrLit("double"), scratch);
+                    strBuilder.Append("double");
                 else Assert(false && "Unreachable code");
             }
             else if(type->typeId == Typeid_Integer)
             {
                 if(!type->isSigned)
-                    strBuilder.Append(StrLit("u"), scratch);
+                    strBuilder.Append('u');
                 
                 char buf[6];
                 int numChars = snprintf(buf, 6, "int%lld", type->size * 8);
                 String str = { buf, numChars };
-                strBuilder.Append(str, scratch);
+                strBuilder.Append(str);
             }
             else if(type->typeId == Typeid_Bool)
             {
-                strBuilder.Append(StrLit("bool"), scratch);
+                strBuilder.Append("bool");
             }
             else if(type->typeId == Typeid_Char)
             {
-                strBuilder.Append(StrLit("char"), scratch);
+                strBuilder.Append("char");
+            }
+            else if(type->typeId == Typeid_None)
+            {
+                strBuilder.Append("none");
+            }
+            else if(type->typeId == Typeid_Raw)
+            {
+                strBuilder.Append("raw");
             }
             else Assert(false && "Unreachable code");
             
@@ -1628,7 +1704,7 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
             default: Assert(false); break;
             case Typeid_None:
             {
-                strBuilder.Append(StrLit("none"), scratch);
+                strBuilder.Append("none");
                 quit = true;
                 break;
             }
@@ -1636,19 +1712,19 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
             {
                 char* nullTerminated = ((Ast_IdentType*)type)->ident->string;
                 String ident = { nullTerminated, (int64)strlen(nullTerminated) };
-                strBuilder.Append(ident, scratch);
+                strBuilder.Append(ident);
                 quit = true;
                 break;
             }
             case Typeid_Ptr:
             {
-                strBuilder.Append(StrLit("^"), scratch);
+                strBuilder.Append("^");
                 type = ((Ast_PtrType*)type)->baseType;
                 break;
             }
             case Typeid_Arr:
             {
-                strBuilder.Append(StrLit("[]"), scratch);
+                strBuilder.Append("[]");
                 type = ((Ast_ArrType*)type)->baseType;
                 break;
             }
@@ -1664,32 +1740,32 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
                 for_array(i, procType->retTypes)
                     retTypesStr[i] = TypeInfo2String(procType->retTypes[i], scratch2);
                 
-                strBuilder.Append(StrLit("proc ("), scratch);
+                strBuilder.Append("proc (");
                 
                 for_array(i, procType->args)
                 {
-                    strBuilder.Append(argTypesStr[i], scratch);
+                    strBuilder.Append(argTypesStr[i]);
                     if(i != procType->args.length - 1)
-                        strBuilder.Append(StrLit(", "), scratch);
+                        strBuilder.Append(", ");
                 }
                 
-                strBuilder.Append(StrLit(")->"), scratch);
+                strBuilder.Append(")->");
                 
                 if(procType->retTypes.length > 1)
-                    strBuilder.Append(StrLit("("), scratch);
+                    strBuilder.Append("(");
                 
                 for_array(i, procType->retTypes)
-                    strBuilder.Append(retTypesStr[i], scratch);
+                    strBuilder.Append(retTypesStr[i]);
                 
                 if(procType->retTypes.length > 1)
-                    strBuilder.Append(StrLit(")"), scratch);
+                    strBuilder.Append(StrLit(")"));
                 
                 quit = true;
                 break;
             }
             case Typeid_Raw:
             {
-                strBuilder.Append(StrLit("raw"), scratch);
+                strBuilder.Append(StrLit("raw"));
                 quit = true;
                 break;
             }
@@ -1700,6 +1776,9 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
 }
 
 // Supports formatted strings (but only %d and %T)
+// NOTE(Leo): Because of how printf and C's varargs work, you can't really
+// easily add functinoality to the existing printf, so you just have to reimplement
+// the whole thing.
 // TODO: refactor, remove repetition. Some of this stuff (like support of %d)
 // should be available to the other modules as well (parser, lexer...)
 String GenerateErrorString(String message, va_list args, Arena* allocTo)
@@ -1707,7 +1786,7 @@ String GenerateErrorString(String message, va_list args, Arena* allocTo)
     ScratchArena typeArena(allocTo);
     ScratchArena stringArena(allocTo, typeArena);
     
-    StringBuilder resBuilder;
+    StringBuilder resBuilder(stringArena);
     
     // Filter format specifiers and replace them with the string representation of the type
     
@@ -1728,12 +1807,12 @@ String GenerateErrorString(String message, va_list args, Arena* allocTo)
                     String toAppend;
                     toAppend.ptr = message.ptr + first;
                     toAppend.length = last - first + 1;
-                    resBuilder.Append(toAppend, stringArena);
+                    resBuilder.Append(toAppend);
                 }
                 
                 auto type = va_arg(args, TypeInfo*);
                 String typeStr = TypeInfo2String(type, typeArena);
-                resBuilder.Append(typeStr, stringArena);
+                resBuilder.Append(typeStr);
                 
                 first = i+2;
                 ++i;
@@ -1746,7 +1825,7 @@ String GenerateErrorString(String message, va_list args, Arena* allocTo)
                     String toAppend;
                     toAppend.ptr = message.ptr + first;
                     toAppend.length = last - first + 1;
-                    resBuilder.Append(toAppend, stringArena);
+                    resBuilder.Append(toAppend);
                 }
                 
                 auto toPrint = va_arg(args, int);
@@ -1754,7 +1833,7 @@ String GenerateErrorString(String message, va_list args, Arena* allocTo)
                 char buffer[bufferLen];
                 snprintf(buffer, bufferLen, "%d", toPrint);
                 String valStr = { buffer, (int64)strlen(buffer) };
-                resBuilder.Append(valStr, stringArena);
+                resBuilder.Append(valStr);
                 
                 first = i+2;
                 ++i;
@@ -1770,14 +1849,29 @@ String GenerateErrorString(String message, va_list args, Arena* allocTo)
         String toAppend;
         toAppend.ptr = message.ptr + first;
         toAppend.length = last - first + 1;
-        resBuilder.Append(toAppend, stringArena);
+        resBuilder.Append(toAppend);
     }
     
     return resBuilder.ToString(allocTo);
 }
 
+// @temporary @robustness Can't figure out how to properly do this without
+// using this. Maybe the printing API just needs to change, and calling
+// these two functions consecutively is just not a very good idea?
+// Consider using just a single function (e.g. SemanticErrorLong),
+// where an array of tokens is specified
+int semErrorContinueFlag = 0;
 void SemanticError(Typer* t, Token* token, String message, ...)
 {
+    if(t->status)
+    {
+        semErrorContinueFlag = min(semErrorContinueFlag + 1, 2);
+        t->status = false;
+    }
+    else return;
+    
+    Dg_Error(t->graph);
+    
     ScratchArena scratch;
     
     va_list args;
@@ -1789,8 +1883,13 @@ void SemanticError(Typer* t, Token* token, String message, ...)
     CompileError(t->tokenizer, token, errStr);
 }
 
+// It's assumed that this function is called immediately after
+// SemanticError if at all
 void SemanticErrorContinue(Typer* t, Token* token, String message, ...)
 {
+    if(semErrorContinueFlag >= 2)
+        return;
+    
     ScratchArena scratch;
     
     va_list args;

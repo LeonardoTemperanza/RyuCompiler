@@ -32,10 +32,10 @@ DepGraph Dg_InitGraph(Arena* phaseArenas[CompPhase_EnumSize][2])
     return graph;
 }
 
-int MainDriver(Parser* p, Ast_FileScope* file)
+int MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
 {
     // Typer initialization
-    size_t size = GB(2);
+    size_t size = GB(1);
     size_t commitSize = MB(2);
     
     Arena typeArena = Arena_VirtualMemInit(size, commitSize);
@@ -56,26 +56,16 @@ int MainDriver(Parser* p, Ast_FileScope* file)
     Typer t = InitTyper(&typeArena, p);
     t.graph = &g;
     g.typer = &t;
+    g.interp = interp;
+    g.items = p->entities;
     t.fileScope = file;
     
-    // First pass.
-    // Add all top-level declarations to the symbol table
-    // Functions will yield if a scope has a construct that
-    // could add to the symbol table later
-    Ast_Block* block = &file->scope;
-    for_array(i, block->stmts)
+    // TODO: for now we only have one file, one ast.
+    // Fill the typecheck queue with initial values
+    for_array(i, p->entities)
     {
-        auto astNode = block->stmts[i];
-        
-        if(Ast_IsDecl(astNode))
-            AddDeclaration(&t, block, (Ast_Declaration*)astNode);
-        
-        // Add nodes to the graph
-        auto idxGen = Dg_NewNode(&g, astNode);
-        astNode->entityIdx = idxGen.idx;
-        astNode->phase = CompPhase_Parse;
         auto& typecheckQueue = g.queues[CompPhase_Parse];
-        typecheckQueue.input.Append(typecheckQueue.inputArena, idxGen.idx);
+        typecheckQueue.input.Append(typecheckQueue.inputArena, i);
     }
     
     // NOTE(Leo): The called functions have the responsibility of
@@ -83,11 +73,14 @@ int MainDriver(Parser* p, Ast_FileScope* file)
     // the dependency graph.
     
     bool exit = false;
-    int remainingIters = 10000;
-    while(!exit && remainingIters > 0)
+    const int maxIters = 100000000;
+    int curIters = 0;
+    while(!exit && curIters < maxIters)
     {
-        --remainingIters;
+        defer(++curIters);
+        
         exit = true;
+        
         // For each stage in the pipeline
         for(int i = CompPhase_Uninit + 1; i < CompPhase_EnumSize; ++i)
         {
@@ -99,45 +92,20 @@ int MainDriver(Parser* p, Ast_FileScope* file)
             
             // Detect cycle and perform topological sort
             bool detected = Dg_DetectCycle(&g, &queue);
-            if(detected)
-            {
-                printf("Cycle!!\n");
-                return 1;
-            }
-            else
-            {
-                Dg_PerformStage(&g, &queue);
-            }
+            if(!detected) Dg_PerformStage(&g, &queue);
         }
     }
     
     if(!exit)
-    {
-        // @temporary
-        printf("There likely was an infinite loop in the program.\n");
-    }
+        fprintf(stderr, "There was an infinite loop in the program. Please file a bug report if you're seeing this.\n");
     
-    if(t.tokenizer->status != CompStatus_Success)
-        return 1;
-    
-    return 0;
+    return g.status;
 }
 
-Dg_IdxGen Dg_NewNode(DepGraph* g, Ast_Node* node)
+Dg_IdxGen Dg_NewNode(Ast_Node* node, Arena* allocTo, Slice<Dg_Entity>* entities)
 {
-    Dg_IdxGen res = { 0, 0 };
-    if(g->firstFree == Dg_Null)
-    {
-        g->items.ResizeAndInit(&g->arena, g->items.length+1);
-        g->items[g->items.length-1].gen = 0;
-        res = { (uint32)g->items.length-1, 0 };
-    }
-    else
-    {
-        auto freeNode = g->firstFree;
-        g->firstFree = g->items[g->firstFree].nextFree;
-        res = { freeNode, g->items[freeNode].gen };
-    }
+    entities->ResizeAndInit(allocTo, entities->length+1);
+    Dg_IdxGen res = { (uint32)entities->length-1, 0 };
     
     // Update the node. The idx will be same until
     // the node has gone through all stages in the
@@ -145,33 +113,14 @@ Dg_IdxGen Dg_NewNode(DepGraph* g, Ast_Node* node)
     node->entityIdx = res.idx;
     node->phase     = CompPhase_Parse;
     
-    auto& item    = g->items[res.idx];
+    auto& item    = (*entities)[res.idx];
     item.node     = node;
     item.waitFor  = { 0, 0 };
     item.stackIdx = -1;
     item.sccIdx   = -1;
-    item.onStack  = false;
+    item.flags    = 0;
+    item.phase    = CompPhase_Parse;
     return res;
-}
-
-void Dg_RemoveNode(DepGraph* g, Dg_Idx idx)
-{
-    // Invalidate all other references to this entity.
-    // (the generation should always be checked when
-    // traversing the graph)
-    ++g->items[idx].gen;
-    g->items[idx].waitFor.FreeAll();
-    
-    if(g->firstFree == Dg_Null)
-    {
-        g->firstFree = idx;
-        g->lastFree  = idx;
-    }
-    else
-    {
-        g->items[g->lastFree].nextFree = idx;
-        g->lastFree = idx;
-    }
 }
 
 void Dg_UpdateQueueArrays(DepGraph* g, Queue* q)
@@ -183,27 +132,12 @@ void Dg_UpdateQueueArrays(DepGraph* g, Queue* q)
         q->input = g->queues[q->phase-1].output;
 }
 
-void Dg_CompletedAllStages(DepGraph* g, Dg_Idx entityIdx)
-{
-    // Is there anything else we need to do?
-    
-    //Dg_RemoveNode(g, entityIdx);
-}
-
 void Dg_Yield(DepGraph* g, Ast_Node* yieldUpon, CompPhase neededPhase)
 {
     Dg_Dependency dep;
-    if(yieldUpon->entityIdx == Dg_Null)
-    {
-        Dg_IdxGen idxGen = Dg_NewNode(g, yieldUpon);
-        dep.idx = idxGen.idx;
-        dep.gen = idxGen.gen;
-    }
-    else
-    {
-        dep.idx = yieldUpon->entityIdx;
-        dep.gen = g->items[dep.idx].gen;
-    }
+    Assert(yieldUpon->entityIdx != Dg_Null);
+    
+    dep.idx = yieldUpon->entityIdx;
     
     dep.neededPhase = neededPhase;
     g->items[g->curIdx].waitFor.Append(dep);
@@ -211,12 +145,19 @@ void Dg_Yield(DepGraph* g, Ast_Node* yieldUpon, CompPhase neededPhase)
 
 void Dg_Error(DepGraph* g)
 {
-    printf("Error!\n");  // Need to mark the node somehow
+    // Mark the current node
+    g->items[g->curIdx].flags |= Entity_Error;
+}
+
+void Dg_UpdatePhase(Dg_Entity* entity, CompPhase newPhase)
+{
+    entity->phase = newPhase;
+    entity->node->phase = newPhase;
 }
 
 void Dg_PerformStage(DepGraph* graph, Queue* q)
 {
-    Swap(auto, q->inputArena, q->processingArena);
+    Swap(auto, *q->inputArena, *q->processingArena);
     Swap(auto, q->input, q->processing);
     
     // Reset system states
@@ -232,12 +173,17 @@ void Dg_PerformStage(DepGraph* graph, Queue* q)
             for_array(i, q->processing)
             {
                 auto& gNode = graph->items[q->processing[i]];
+                if(gNode.flags & Entity_Error) continue;
+                
                 graph->curIdx = q->processing[i];
                 bool outcome = CheckNode(graph->typer, gNode.node);
+                
+                if(gNode.flags & Entity_Error) continue;
+                
                 if(outcome)
                 {
                     gNode.waitFor.FreeAll();
-                    gNode.node->phase = CompPhase_Typecheck;
+                    Dg_UpdatePhase(&gNode, CompPhase_Typecheck);
                     q->output.Append(q->outputArena, q->processing[i]);
                 }
                 else
@@ -251,13 +197,18 @@ void Dg_PerformStage(DepGraph* graph, Queue* q)
             for_array(i, q->processing)
             {
                 auto& gNode = graph->items[q->processing[i]];
-                auto astNode = graph->items[q->processing[i]].node;
+                auto astNode = gNode.node;
+                
+                if(gNode.flags & Entity_Error) continue;
                 graph->curIdx = q->processing[i];
                 
-                if(ComputeSize(graph->typer, (Ast_StructDef*)astNode))
+                bool outcome = ComputeSize(graph->typer, astNode);
+                if(gNode.flags & Entity_Error) continue;
+                
+                if(outcome)
                 {
                     gNode.waitFor.FreeAll();
-                    astNode->phase = CompPhase_ComputeSize;
+                    Dg_UpdatePhase(&gNode, CompPhase_ComputeSize);
                     q->output.Append(q->outputArena, q->processing[i]);
                 }
                 else
@@ -266,30 +217,41 @@ void Dg_PerformStage(DepGraph* graph, Queue* q)
             
             break;
         }
-        case CompPhase_ComputeSize:  // Need to perform codegen
-        {
-            for_array(i, q->processing)
-            {
-                /*auto& gNode = graph->items[q->processing[i]];
-                auto astNode = graph->items[q->processing[i]].node;
-                gNode.waitFor.FreeAll();
-                astNode->phase = CompPhase_Codegen;
-                q->output.Append(q->outputArena, q->processing[i]);
-*/
-            }
-            
-            break;
-        }
-        case CompPhase_Codegen:
+        case CompPhase_ComputeSize:  // Need to perform bytecode codegen
         {
             for_array(i, q->processing)
             {
                 auto& gNode = graph->items[q->processing[i]];
+                auto astNode = gNode.node;
+                
+                // NOTE(Leo): Bytecode generation can't fail right now,
+                // but that might change in the future
+                
+                GenBytecode(graph->interp, astNode);
+                Dg_UpdatePhase(&gNode, CompPhase_Bytecode);
+                
                 gNode.waitFor.FreeAll();
+                
+                // TODO: Do this only if you need to run this code
                 q->output.Append(q->outputArena, q->processing[i]);
             }
             
             break;
+        }
+        case CompPhase_Bytecode:  // Need to run bytecode
+        {
+            for_array(i, q->processing)
+            {
+                auto& gNode = graph->items[q->processing[i]];
+                auto astNode = gNode.node;
+            }
+            
+            break;
+        }
+        case CompPhase_Run:
+        {
+            // Don't do anything. This entity has finished all phases
+            Assert(false && "Attempting to perform a stage after the last one.");
         }
     }
     
@@ -299,16 +261,15 @@ void Dg_PerformStage(DepGraph* graph, Queue* q)
 }
 
 uint32 globalIdx = 0;
-
 bool Dg_DetectCycle(DepGraph* g, Queue* q)
 {
-    if(q->input.length <= 2) return false;  // Can't have a cycle
-    
     // Apply Tarjan's algorithm to find all Strongly Connected Components
     // Found here: https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm
     
-    // Clean variables for next use of algorithm
+    // Only nodes from the current phase queue are considered for
+    // the start of the DFS. Of course in the DFS all nodes are considered
     
+    // Clean variables for next use of algorithm
     globalIdx = 0;
     for_array(i, q->input)
         g->items[q->input[i]].stackIdx = -1;
@@ -319,7 +280,8 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
         if(it->stackIdx == -1)
         {
             ScratchArena scratch;
-            Array<Dg_Entity*> stack = { 0, 0 };
+            Slice<Dg_Entity*> stack = { 0, 0 };
+            
             Dg_TarjanVisit(g, it, &stack, scratch);
         }
         
@@ -330,7 +292,7 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
     
     // This differs from the original algorithm,
     // because this is done in place instead of
-    // Producing a separate array (maybe this is faster?)
+    // producing a separate array (I suspect this could be faster)
     // Also slightly easier to implement.
     Dg_TopologicalSort(g, q);  // Changes the order in the queue
     
@@ -338,13 +300,11 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
     uint32 start = 0;
     uint32 numGroups = 0;
     
-    // @temporary
+    // Number of SCCs which contain at least one cycle
     uint32 numCycles = 0;
     
-    while(true)
+    while(start < q->input.length)
     {
-        if(start >= q->input.length) break;  // No more SCCs
-        
         auto groupId = g->items[q->input[start]].sccIdx;
         
         uint32 end = start;
@@ -354,49 +314,32 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
         
         //printf("Group %d, indices %d %d\n", groupId, start, end-1);
         
-        if(end > start + 1)  // If only one item, there's no cycle in this SCC
+        bool isCycle = false;
+        
+        if(end <= start + 1)  // If only one item, there might be no cycle
         {
-            bool canPass = true;
-            for(int i = start; i < end && canPass; ++i)
+            for_array(i, g->items[q->input[start]].waitFor)
             {
-                for_array(j, g->items[q->input[i]].waitFor)
+                auto& dep = g->items[q->input[start]].waitFor[i];
+                
+                // Ignore dated dependency
+                if(dep.neededPhase <= g->items[dep.idx].phase)
+                    continue;
+                
+                if(g->items[dep.idx].sccIdx == groupId)
                 {
-                    auto& it = g->items[q->input[i]].waitFor[j];
-                    //printf("needed %d, current %d\n", it.neededPhase, q->phase);
-                    
-                    if(it.neededPhase == q->phase+1)
-                    {
-                        //printf("stackidx %d, groupId %d\n", g->items[it.idx].stackIdx, groupId);
-                        if(g->items[it.idx].stackIdx != groupId)
-                        {
-                            //printf("cannot pass!\n");
-                            canPass = false;
-                            break;
-                        }
-                    }
-                    
-                    // If the dependency is not breakable it can't pass
-                    // We need to figure out how to update the dependencies
-                    if(!Dg_IsDependencyBreakable(g, q, &g->items[q->input[i]], it.idx))
-                    {
-                        canPass = false;
-                        break;
-                    }
+                    isCycle = true;
+                    break;
                 }
             }
-            
-            if(canPass)
-            {
-                // Dependencies can be removed, i would think
-                
-            }
-            else
-            {
-                // Explain the cycle to the user
-                Dg_ExplainCyclicDependency(g, q, start, end);
-                
-                ++numCycles;
-            }
+        }
+        else  // There's at least one cycle for sure
+            isCycle = true;
+        
+        if(isCycle)
+        {
+            ++numCycles;
+            Dg_ExplainCyclicDependency(g, q, start, end);
         }
         
         start = end;
@@ -404,39 +347,51 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
     
     //printf("Num cycles: %d\n", numCycles);
     
+    if(numCycles > 0) printf("Cycle!!\n");
     return numCycles > 0;
 }
 
-void Dg_TarjanVisit(DepGraph* g, Dg_Entity* node, Array<Dg_Entity*>* stack, Arena* stackArena)
+void Dg_TarjanVisit(DepGraph* g, Dg_Entity* node, Slice<Dg_Entity*>* stack, Arena* stackArena)
 {
     node->stackIdx = globalIdx;
     node->sccIdx = globalIdx;
     ++globalIdx;
     
     stack->Append(stackArena, node);
-    node->onStack = true;
+    node->flags |= Entity_OnStack;
     
     // Consider successors of node
     for_array(i, node->waitFor)
     {
-        auto waitFor = &g->items[node->waitFor[i].idx];
-        if(waitFor->stackIdx == -1)
+        auto& waitFor = g->items[node->waitFor[i].idx];
+        
+        // Not part of the original algorithm; ignore the
+        // dated dependencies
+        if(waitFor.phase <= node->waitFor[i].idx)
+            continue;
+        
+        if(waitFor.stackIdx == -1)
         {
             // Successor has not yet been visited,
             // recurse on it
-            Dg_TarjanVisit(g, waitFor, stack, stackArena);
-            node->sccIdx = min(node->sccIdx, waitFor->sccIdx);
+            Dg_TarjanVisit(g, &waitFor, stack, stackArena);
+            node->sccIdx = min(node->sccIdx, waitFor.sccIdx);
         }
-        else if(waitFor->onStack)  // If on the stack
+        else if(waitFor.flags & Entity_OnStack)
         {
             // Successor w is in the stack and hence in the current SCC
             // If w is not in the stack, than (v, w) edge pointing to an
             // SCC already found and must be ignored.
             // NOTE: the next line may look odd - but it is correct.
-            // It's waitFor->stackIdx and not waitFor->sccIdx; that is
+            // It's waitFor.stackIdx and not waitFor.sccIdx; that is
             // deliberate and from the original paper.
-            node->sccIdx = min(node->sccIdx, waitFor->stackIdx);
+            node->sccIdx = min(node->sccIdx, waitFor.stackIdx);
         }
+        
+        // Not part of the original algorithm; propagate
+        // the error to all nodes that depend on it
+        if(waitFor.flags & Entity_Error)
+            node->flags |= Entity_Error;
     }
     
     // This means that 'node' is a root node for a given SCC
@@ -448,7 +403,7 @@ void Dg_TarjanVisit(DepGraph* g, Dg_Entity* node, Array<Dg_Entity*>* stack, Aren
         {
             popped = (*stack)[stack->length-1];
             stack->Resize(stackArena, stack->length-1);
-            popped->onStack = false;
+            popped->flags &= ~Entity_OnStack;
         }
         while(popped != node);
     }
@@ -466,13 +421,117 @@ void Dg_TopologicalSort(DepGraph* graph, Queue* queue)
 #undef Tmp_Less
 }
 
-bool Dg_IsDependencyBreakable(DepGraph* g, Queue* q, Dg_Entity* source, Dg_Idx target)
-{
-    
-    return true;
-}
-
 void Dg_ExplainCyclicDependency(DepGraph* g, Queue* q, Dg_Idx start, Dg_Idx end)
 {
+    SetErrorColor();
+    fprintf(stderr, "Error");
+    ResetColor();
+    fprintf(stderr, ": Cyclic dependency was detected in the code;\n");
     
+    auto& startItem = g->items[q->input[start]];
+    auto& endItem = g->items[q->input[end]];
+    Ast_Node* startNode = g->items[q->input[start]].node;
+    Ast_Node* endNode = g->items[end].node;
+    CompPhase neededStartPhase = CompPhase_Uninit;
+    CompPhase neededEndPhase   = CompPhase_Uninit;
+    
+    bool isDirect = false;
+    for_array(i, g->items[start].waitFor)
+    {
+        auto& dep = g->items[start].waitFor[i];
+        if(dep.idx == end)
+        {
+            isDirect = true;
+            neededEndPhase = dep.neededPhase;
+            break;
+        }
+    }
+    
+    if(!isDirect)
+    {
+        // Get max needed phase
+        for(Dg_Idx i = 0; i < end; ++i)
+        {
+            auto& item = g->items[q->input[i]];
+            for_array(j, item.waitFor)
+            {
+                if(item.waitFor[j].idx == end)
+                    neededEndPhase = max(neededEndPhase, item.waitFor[j].neededPhase);
+            }
+        }
+    }
+    
+    for_array(i, g->items[q->input[end]].waitFor)
+    {
+        auto& dep = g->items[end].waitFor[i];
+        if(dep.idx == start)
+        {
+            
+            break;
+        }
+    }
+    
+    ScratchArena scratch;
+    StringBuilder strBuilder(scratch);
+    strBuilder.Append("This construct can't ");
+    strBuilder.Append(Dg_CompPhase2Str(g->items[start].phase));
+    
+    strBuilder.Append("...");
+    
+    CompileError(g->typer->tokenizer, startNode->where, strBuilder.string);
+    
+    strBuilder.Reset();
+    if(isDirect)
+        strBuilder.Append("... because it needs this other construct to have already ");
+    else
+        strBuilder.Append("... because it indirectly needs this other construct to have already ");
+    
+    strBuilder.Append(Dg_CompPhase2Str(CompPhase_Uninit, true));
+    strBuilder.Append(", which in turn needs the previous one to have ");
+    strBuilder.Append(Dg_CompPhase2Str(neededStartPhase, true));
+    strBuilder.Append('.');
+    
+    CompileErrorContinue(g->typer->tokenizer, startNode->where, strBuilder.string);
 }
+
+String Dg_CompPhase2Str(CompPhase phase, bool pastTense)
+{
+    String res;
+    if(!pastTense)
+    {
+        switch(phase)
+        {
+            case CompPhase_Uninit:      res = StrLit("[uninitialized phase]"); break;
+            case CompPhase_Parse:       res = StrLit("determine its type");    break;
+            case CompPhase_Typecheck:   res = StrLit("determine its size");    break;
+            case CompPhase_ComputeSize: res = StrLit("generate its bytecode"); break;
+            case CompPhase_Bytecode:    res = StrLit("run at compile time");   break;
+            case CompPhase_Run:         res = StrLit("[done]");                break;
+            case CompPhase_EnumSize:    res = StrLit("[enum size]");           break;
+            default:                    res = StrLit("[invalid enum]");        break;
+        }
+    }
+    else
+    {
+        switch(phase)
+        {
+            case CompPhase_Uninit:      res = StrLit("[uninitialized phase]");     break;
+            case CompPhase_Parse:       res = StrLit("determined its type");       break;
+            case CompPhase_Typecheck:   res = StrLit("determined its size");       break;
+            case CompPhase_ComputeSize: res = StrLit("generated its bytecode");    break;
+            case CompPhase_Bytecode:    res = StrLit("run its compile time code"); break;
+            case CompPhase_Run:         res = StrLit("[done]");                    break;
+            case CompPhase_EnumSize:    res = StrLit("[enum size]");               break;
+            default:                    res = StrLit("[invalid enum]");            break;
+        }
+    }
+    
+    return res;
+}
+
+void Dg_DebugPrintDependencies(DepGraph* g)
+{
+    // TODO
+    Assert(false);
+}
+
