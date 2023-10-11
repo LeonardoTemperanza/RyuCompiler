@@ -143,6 +143,40 @@ String String::CopyToArena(Arena* to)
     return result;
 }
 
+uint64 HashString(String str, uint64 seed)
+{
+    uint64 hash = seed;
+    for(int i = 0; i < str.length; ++i)
+        hash = RotateLeft(hash, 9) + (uchar)str.ptr[i];
+    
+    // Thomas Wang 64-to-32 bit mix function, hopefully also works in 32 bits
+    hash ^= seed;
+    hash = (~hash) + (hash << 18);
+    hash ^= hash ^ RotateRight(hash, 31);
+    hash = hash * 21;
+    hash ^= hash ^ RotateRight(hash, 11);
+    hash += (hash << 6);
+    hash ^= RotateRight(hash, 22);
+    return hash + seed;
+}
+
+uint64 HashString(char* str, uint64 seed)
+{
+    uint64 hash = seed;
+    while(*str)
+        hash = RotateLeft(hash, 9) + (uchar)*str++;
+    
+    // Thomas Wang 64-to-32 bit mix function, hopefully also works in 32 bits
+    hash ^= seed;
+    hash = (~hash) + (hash << 18);
+    hash ^= hash ^ RotateRight(hash, 31);
+    hash = hash * 21;
+    hash ^= hash ^ RotateRight(hash, 11);
+    hash += (hash << 6);
+    hash ^= RotateRight(hash, 22);
+    return hash + seed;
+}
+
 // Slice utilities
 template<typename t>
 void Array<t>::Append(t element)

@@ -1719,8 +1719,7 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
             }
             case Typeid_Ident:
             {
-                char* nullTerminated = ((Ast_IdentType*)type)->ident->string;
-                String ident = { nullTerminated, (int64)strlen(nullTerminated) };
+                String ident = ((Ast_IdentType*)type)->ident->s;
                 strBuilder.Append(ident);
                 quit = true;
                 break;

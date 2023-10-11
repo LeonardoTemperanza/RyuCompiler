@@ -50,6 +50,9 @@
 #define Swap(type, var1, var2) do { type tmp = var1; var1 = var2; var2 = tmp; } while(0)
 #define SwapIntegral(type, var1, var2) do { var1 += var2; var2 = var1 - var2; var1 -= var2; } while(0)
 
+#define RotateLeft(val, n)  (((val) << (n)) | ((val) >> (sizeof(size_t)*8 - (n))))
+#define RotateRight(val, n) (((val) >> (n)) | ((val) << (sizeof(size_t)*8 - (n))))
+
 #ifdef Debug
 #define cforceinline 
 #else
@@ -76,6 +79,8 @@ typedef uint8_t  uint8;
 typedef uint16_t uint16;
 typedef uint32_t uint32;
 typedef uint64_t uint64;
+
+typedef uint32_t bool32;
 
 typedef unsigned char uchar;
 typedef uintptr_t uintptr;
@@ -221,6 +226,10 @@ struct String
     inline char operator [](int idx) const { return ptr[idx]; };
 #endif
 };
+
+// Hash function from the stb library
+uint64 HashString(String str, uint64 seed);
+uint64 HashString(char* str, uint64 seed);
 
 // Math utilities
 inline bool IsPowerOf2(uintptr a)

@@ -28,7 +28,8 @@ proc main()->int
     int a = 3;
     //n.info += a;
     
-    return 5;
+    bool boolt = false;
+    return boolt;
 }
 
 proc malloc(uint64 size)->^raw;

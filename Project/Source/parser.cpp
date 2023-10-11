@@ -120,7 +120,7 @@ Ast_ProcDecl* ParseProc(Parser* p, Ast_DeclSpec specs)
     
     procDecl->where = ident;
     procDecl->type = typeInfo;
-    DeferStringInterning(p, ident->ident, &procDecl->name);
+    DeferStringInterning(p, ident->text, &procDecl->name);
     
     if(p->at->type == ';')
     {
@@ -193,7 +193,7 @@ Ast_StructDef* ParseStructDef(Parser* p, Ast_DeclSpec specs)
         ExpectedTokenError(p, ident, Tok_Ident);
     
     structDef->type = typeInfo;
-    DeferStringInterning(p, ident->ident, &structDef->name);
+    DeferStringInterning(p, ident->text, &structDef->name);
     p->scope->decls.Append(structDef);
     return structDef;
 }
@@ -264,7 +264,7 @@ Ast_VarDecl* ParseVarDecl(Parser* p, Ast_DeclSpec specs, bool forceInit, bool ig
     decl->type = type;
     decl->typeTok = typeTok;
     decl->declSpecs = specs;
-    DeferStringInterning(p, t->ident, &decl->name);
+    DeferStringInterning(p, t->text, &decl->name);
     
     p->scope->decls.Append(decl);
     
@@ -736,7 +736,7 @@ Ast_Expr* ParsePostfixExpression(Parser* p)
                 auto memberAccess = Ast_MakeNode<Ast_MemberAccess>(p->arena, p->at);
                 ++p->at;
                 
-                String ident = EatRequiredToken(p, Tok_Ident)->ident;
+                String ident = EatRequiredToken(p, Tok_Ident)->text;
                 DeferStringInterning(p, ident, &memberAccess->memberName);
                 memberAccess->target = curExpr;
                 curExpr = memberAccess;
@@ -814,7 +814,7 @@ Ast_Expr* ParsePrimaryExpression(Parser* p)
     else if(IsTokIdent(p->at->type))
     {
         auto ident = Ast_MakeNode<Ast_IdentExpr>(p->arena, p->at);
-        DeferStringInterning(p, p->at->ident, &ident->ident);
+        DeferStringInterning(p, p->at->text, &ident->ident);
         ++p->at;
         return ident;
     }
@@ -887,7 +887,7 @@ TypeInfo* ParseType(Parser* p, Token** outIdent)
             if(p->at->type == Tok_Ident)  // Compound type
             {
                 auto tmp = Ast_MakeType<Ast_IdentType>(p->arena);
-                DeferStringInterning(p, p->at->ident, &tmp->ident);
+                DeferStringInterning(p, p->at->text, &tmp->ident);
                 
                 *baseType = tmp;
                 
@@ -1040,7 +1040,7 @@ Ast_ProcType ParseProcType(Parser* p, Token** outIdent, bool forceArgNames)
             auto argDecl = Ast_MakeNode<Ast_VarDecl>(p->arena, t);
             argDecl->type = type;
             argDecl->declSpecs = specs;
-            DeferStringInterning(p, t->ident, &argDecl->name);
+            DeferStringInterning(p, t->text, &argDecl->name);
             
             args.Append(scratch, argDecl);
             argDecl->declIdx = args.length - 1;
@@ -1141,14 +1141,14 @@ Ast_StructType ParseStructType(Parser* p, Token** outIdent)
     decl.memberTypes      = types.CopyToArena(p->arena);
     decl.memberNameTokens = tokens.CopyToArena(p->arena);
     
-    decl.memberNames.ptr = Arena_AllocArrayPack(p->arena, tokens.length, Atom*);
+    decl.memberNames.ptr    = Arena_AllocArrayPack(p->arena, tokens.length, Atom*);
     decl.memberNames.length = tokens.length;
     
-    decl.memberOffsets.ptr = Arena_AllocArrayPack(p->arena, types.length, uint32);
+    decl.memberOffsets.ptr    = Arena_AllocArrayPack(p->arena, types.length, uint32);
     decl.memberOffsets.length = types.length;
     
     for_array(i, decl.memberNames)
-        DeferStringInterning(p, decl.memberNameTokens[i]->ident, &decl.memberNames[i]);
+        DeferStringInterning(p, decl.memberNameTokens[i]->text, &decl.memberNames[i]);
     
     EatRequiredToken(p, '}');
     return decl;
@@ -1171,9 +1171,11 @@ Ast_DeclSpec ParseDeclSpecs(Parser* p)
     return res;
 }
 
+
 void DeferStringInterning(Parser* p, String string, Atom** atom)
 {
-    ToIntern toIntern = { string, atom };
+    static const uint64 hashSeed = 0x31415926;
+    ToIntern toIntern = { string, HashString(string, hashSeed), atom };
     p->internArray.Append(p->internArena, toIntern);
 }
 

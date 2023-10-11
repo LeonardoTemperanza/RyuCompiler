@@ -104,11 +104,11 @@ struct Token
     uint32 sl, sc;  // Start of line, starting character
     uint32 ec;      // end character
     uint32 lineNum;
+    String text;
     
     // Additional information
     union
     {
-        String ident;
         int64 intValue;
         float floatValue;
         double doubleValue;
@@ -128,6 +128,8 @@ struct Tokenizer
     Slice<Token> tokens = { 0, 0 };
     
     String fullFilePath = { 0, 0 };
+    
+    // Used for the not very good "Continue" function API
     bool compileErrorPrinted = false;
     int lastCompileErrorNumChars = 0;
 };

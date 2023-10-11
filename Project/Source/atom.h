@@ -11,33 +11,36 @@ struct AtomEntry;
 struct ToIntern
 {
     String toIntern;
+    uint64 hash;
     Atom** patch;
 };
 
 struct Atom
 {
-    char* string = 0;
+    String s;
     
-    // Other stuff in the future
+    // Other info (like a lazily allocated null-terminated string
+    // if an API, such as LLVM, requires null terminated strings). 
+    char* nullTermStr = 0;
 };
 
 // Hash table stuff
 struct AtomTable
 {
-    Arena stringArena;
-    Arena atomArena;
-    //Array<AtomEntry> entries;
-    
-    Slice<Atom> atoms;
+    Slice<AtomEntry> entries = 0;
+    uint64 primeIdx = 0;
+    uint64 numOccupied = 0;
 };
 
 struct AtomEntry
 {
-    char* string = 0;  // Null-terminated
+    bool32 occupied;
+    uint64 hash;
+    String key;
     Atom* value;
 };
 
 void Atom_InternStrings(Slice<Slice<ToIntern>> intern);
-Atom* Atom_GetOrAddAtom(AtomTable* table, String str);
-uint32 Atom_StringHash(String str);
-void Atom_ChangeSizeAndRehash(AtomTable table);
+Atom* Atom_GetOrAddAtom(AtomTable* table, String str, uint64 hash);
+cforceinline uint64 Atom_ProbingScheme(uint64 hash, uint64 iter, uint64 length);
+void Atom_EnlargeTable(AtomTable* table);

@@ -88,7 +88,7 @@ void* Arena_Alloc(Arena* arena, size_t size, size_t align)
         {
             uintptr commitAligned = nextOffset - (nextOffset %
                                                   arena->commitSize); 
-            if(commitAligned > offset)
+            if(commitAligned > arena->offset)
             {
                 size_t toCommit = commitAligned + arena->commitSize;
                 CommitMemory(arena->buffer, toCommit);

@@ -957,7 +957,8 @@ void Interp_PrintInstr(Interp_Proc* proc, Interp_Instr* instr, Slice<Interp_Symb
                 printf("NULL");
             else
             {
-                printf("%s", syms[instr->symAddress.symbol].decl->name->string);
+                String str = syms[instr->symAddress.symbol].decl->name->s;
+                printf("%.*s", (int)str.length, str.ptr);
             }
             break;
         }
@@ -1046,7 +1047,7 @@ void Interp_PrintPassRule(TB_PassingRule rule)
 void Interp_PrintProc(Interp_Proc* proc, Slice<Interp_Symbol> syms)
 {
     // Print proc name, etc.
-    printf("%s:\n", syms[proc->symIdx].name);
+    printf("%.*s:\n", (int)syms[proc->symIdx].name.length, syms[proc->symIdx].name.ptr);
     
     // Print passing rules
     printf("Arg passing rules: ");

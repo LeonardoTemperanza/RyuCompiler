@@ -140,7 +140,7 @@ void Tc_GenSymbol(Tc_Context* ctx, Interp_Symbol* symbol)
             auto proc = (Ast_ProcDecl*)symbol->decl;
             auto& sym = ctx->symbols[proc->symIdx];
             
-            TB_Function* tbProc = tb_function_create(ctx->module, -1, sym.name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
+            TB_Function* tbProc = tb_function_create(ctx->module, sym.name.length, sym.name.ptr, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
             
             res = (TB_Symbol*)tbProc;
             break;
@@ -148,7 +148,7 @@ void Tc_GenSymbol(Tc_Context* ctx, Interp_Symbol* symbol)
         case Interp_ExternSym:
         {
             auto decl = (Ast_Declaration*)symbol->decl;
-            TB_External* tbExtern = tb_extern_create(ctx->module, -1, decl->name->string, TB_EXTERNAL_SO_EXPORT);
+            TB_External* tbExtern = tb_extern_create(ctx->module, decl->name->s.length, decl->name->s.ptr, TB_EXTERNAL_SO_EXPORT);
             
             res = (TB_Symbol*)tbExtern;
             break;
@@ -159,7 +159,7 @@ void Tc_GenSymbol(Tc_Context* ctx, Interp_Symbol* symbol)
             
             auto debugType = Tc_ConvertToDebugType(ctx->module, global->type);
             auto& sym = ctx->symbols[global->symIdx];
-            TB_Global* tbGlobal = tb_global_create(ctx->module, -1, sym.name, debugType, TB_LINKAGE_PUBLIC);
+            TB_Global* tbGlobal = tb_global_create(ctx->module, sym.name.length, sym.name.ptr, debugType, TB_LINKAGE_PUBLIC);
             tb_global_set_storage(ctx->module, tb_module_get_data(ctx->module), tbGlobal, global->type->size, global->type->align, 1);
             
             res = (TB_Symbol*)tbGlobal;
@@ -205,12 +205,12 @@ void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
     {
         if(proc->argRules[i] == TB_PASSING_DIRECT)
         {
-            Tc_ExpandRegs(ctx, i);
+            Tc_ExpandRegs(ctx, i + abiArgsCount);
             ctx->regs[i + abiArgsCount] = paramNodes[i];
         }
     }
     
-    bool isMain = strcmp(symbol.name, "main") == 0;
+    bool isMain = symbol.name == "main";
     if(isMain)
         ctx->mainProc = curProc;
     ctx->proc = curProc;
@@ -590,7 +590,7 @@ TB_DebugType* Tc_ConvertToDebugType(TB_Module* module, TypeInfo* type)
         auto identType = (Ast_IdentType*)type;
         auto structDef = identType->structDef;
         astType = Ast_GetStructType(structDef);
-        structType = tb_debug_create_struct(module, -1, structDef->name->string);
+        structType = tb_debug_create_struct(module, structDef->name->s.length, structDef->name->s.ptr);
     }
     
     if(structType)
@@ -600,7 +600,7 @@ TB_DebugType* Tc_ConvertToDebugType(TB_Module* module, TypeInfo* type)
         for_array(i, astType->memberTypes)
         {
             auto fillWith = Tc_ConvertToDebugType(module, astType->memberTypes[i]); 
-            types[i] = tb_debug_create_field(module, fillWith, -1, astType->memberNames[i]->string, astType->memberOffsets[i]);
+            types[i] = tb_debug_create_field(module, fillWith, astType->memberNames[i]->s.length, astType->memberNames[i]->s.ptr, astType->memberOffsets[i]);
         }
         
         tb_debug_record_end(structType, astType->size, astType->align);
@@ -644,8 +644,8 @@ TB_DebugType* Tc_ConvertProcToDebugType(TB_Module* module, TypeInfo* type)
         TypeInfo* curType = procDecl->args[i]->type;
         auto debugType = Tc_ConvertToDebugType(module, curType);
         // Proc field offset is ignored, so it can be 0
-        paramTypesToFill[j] = tb_debug_create_field(module, debugType, -1,
-                                                    procDecl->args[i]->name->string, 0);
+        paramTypesToFill[j] = tb_debug_create_field(module, debugType, procDecl->args[i]->name->s.length,
+                                                    procDecl->args[i]->name->s.ptr, 0);
     }
     
     if(procDecl->retTypes.length > 0)

@@ -52,12 +52,14 @@ bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
     }
     
     DepGraph g = Dg_InitGraph(phaseArenaPtrs);
-    Typer t = InitTyper(&typeArena, p->tokenizer);
-    t.graph = &g;
-    g.typer = &t;
     g.interp = interp;
     g.items = p->entities;
+    
+    Typer t = InitTyper(&typeArena, p->tokenizer);
+    t.graph = &g;
     t.fileScope = file;
+    
+    g.typer = &t;
     
     *interp = Interp_Init(&g);
     
@@ -571,7 +573,7 @@ void Dg_DebugPrintDeps(DepGraph* g)
         Token* end = start;
         while(end < start + 2 && end->type != Tok_EOF) ++end;
         
-        String nodeStr = { start->ident.ptr, end->ec - start->sc + 1 };
+        String nodeStr = { start->text.ptr, end->ec - start->sc + 1 };
         nodeStr = nodeStr.CopyToArena(scratch);
         // Substitute newlines with spaces
         for_array(j, nodeStr)
@@ -601,7 +603,7 @@ void Dg_DebugPrintDeps(DepGraph* g)
                 Token* end = start;
                 while(end < start + 2 && end->type != Tok_EOF) ++end;
                 
-                String nodeStr = { start->ident.ptr, end->ec - start->sc + 1 };
+                String nodeStr = { start->text.ptr, end->ec - start->sc + 1 };
                 nodeStr = nodeStr.CopyToArena(scratch);
                 // Substitute newlines with spaces
                 for_array(j, nodeStr)

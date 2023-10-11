@@ -350,7 +350,7 @@ struct Interp_Symbol
     Interp_SymbolType type;
     
     Ast_Declaration* decl;  // Points to its declaration/definition
-    char* name;             // Null terminated
+    String name;             // Null terminated
     TypeInfo* typeInfo;
     
     // Codegen info

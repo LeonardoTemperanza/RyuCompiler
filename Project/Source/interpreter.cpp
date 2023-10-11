@@ -14,7 +14,7 @@ bool GenBytecode(Interp* interp, Ast_Node* node)
         auto symbol  = Interp_MakeSymbol(interp);
         symbol->type = decl->declSpecs & Decl_Extern ? Interp_ExternSym : Interp_ProcSym;
         symbol->decl = decl;
-        symbol->name = decl->name->string;
+        symbol->name = decl->name->s;
         symbol->typeInfo = decl->type;
         decl->symIdx = interp->symbols.length - 1;
         return true;
@@ -39,7 +39,7 @@ bool GenBytecode(Interp* interp, Ast_Node* node)
         Interp_Symbol* sym = Interp_MakeSymbol(interp);
         sym->type = Interp_GlobalSym;
         sym->decl = decl;
-        sym->name = decl->name->string;
+        sym->name = decl->name->s;
         sym->typeInfo = decl->type;
         decl->symIdx = interp->symbols.length - 1;
         

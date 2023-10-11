@@ -154,26 +154,22 @@ static void EatAllWhitespace(Tokenizer* t)
             ++t->curLineNum;
             ++t->at;
         }
-        else if(IsWhitespace(t->at[0]))
-            ++t->at;
-        else if(t->at[0] == '/' &&
-                t->at[1] == '/')
+        else if(IsWhitespace(t->at[0])) ++t->at;
+        else if(t->at[0] == '/' && t->at[1] == '/')
         {
             // Handle comments
-            while(!IsNewline(t->at[0]))
-                ++t->at;
+            while(!IsNewline(t->at[0])) ++t->at;
+            
             t->startOfCurLine = t->at - t->startOfFile + 1;
             ++t->curLineNum;
             ++t->at;
         }
         // Multiline comments
-        else if(t->at[0] == '/' &&
-                t->at[1] == '*')
+        else if(t->at[0] == '/' && t->at[1] == '*')
         {
-            while(t->at[0] != '*' ||
-                  t->at[1] != '/')
+            while(t->at[0] != '*' || t->at[1] != '/')
             {
-                // Stop if we got to the EOF 
+                // Stop if we got to EOF 
                 if(t->at[0] == 0)
                     return;
                 if(IsNewline(t->at[0]))
@@ -184,6 +180,7 @@ static void EatAllWhitespace(Tokenizer* t)
                 
                 ++t->at;
             }
+            
             // Eat the '*' and the '/'
             t->at += 2;
         }
@@ -216,30 +213,30 @@ static Token GetToken(Tokenizer* t)
     result.lineNum = t->curLineNum;
     result.sc      = t->at - t->startOfFile;
     result.ec      = result.sc;
-    result.ident   = { t->at, 1 };
+    result.text    = { t->at, 1 };
     
     if(t->at[0] == 0)  // String terminator
     {
         result.type = Tok_EOF;
         result.ec = result.sc;
     }
-    else if(IsAllowedForStartIdent(t->at[0]))  // Idents
+    else if(IsAllowedForStartIdent(t->at[0]))  // Identifiers
     {
         result.type = Tok_Ident;
         for(int i = 1; IsAllowedForMiddleIdent(t->at[i]); ++i)
-            ++result.ident.length;
+            ++result.text.length;
         
         for(int i = 0; i < StArraySize(keywordStrings); ++i)
         {
-            if(keywordStrings[i] == result.ident)
+            if(keywordStrings[i] == result.text)
             {
                 result.type = keywordTypes[i];
                 break;
             }
         }
         
-        t->at += result.ident.length;
-        result.ec = result.sc + result.ident.length - 1;
+        t->at += result.text.length;
+        result.ec = result.sc + result.text.length - 1;
     }
     else if(IsNumeric(t->at[0]))// || (t->at[0] == '-' && IsNumeric(t->at[1])))  // Numbers
     {
@@ -255,6 +252,7 @@ static Token GetToken(Tokenizer* t)
                 isFloatingPoint = true;
         }
         while(IsAllowedForMiddleNum(t->at[length]));
+        
         
         // Use c-stdlib functions for number parsing
         // (parsing floating pointer numbers with accurate precision
@@ -299,20 +297,23 @@ static Token GetToken(Tokenizer* t)
             }
             else
                 Assert(endPtr == t->at + length);
+            
         }
         
         t->at += length;
-        result.ec = result.sc + result.ident.length - 1;
+        result.text.length = length;
+        result.ec = result.sc + result.text.length - 1;
     }
-    else if(String_FirstCharsMatchEntireString(result.ident.ptr, StrLit("true")))
+    /*
+    else if(String_FirstCharsMatchEntireString(result.text.ptr, StrLit("true")))
     {
         String trueLit = StrLit("true");
         
     }
-    else if(String_FirstCharsMatchEntireString(result.ident.ptr, StrLit("false")))
+    else if(String_FirstCharsMatchEntireString(result.text.ptr, StrLit("false")))
     {
         String falseLit = StrLit("false");
-    }
+    }*/
     else  // Anything else (operators, parentheses, etc)
     {
         
@@ -320,9 +321,9 @@ static Token GetToken(Tokenizer* t)
         String foundStr = { 0, 0 };
         for(int i = 0; i < StArraySize(operatorStrings); ++i)
         {
-            if(String_FirstCharsMatchEntireString(result.ident.ptr, operatorStrings[i]))
+            if(String_FirstCharsMatchEntireString(result.text.ptr, operatorStrings[i]))
             {
-                result.ident.length = operatorStrings[i].length;
+                result.text.length = operatorStrings[i].length;
                 result.type = operatorTypes[i];
                 found = true;
                 break;
@@ -331,13 +332,13 @@ static Token GetToken(Tokenizer* t)
         
         if(found)
         {
-            t->at += result.ident.length;
-            result.ec = result.sc + result.ident.length - 1;
+            t->at += result.text.length;
+            result.ec = result.sc + result.text.length - 1;
         }
         else
         {
             result.type = (TokenType)t->at[0];
-            result.ident.length = 1;
+            result.text.length = 1;
             result.ec   = result.sc;
             ++t->at;
         }
