@@ -21,6 +21,7 @@ struct Tc_Context
     TB_Module* module = 0;
     TB_Function* proc = 0;
     TB_Arena procArena;
+    Slice<Interp_Symbol> symbols;
     
     TB_Function* mainProc = 0;
     bool emitAsm = false;
@@ -31,7 +32,7 @@ struct Tc_Context
     Arena* flagArena = 0;
     Slice<TB_Node*> regs;
     Slice<bool> isLValue;
-    Slice<Interp_Symbol*> syms;
+    Slice<SymIdx> syms;
     Slice<Tc_Region> bbs;  // Basic Blocks
     TB_PassingRule retPassingRule;
     Slice<TB_PassingRule> argPassingRules;
@@ -39,8 +40,8 @@ struct Tc_Context
     InstrIdx lastRegion = InstrIdx_Unused;
     
     // For logical operators (and pretty much nothing else)
-    // TODO: Can this be simplified?? I'd say probably, don't
-    // know how though, yet
+    // TODO: Can this be simplified?? I'd say probably, would have
+    // to think about how though
     int toMergeCount = 0;
     RegIdx toMergeIdx = RegIdx_Unused;
     TB_Node* mergeLhs = 0;

@@ -9,14 +9,23 @@
 
 // Primitive types
 
-Typer InitTyper(Arena* arena, Parser* parser)
+Typer InitTyper(Arena* arena, Tokenizer* tokenizer)
 {
     Typer t;
-    t.tokenizer = parser->tokenizer;
-    //t.parser = parser;
+    t.tokenizer = tokenizer;
     t.arena = arena;
-    
     return t;
+}
+
+void ResetTyper(Typer* t)
+{
+    t->curScope = &t->fileScope->scope;
+    t->currentProc = 0;
+    t->checkedReturnStmt = false;
+    t->inLoopBlock = false;
+    t->inSwitchBlock = false;
+    t->inDeferBlock = false;
+    t->status = true;
 }
 
 Ast_PtrType* Typer_MakePtr(Arena* arena, TypeInfo* base)
@@ -139,14 +148,11 @@ bool CheckProcDef(Typer* t, Ast_ProcDef* proc)
     t->currentProc = proc;
     t->checkedReturnStmt = false;
     
-    if(proc->decl->phase < CompPhase_Typecheck)
+    if(!NodePassedStage(proc->decl, CompPhase_Typecheck))
     {
         Dg_Yield(t->graph, proc->decl, CompPhase_Typecheck);
         return false;
     }
-    
-    // TODO: Add declarations to the block
-    
     
     // Definition
     if(!CheckBlock(t, &proc->block)) return false;
@@ -596,7 +602,7 @@ Ast_Declaration* CheckIdent(Typer* t, Ast_IdentExpr* expr)
     }
     
     // Check the compPhase only if it's an independent entity (so, != Dg_Null)
-    if(node->entityIdx != Dg_Null && node->phase < CompPhase_Typecheck)
+    if(node->entityIdx != Dg_Null && !NodePassedStage(node, CompPhase_Typecheck))
     {
         Dg_Yield(t->graph, node, CompPhase_Typecheck);
         return 0;
@@ -1207,23 +1213,8 @@ bool ComputeSize(Typer* t, Ast_Node* node)
             auto procDef = (Ast_ProcDef*)node;
             for_array(i, procDef->declsFlat)
             {
-                // TODO: this currently doesn't work with arrays
-                
                 auto decl = procDef->declsFlat[i];
-                if(decl->type->typeId == Typeid_Ident)
-                {
-                    auto identDecl = (Ast_IdentType*)decl->type;
-                    auto referTo = identDecl->structDef;
-                    if(referTo->phase < CompPhase_ComputeSize)
-                    {
-                        Dg_Yield(t->graph, referTo, CompPhase_ComputeSize);
-                        return false;
-                    }
-                    
-                    // The struct we're referring to has passed the ComputeSize phase
-                    decl->type->size = referTo->type->size;
-                    decl->type->align = referTo->type->align;
-                }
+                if(!FillInTypeSize(t, decl->type, decl->typeTok)) return false;
             }
             
             return true;
@@ -1237,15 +1228,33 @@ bool FillInTypeSize(Typer* t, TypeInfo* type, Token* errTok)
 {
     if(type->typeId == Typeid_Ident)
     {
-        auto structType = (Ast_StructType*)type;
-        //structType = 
+        auto identType = (Ast_IdentType*)type;
+        auto referTo = identType->structDef;
+        if(!NodePassedStage(referTo, CompPhase_ComputeSize))
+        {
+            Dg_Yield(t->graph, referTo, CompPhase_ComputeSize);
+            return false;
+        }
+        
+        // The struct we're referring to has passed the ComputeSize phase
+        type->size = referTo->type->size;
+        type->align = referTo->type->align;
     }
     else if(type->typeId == Typeid_Arr)
     {
-        // Recursively call fill in type size for subtype and then figure out if the count is usable
+        // Recursively call FillInTypeSize for subtype and then figure out if the count is usable
+        auto arrType = (Ast_ArrType*)type;
+        if(!FillInTypeSize(t, arrType->baseType, errTok)) return false;
         
-        SemanticError(t, errTok, StrLit("aaah! arrays don't work atm"));
-        return false;
+        Assert(arrType->sizeExpr->kind == AstKind_ConstValue && "Non-const values are currently not supported");
+        
+        auto constValue = (Ast_ConstValue*)arrType->sizeExpr;
+        Assert(constValue->type->typeId == Typeid_Integer);
+        
+        int64 sizeVal  = *(int64*)constValue->addr;
+        arrType->size  = arrType->baseType->size * sizeVal;
+        arrType->align = arrType->baseType->align;
+        return true;
     }
     
     return true;
@@ -1296,7 +1305,7 @@ ComputeSize_Ret ComputeStructSize(Typer* t, Ast_StructType* declStruct, Token* e
             auto itIdent = (Ast_IdentType*)it;
             auto structDef = itIdent->structDef;
             auto structDecl = Ast_GetStructType(structDef);
-            if(structDef->phase < CompPhase_ComputeSize)
+            if(!NodePassedStage(structDef, CompPhase_ComputeSize))
             {
                 Dg_Yield(t->graph, structDef, CompPhase_ComputeSize);
                 *outcome = false;
@@ -1341,16 +1350,16 @@ Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Token* where, Atom*
         
         for(int i = 0; i < decls.length; ++i)
         {
-            bool applyOrderConstraint = false;
-            applyOrderConstraint |= decls[i]->kind == AstKind_ProcDef;
-            applyOrderConstraint |= decls[i]->kind == AstKind_StructDef;
+            bool applyOrderConstraint = true;
+            applyOrderConstraint &= (decls[i]->kind != AstKind_ProcDecl);
+            applyOrderConstraint &= (decls[i]->kind != AstKind_StructDef);
             if(decls[i]->kind == AstKind_VarDecl)
             {
                 auto var = (Ast_VarDecl*)decls[i];
-                applyOrderConstraint |= (var->declIdx == -1);  // If it's a global variable declaration it doesn't matter
+                applyOrderConstraint &= (var->declIdx != -1);  // If it's a global variable declaration don't apply it
             }
             
-            if(applyOrderConstraint && curScope->decls[i]->where < where)
+            if(applyOrderConstraint && curScope->decls[i]->where >= where)
                 continue;
             
             if(curScope->decls[i]->name == ident)
@@ -1868,7 +1877,6 @@ void SemanticError(Typer* t, Token* token, String message, ...)
         semErrorContinueFlag = min(semErrorContinueFlag + 1, 2);
         t->status = false;
     }
-    else return;
     
     Dg_Error(t->graph);
     

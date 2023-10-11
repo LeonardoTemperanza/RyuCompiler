@@ -1,23 +1,67 @@
 
+proc putchar(int c)->int c;
+proc puts(^char str)->int numChars;
+
+proc free(^raw ptr);
+
+proc fib(int n)->int
+{
+    if(n < 2) return n;
+    int n1 = n + 1;
+    return fib(n1) + fib(n1-1);
+}
+
 proc main()->int
 {
-    int a = 2;
+    //int a = 2;
+    
+    int b = 3+4+5;
+    
+    b += 3;
     
     ^char string = cast(^char) malloc(5);
     defer free(string);
     
-    return test();
+    Person p;
+    
+    Node n;
+    int a = 3;
+    //n.info += a;
+    
+    return 5;
+}
+
+proc malloc(uint64 size)->^raw;
+
+struct Node
+{
+    ^Node next;
+    Person p;
+}
+
+struct Person
+{
+    int64 id;
+    Town t;
+}
+
+struct Town
+{
+    String name;
+    int64 numInhabitants;
+}
+
+struct String
+{
+    ^char ptr;
+    int64 length;
 }
 
 proc test()->int
 {
-    return 5;
+    malloc(10);
+    return 10;
 }
-
-proc putchar(int c)->int c;
-proc puts(^char str)->int numChars;
-proc malloc(uint64 size)->^raw;
-proc free(^raw ptr);
 
 /*
 

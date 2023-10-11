@@ -26,13 +26,12 @@ DepGraph Dg_InitGraph(Arena* phaseArenas[CompPhase_EnumSize][2])
         queue.output     = { 0, 0 };
         
         queue.phase  = (CompPhase)i;
-        queue.isDone = false;
     }
     
     return graph;
 }
 
-int MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
+bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
 {
     // Typer initialization
     size_t size = GB(1);
@@ -53,18 +52,20 @@ int MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
     }
     
     DepGraph g = Dg_InitGraph(phaseArenaPtrs);
-    Typer t = InitTyper(&typeArena, p);
+    Typer t = InitTyper(&typeArena, p->tokenizer);
     t.graph = &g;
     g.typer = &t;
     g.interp = interp;
     g.items = p->entities;
     t.fileScope = file;
     
+    *interp = Interp_Init(&g);
+    
     // TODO: for now we only have one file, one ast.
     // Fill the typecheck queue with initial values
     for_array(i, p->entities)
     {
-        auto& typecheckQueue = g.queues[CompPhase_Parse];
+        auto& typecheckQueue = g.queues[CompPhase_Typecheck];
         typecheckQueue.input.Append(typecheckQueue.inputArena, i);
     }
     
@@ -72,32 +73,36 @@ int MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
     // appropriately calling Yield or SaveError to update
     // the dependency graph.
     
-    bool exit = false;
-    const int maxIters = 100000000;
-    int curIters = 0;
-    while(!exit && curIters < maxIters)
+    bool done;
+    bool progress;
+    do
     {
-        defer(++curIters);
-        
-        exit = true;
+        done = true;
+        progress = false;
         
         // For each stage in the pipeline
         for(int i = CompPhase_Uninit + 1; i < CompPhase_EnumSize; ++i)
         {
             auto& queue = g.queues[i];
-            Dg_UpdateQueueArrays(&g, &queue);
+            Dg_StartIteration(&g, &queue);
             
-            if(queue.input.length == 0) continue;
-            else exit = false;
+            // Detect cycles and perform topological sorting
+            bool cycle = Dg_DetectCycle(&g, &queue);
+            Dg_PerformStage(&g, &queue);
             
-            // Detect cycle and perform topological sort
-            bool detected = Dg_DetectCycle(&g, &queue);
-            if(!detected) Dg_PerformStage(&g, &queue);
+            if(cycle) g.status = false;
+            if(queue.numSucceeded > 0) progress = true;
+            if(queue.input.length > 0) done = false;
+            
+#if DebugDep
+            Dg_DebugPrintDeps(&g);
+#endif
         }
     }
+    while(!done && progress);
     
-    if(!exit)
-        fprintf(stderr, "There was an infinite loop in the program. Please file a bug report if you're seeing this.\n");
+    if(!done && !progress)
+        fprintf(stderr, "Internal error: Unable to resolve code dependencies and/or detect a cycle.\n");
     
     return g.status;
 }
@@ -111,7 +116,7 @@ Dg_IdxGen Dg_NewNode(Ast_Node* node, Arena* allocTo, Slice<Dg_Entity>* entities)
     // the node has gone through all stages in the
     // pipeline, so it doesn't have to be maintained.
     node->entityIdx = res.idx;
-    node->phase     = CompPhase_Parse;
+    node->phase     = CompPhase_Typecheck;
     
     auto& item    = (*entities)[res.idx];
     item.node     = node;
@@ -119,17 +124,20 @@ Dg_IdxGen Dg_NewNode(Ast_Node* node, Arena* allocTo, Slice<Dg_Entity>* entities)
     item.stackIdx = -1;
     item.sccIdx   = -1;
     item.flags    = 0;
-    item.phase    = CompPhase_Parse;
+    item.phase    = CompPhase_Typecheck;
     return res;
 }
 
-void Dg_UpdateQueueArrays(DepGraph* g, Queue* q)
+void Dg_StartIteration(DepGraph* g, Queue* q)
 {
     if(q->phase < CompPhase_EnumSize - 1)
         q->output = g->queues[q->phase+1].input;
     
     if(q->phase > CompPhase_Uninit + 1)
         q->input = g->queues[q->phase-1].output;
+    
+    q->numSucceeded = 0;
+    q->numFailed = 0;
 }
 
 void Dg_Yield(DepGraph* g, Ast_Node* yieldUpon, CompPhase neededPhase)
@@ -147,6 +155,7 @@ void Dg_Error(DepGraph* g)
 {
     // Mark the current node
     g->items[g->curIdx].flags |= Entity_Error;
+    g->status = false;
 }
 
 void Dg_UpdatePhase(Dg_Entity* entity, CompPhase newPhase)
@@ -155,20 +164,39 @@ void Dg_UpdatePhase(Dg_Entity* entity, CompPhase newPhase)
     entity->node->phase = newPhase;
 }
 
+void Dg_UpdateQueue(DepGraph* graph, Queue* q, int inputIdx, bool success)
+{
+    Dg_Idx entityIdx = q->processing[inputIdx];
+    Dg_Entity& entity = graph->items[entityIdx];
+    if(entity.flags & Entity_Error) return;
+    
+    if(success)
+    {
+        entity.waitFor.FreeAll();
+        Dg_UpdatePhase(&entity, (CompPhase)(q->phase+1));
+        q->output.Append(q->outputArena, entityIdx);
+        ++q->numSucceeded;
+    }
+    else
+    {
+        q->input.Append(q->inputArena, entityIdx);
+        ++q->numFailed;
+    }
+}
+
 void Dg_PerformStage(DepGraph* graph, Queue* q)
 {
     Swap(auto, *q->inputArena, *q->processingArena);
     Swap(auto, q->input, q->processing);
     
-    // Reset system states
-    graph->typer->curScope = &graph->typer->fileScope->scope;
+    ResetTyper(graph->typer);
     
     bool passed = false;
     switch(q->phase)
     {
         case CompPhase_Uninit:    break;
         case CompPhase_EnumSize:  break;
-        case CompPhase_Parse:  // Need to do typechecking
+        case CompPhase_Typecheck:
         {
             for_array(i, q->processing)
             {
@@ -177,22 +205,12 @@ void Dg_PerformStage(DepGraph* graph, Queue* q)
                 
                 graph->curIdx = q->processing[i];
                 bool outcome = CheckNode(graph->typer, gNode.node);
-                
-                if(gNode.flags & Entity_Error) continue;
-                
-                if(outcome)
-                {
-                    gNode.waitFor.FreeAll();
-                    Dg_UpdatePhase(&gNode, CompPhase_Typecheck);
-                    q->output.Append(q->outputArena, q->processing[i]);
-                }
-                else
-                    q->input.Append(q->inputArena, q->processing[i]);
+                Dg_UpdateQueue(graph, q, i, outcome);
             }
             
             break;
         }
-        case CompPhase_Typecheck:  // Need to compute size or perform codegen
+        case CompPhase_ComputeSize:
         {
             for_array(i, q->processing)
             {
@@ -203,55 +221,35 @@ void Dg_PerformStage(DepGraph* graph, Queue* q)
                 graph->curIdx = q->processing[i];
                 
                 bool outcome = ComputeSize(graph->typer, astNode);
-                if(gNode.flags & Entity_Error) continue;
-                
-                if(outcome)
-                {
-                    gNode.waitFor.FreeAll();
-                    Dg_UpdatePhase(&gNode, CompPhase_ComputeSize);
-                    q->output.Append(q->outputArena, q->processing[i]);
-                }
-                else
-                    q->input.Append(q->inputArena, q->processing[i]);
+                Dg_UpdateQueue(graph, q, i, outcome);
             }
             
             break;
         }
-        case CompPhase_ComputeSize:  // Need to perform bytecode codegen
+        case CompPhase_Bytecode:
         {
             for_array(i, q->processing)
             {
                 auto& gNode = graph->items[q->processing[i]];
                 auto astNode = gNode.node;
                 
-                // NOTE(Leo): Bytecode generation can't fail right now,
-                // but that might change in the future
-                
-                GenBytecode(graph->interp, astNode);
-                Dg_UpdatePhase(&gNode, CompPhase_Bytecode);
-                
-                gNode.waitFor.FreeAll();
-                
-                // TODO: Do this only if you need to run this code
-                q->output.Append(q->outputArena, q->processing[i]);
-            }
-            
-            break;
-        }
-        case CompPhase_Bytecode:  // Need to run bytecode
-        {
-            for_array(i, q->processing)
-            {
-                auto& gNode = graph->items[q->processing[i]];
-                auto astNode = gNode.node;
+                bool success = GenBytecode(graph->interp, astNode);
+                Dg_UpdateQueue(graph, q, i, success);
             }
             
             break;
         }
         case CompPhase_Run:
         {
-            // Don't do anything. This entity has finished all phases
-            Assert(false && "Attempting to perform a stage after the last one.");
+            for_array(i, q->processing)
+            {
+                auto& gNode = graph->items[q->processing[i]];
+                auto astNode = gNode.node;
+                
+                ++q->numSucceeded;
+            }
+            
+            break;
         }
     }
     
@@ -311,9 +309,6 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
         while(end < q->input.length && g->items[q->input[end]].sccIdx == groupId) ++end;
         
         ++numGroups;
-        
-        //printf("Group %d, indices %d %d\n", groupId, start, end-1);
-        
         bool isCycle = false;
         
         if(end <= start + 1)  // If only one item, there might be no cycle
@@ -323,7 +318,7 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
                 auto& dep = g->items[q->input[start]].waitFor[i];
                 
                 // Ignore dated dependency
-                if(dep.neededPhase <= g->items[dep.idx].phase)
+                if(dep.neededPhase < g->items[dep.idx].phase)
                     continue;
                 
                 if(g->items[dep.idx].sccIdx == groupId)
@@ -336,18 +331,35 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
         else  // There's at least one cycle for sure
             isCycle = true;
         
+#if DebugDep
+        fprintf(stderr, "Group %d, indices %d %d", groupId, start, end-1);
+#endif
+        
         if(isCycle)
         {
+#if DebugDep
+            fprintf(stderr, ", cycle");
+#endif
+            
             ++numCycles;
+            // Set these items' error flags, the errors will be propagated later
+            // to all dependant nodes
+            for(int i = start; i < end; ++i)
+            {
+                auto& item = g->items[q->input[i]];
+                item.flags |= Entity_Error;
+            }
+            
             Dg_ExplainCyclicDependency(g, q, start, end);
         }
+        
+#if DebugDep
+        fprintf(stderr, "\n");
+#endif
         
         start = end;
     }
     
-    //printf("Num cycles: %d\n", numCycles);
-    
-    if(numCycles > 0) printf("Cycle!!\n");
     return numCycles > 0;
 }
 
@@ -367,7 +379,7 @@ void Dg_TarjanVisit(DepGraph* g, Dg_Entity* node, Slice<Dg_Entity*>* stack, Aren
         
         // Not part of the original algorithm; ignore the
         // dated dependencies
-        if(waitFor.phase <= node->waitFor[i].idx)
+        if(node->waitFor[i].neededPhase < waitFor.phase)
             continue;
         
         if(waitFor.stackIdx == -1)
@@ -428,6 +440,7 @@ void Dg_ExplainCyclicDependency(DepGraph* g, Queue* q, Dg_Idx start, Dg_Idx end)
     ResetColor();
     fprintf(stderr, ": Cyclic dependency was detected in the code;\n");
     
+#if 0
     auto& startItem = g->items[q->input[start]];
     auto& endItem = g->items[q->input[end]];
     Ast_Node* startNode = g->items[q->input[start]].node;
@@ -474,7 +487,7 @@ void Dg_ExplainCyclicDependency(DepGraph* g, Queue* q, Dg_Idx start, Dg_Idx end)
     ScratchArena scratch;
     StringBuilder strBuilder(scratch);
     strBuilder.Append("This construct can't ");
-    strBuilder.Append(Dg_CompPhase2Str(g->items[start].phase));
+    strBuilder.Append(Dg_CompPhase2Sentence(g->items[start].phase));
     
     strBuilder.Append("...");
     
@@ -486,15 +499,16 @@ void Dg_ExplainCyclicDependency(DepGraph* g, Queue* q, Dg_Idx start, Dg_Idx end)
     else
         strBuilder.Append("... because it indirectly needs this other construct to have already ");
     
-    strBuilder.Append(Dg_CompPhase2Str(CompPhase_Uninit, true));
+    strBuilder.Append(Dg_CompPhase2Sentence(CompPhase_Uninit, true));
     strBuilder.Append(", which in turn needs the previous one to have ");
-    strBuilder.Append(Dg_CompPhase2Str(neededStartPhase, true));
+    strBuilder.Append(Dg_CompPhase2Sentence(neededStartPhase, true));
     strBuilder.Append('.');
     
     CompileErrorContinue(g->typer->tokenizer, startNode->where, strBuilder.string);
+#endif
 }
 
-String Dg_CompPhase2Str(CompPhase phase, bool pastTense)
+String Dg_CompPhase2Sentence(CompPhase phase, bool pastTense)
 {
     String res;
     if(!pastTense)
@@ -502,7 +516,6 @@ String Dg_CompPhase2Str(CompPhase phase, bool pastTense)
         switch(phase)
         {
             case CompPhase_Uninit:      res = StrLit("[uninitialized phase]"); break;
-            case CompPhase_Parse:       res = StrLit("determine its type");    break;
             case CompPhase_Typecheck:   res = StrLit("determine its size");    break;
             case CompPhase_ComputeSize: res = StrLit("generate its bytecode"); break;
             case CompPhase_Bytecode:    res = StrLit("run at compile time");   break;
@@ -516,11 +529,10 @@ String Dg_CompPhase2Str(CompPhase phase, bool pastTense)
         switch(phase)
         {
             case CompPhase_Uninit:      res = StrLit("[uninitialized phase]");     break;
-            case CompPhase_Parse:       res = StrLit("determined its type");       break;
-            case CompPhase_Typecheck:   res = StrLit("determined its size");       break;
-            case CompPhase_ComputeSize: res = StrLit("generated its bytecode");    break;
-            case CompPhase_Bytecode:    res = StrLit("run its compile time code"); break;
-            case CompPhase_Run:         res = StrLit("[done]");                    break;
+            case CompPhase_Typecheck:   res = StrLit("determined its type");       break;
+            case CompPhase_ComputeSize: res = StrLit("determined its type");       break;
+            case CompPhase_Bytecode:    res = StrLit("generated its bytecode");    break;
+            case CompPhase_Run:         res = StrLit("run its compile time code"); break;
             case CompPhase_EnumSize:    res = StrLit("[enum size]");               break;
             default:                    res = StrLit("[invalid enum]");            break;
         }
@@ -529,9 +541,79 @@ String Dg_CompPhase2Str(CompPhase phase, bool pastTense)
     return res;
 }
 
-void Dg_DebugPrintDependencies(DepGraph* g)
+String Dg_CompPhase2Str(CompPhase phase)
 {
-    // TODO
-    Assert(false);
+    String res;
+    switch(phase)
+    {
+        case CompPhase_Uninit:      res = StrLit("[uninitialized phase]"); break;
+        case CompPhase_Typecheck:   res = StrLit("Typechecking");          break;
+        case CompPhase_ComputeSize: res = StrLit("Compute size");          break;
+        case CompPhase_Bytecode:    res = StrLit("Bytecode");              break;
+        case CompPhase_Run:         res = StrLit("Run");                   break;
+        case CompPhase_EnumSize:    res = StrLit("[enum size]");           break;
+        default:                    res = StrLit("[invalid enum]");        break;
+    }
+    
+    return res;
 }
 
+void Dg_DebugPrintDeps(DepGraph* g)
+{
+    ScratchArena scratch;
+    
+    fprintf(stderr, "Graph:\n");
+    
+    for_array(i, g->items)
+    {
+        int numChars = 0;
+        Token* start = g->items[i].node->where;
+        Token* end = start;
+        while(end < start + 2 && end->type != Tok_EOF) ++end;
+        
+        String nodeStr = { start->ident.ptr, end->ec - start->sc + 1 };
+        nodeStr = nodeStr.CopyToArena(scratch);
+        // Substitute newlines with spaces
+        for_array(j, nodeStr)
+        {
+            if(nodeStr[j] == '\n')
+                nodeStr.ptr[j] = ' ';
+        }
+        
+        numChars += fprintf(stderr, "%.*s ... ", (int)nodeStr.length, nodeStr.ptr);
+        String phase = Dg_CompPhase2Str(g->items[i].phase);
+        numChars += fprintf(stderr, "(%.*s)", (int)phase.length, phase.ptr);
+        
+        auto& waitFor = g->items[i].waitFor;
+        if(waitFor.length <= 0)
+            fprintf(stderr, " (no deps)\n");
+        
+        for_array(j, waitFor)
+        {
+            int numSpaces = j > 0 ? numChars : 1;
+            for(int i = 0; i < numSpaces; ++i)
+                fprintf(stderr, " ");
+            
+            fprintf(stderr, "-> ");
+            
+            {
+                Token* start = g->items[waitFor[j].idx].node->where;
+                Token* end = start;
+                while(end < start + 2 && end->type != Tok_EOF) ++end;
+                
+                String nodeStr = { start->ident.ptr, end->ec - start->sc + 1 };
+                nodeStr = nodeStr.CopyToArena(scratch);
+                // Substitute newlines with spaces
+                for_array(j, nodeStr)
+                {
+                    if(nodeStr[j] == '\n')
+                        nodeStr.ptr[j] = ' ';
+                }
+                
+                fprintf(stderr, "%.*s ... ", (int)nodeStr.length, nodeStr.ptr);
+                String phase = Dg_CompPhase2Str(waitFor[j].neededPhase);
+                fprintf(stderr, "(%.*s)\n", (int)phase.length, phase.ptr);
+            }
+        }
+    }
+}

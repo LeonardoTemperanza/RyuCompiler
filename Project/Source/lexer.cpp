@@ -241,7 +241,7 @@ static Token GetToken(Tokenizer* t)
         t->at += result.ident.length;
         result.ec = result.sc + result.ident.length - 1;
     }
-    else if(IsNumeric(t->at[0]) || (t->at[0] == '-' && IsNumeric(t->at[1])))  // Numbers
+    else if(IsNumeric(t->at[0]))// || (t->at[0] == '-' && IsNumeric(t->at[1])))  // Numbers
     {
         // Determine which type of number it is
         int length = 0;

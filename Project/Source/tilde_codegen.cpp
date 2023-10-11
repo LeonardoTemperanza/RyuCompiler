@@ -41,6 +41,7 @@ void Tc_CodegenAndLink(Ast_FileScope* file, Interp* interp, Slice<char*> objFile
     ctx.regArena = &regArena;
     ctx.symArena = &symArena;
     ctx.flagArena = &flagArena;
+    ctx.symbols = interp->symbols;
     
     // Generate symbols
     for_array(i, interp->symbols)
@@ -137,8 +138,9 @@ void Tc_GenSymbol(Tc_Context* ctx, Interp_Symbol* symbol)
         case Interp_ProcSym:
         {
             auto proc = (Ast_ProcDecl*)symbol->decl;
+            auto& sym = ctx->symbols[proc->symIdx];
             
-            TB_Function* tbProc = tb_function_create(ctx->module, -1, proc->symbol->name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
+            TB_Function* tbProc = tb_function_create(ctx->module, -1, sym.name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
             
             res = (TB_Symbol*)tbProc;
             break;
@@ -156,7 +158,8 @@ void Tc_GenSymbol(Tc_Context* ctx, Interp_Symbol* symbol)
             auto global = (Ast_VarDecl*)symbol->decl;
             
             auto debugType = Tc_ConvertToDebugType(ctx->module, global->type);
-            TB_Global* tbGlobal = tb_global_create(ctx->module, -1, global->symbol->name, debugType, TB_LINKAGE_PUBLIC);
+            auto& sym = ctx->symbols[global->symIdx];
+            TB_Global* tbGlobal = tb_global_create(ctx->module, -1, sym.name, debugType, TB_LINKAGE_PUBLIC);
             tb_global_set_storage(ctx->module, tb_module_get_data(ctx->module), tbGlobal, global->type->size, global->type->align, 1);
             
             res = (TB_Symbol*)tbGlobal;
@@ -174,19 +177,21 @@ void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
     // Generate procedure itself
     tb_arena_create(&ctx->procArena, MB(1));
     
-    auto curProc = (TB_Function*)proc->symbol->tildeSymbol;
+    Interp_Symbol& symbol = ctx->symbols[proc->symIdx];
+    
+    auto curProc = (TB_Function*)symbol.tildeSymbol;
     
     // Debug type is still needed for debugging, but ABI is already handled
     // in the interpreter instructions.
-    TB_DebugType* procType = Tc_ConvertProcToDebugType(ctx->module, proc->symbol->typeInfo);
+    TB_DebugType* procType = Tc_ConvertProcToDebugType(ctx->module, symbol.typeInfo);
     
     // @robustness Just doing this for now because it's easier, should
     // generate the prototype directly from the interp procedure
     size_t paramCount = 0;
     TB_Node** paramNodes = tb_function_set_prototype_from_dbg(curProc, procType, &ctx->procArena, &paramCount);
     
-    Assert(proc->symbol->typeInfo->typeId == Typeid_Proc);
-    auto procDecl = (Ast_ProcType*)proc->symbol->typeInfo;
+    Assert(symbol.typeInfo->typeId == Typeid_Proc);
+    auto procDecl = (Ast_ProcType*)symbol.typeInfo;
     int abiArgsCount = (proc->retRule == TB_PASSING_INDIRECT) + max((int64)0, procDecl->retTypes.length - 1) + procDecl->args.length;
     if(procDecl->retTypes.length <= 0)
         abiArgsCount = procDecl->args.length;
@@ -205,7 +210,7 @@ void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
         }
     }
     
-    bool isMain = strcmp(proc->symbol->name, "main") == 0;
+    bool isMain = strcmp(symbol.name, "main") == 0;
     if(isMain)
         ctx->mainProc = curProc;
     ctx->proc = curProc;
@@ -353,7 +358,7 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
             {
                 auto symbol = syms[instr.call.target];
                 
-                auto debugProto = Tc_ConvertProcToDebugType(ctx->module, symbol->typeInfo);
+                auto debugProto = Tc_ConvertProcToDebugType(ctx->module, ctx->symbols[symbol].typeInfo);
                 auto proto = tb_prototype_from_dbg(ctx->module, debugProto);
                 
                 auto nodes = Tc_GetNodeArray(ctx, proc, instr.call.argStart, instr.call.argCount, scratch);
@@ -459,7 +464,8 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
             case Op_Local: dst = tb_inst_local(tildeProc, instr.local.size, instr.local.align); break;
             case Op_GetSymbolAddress:
             {
-                auto tildeSymbol = (TB_Symbol*)instr.symAddress.symbol->tildeSymbol;
+                auto& symbol = ctx->symbols[instr.symAddress.symbol];
+                auto tildeSymbol = (TB_Symbol*)symbol.tildeSymbol;
                 dst = tb_inst_get_symbol_address(tildeProc, tildeSymbol);
                 ctx->syms[instr.dst] = instr.symAddress.symbol;
                 

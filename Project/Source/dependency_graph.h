@@ -20,12 +20,12 @@ typedef uint32 Dg_Gen;
 
 // Indicates at which point a specific compilation entity
 // is at in the compilation process. For example, a compilation
-// entity at phase CompPhase_Typecheck means that it finished
-// typechecking but has not finished the CompPhase_ComputeSize yet.
+// entity at phase CompPhase_ComputeSize means that it is currently
+// doing that (and it hasn't finished), but it has finished typechecking
+// successfully.
 enum CompPhase : uint8
 {
     CompPhase_Uninit = 0,
-    CompPhase_Parse,
     CompPhase_Typecheck,
     CompPhase_ComputeSize,
     CompPhase_Bytecode,
@@ -76,14 +76,15 @@ struct Queue
     Slice<Dg_Idx> output;
     
     CompPhase phase;
-    bool isDone = false;
+    int numSucceeded = 0;
+    int numFailed = 0;
 };
 
 struct DepGraph
 {
     Arena arena;  // Where to allocate entities (items)
     
-    // Entity pool
+    // Entity list
     Slice<Dg_Entity> items = { 0, 0 };
     Dg_Idx firstFree = Dg_Null;
     Dg_Idx lastFree  = Dg_Null;
@@ -104,17 +105,20 @@ struct DepGraph
 
 DepGraph Dg_InitGraph(Arena* phaseArenas[CompPhase_EnumSize][2]);
 Dg_IdxGen Dg_NewNode(Ast_Node* node, Arena* allocTo, Slice<Dg_Entity>* entities);
-void Dg_UpdateQueueArrays(DepGraph* g, Queue* q);
+void Dg_StartIteration(DepGraph* g, Queue* q);
 void Dg_Yield(DepGraph* g, Ast_Node* yieldUpon, CompPhase neededPhase);
 void Dg_Error(DepGraph* g);
+void Dg_UpdatePhase(Dg_Entity* entity, CompPhase newPhase);
+void Dg_UpdateQueue(DepGraph* graph, Queue* q, int inputIdx, bool success);
 void Dg_PerformStage(DepGraph* g, Queue* q);
 bool Dg_DetectCycle(DepGraph* g, Queue* queue);
 void Dg_TarjanVisit(DepGraph* g, Dg_Entity* node, Slice<Dg_Entity*>* stack, Arena* stackArena);
 void Dg_TopologicalSort(DepGraph* g, Queue* queue);  // Assumes that 'stackIdx' is populated
 // Prints an error message for the user
 void Dg_ExplainCyclicDependency(DepGraph* g, Queue* q, Dg_Idx start, Dg_Idx end);
-String Dg_CompPhase2Str(CompPhase phase, bool pastTense = false);
+String Dg_CompPhase2Sentence(CompPhase phase, bool pastTense = false);
+String Dg_CompPhase2Str(CompPhase phase);
 // For debugging purposes
-void Dg_DebugPrintDependencies(DepGraph* g);
+void Dg_DebugPrintDeps(DepGraph* g);
 
-int MainDriver(Parser* p, Interp* interp, Ast_FileScope* file);
+bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file);

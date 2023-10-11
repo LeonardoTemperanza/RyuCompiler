@@ -251,6 +251,8 @@ Ast_VarDecl* ParseVarDecl(Parser* p, Ast_DeclSpec specs, bool forceInit, bool ig
 {
     ProfileFunc(prof);
     
+    Token* typeTok = p->at;
+    
     Token* t = 0;
     auto type = ParseType(p, &t);
     if(!IsTokIdent(t->type))
@@ -260,6 +262,7 @@ Ast_VarDecl* ParseVarDecl(Parser* p, Ast_DeclSpec specs, bool forceInit, bool ig
     bool isGlobal = !p->curProc;
     auto decl  = isGlobal? Ast_MakeEntityNode<Ast_VarDecl>(p, t) : Ast_MakeNode<Ast_VarDecl>(p->arena, t);
     decl->type = type;
+    decl->typeTok = typeTok;
     decl->declSpecs = specs;
     DeferStringInterning(p, t->ident, &decl->name);
     
@@ -1040,6 +1043,7 @@ Ast_ProcType ParseProcType(Parser* p, Token** outIdent, bool forceArgNames)
             DeferStringInterning(p, t->ident, &argDecl->name);
             
             args.Append(scratch, argDecl);
+            argDecl->declIdx = args.length - 1;
             
             if(p->at->type == ',') ++p->at;
             else break;
@@ -1143,9 +1147,6 @@ Ast_StructType ParseStructType(Parser* p, Token** outIdent)
     decl.memberOffsets.ptr = Arena_AllocArrayPack(p->arena, types.length, uint32);
     decl.memberOffsets.length = types.length;
     
-    // Keep track of atom pointers so that they can later be patched
-    // with the correct value (during string interning, which is done
-    // on one thread for simplicity)
     for_array(i, decl.memberNames)
         DeferStringInterning(p, decl.memberNameTokens[i]->ident, &decl.memberNames[i]);
     

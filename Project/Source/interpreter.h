@@ -261,9 +261,11 @@ typedef uint8 Interp_OpCode;
 typedef uint16 RegIdx;
 typedef uint32 InstrIdx;  // Max of 4 billion instructions per proc
 typedef uint32 ProcIdx;   // Max of 4 billion procedures
+typedef uint32 SymIdx;    // Max of 4 billion symbols
 
 #define RegIdx_Unused USHRT_MAX
 #define InstrIdx_Unused UINT_MAX
+#define SymIdx_Unused UINT_MAX
 
 struct Interp_RegInterval
 {
@@ -435,7 +437,7 @@ struct Interp_Instr
         } memacc;  // Member access
         struct
         {
-            Interp_Symbol* symbol;
+            SymIdx symbol;
         } symAddress;
     };
 };
@@ -448,8 +450,7 @@ struct Interp_Instr
 // that doesn't use virtual memory could be implemented...
 struct Interp_Proc
 {
-    // These are per-proc for parallelism
-    // and also so that indices can be smaller
+    // These are per-proc so that indices can be smaller
     Array<InstrIdx> instrArrays;
     Array<RegIdx> regArrays;
     Array<int64> constArrays;
@@ -467,7 +468,7 @@ struct Interp_Proc
     TB_Module* module;
     
     // Additional information for codegen
-    Interp_Symbol* symbol;
+    SymIdx symIdx;
     
     // Function description used for codegen
     Array<Interp_Type> argTypes;
@@ -496,6 +497,7 @@ struct Interp
     // the tb functions that are used to get
     // the ABI-compliant signatures require a module
     TB_Module* module;
+    DepGraph* graph;
     
     Array<Interp_Symbol> symbols;
     Array<Interp_Proc> procs;
@@ -551,8 +553,8 @@ cforceinline bool Interp_IsValueValid(Interp_Val val)
 }
 
 // Code generation
-Interp Interp_Init();
-void GenBytecode(Interp* interp, Ast_Node* node);
+Interp Interp_Init(DepGraph* graph);
+bool GenBytecode(Interp* interp, Ast_Node* node);
 Interp_Proc* Interp_MakeProc(Interp_Builder* builder, Interp* interp);
 Interp_Symbol* Interp_MakeSymbol(Interp* interp);
 RegIdx Interp_BuildPreRet(Interp_Builder* builder, RegIdx arg, Interp_Val val, TypeInfo* type, TB_PassingRule rule);
@@ -563,8 +565,7 @@ void Interp_EndOfExpression(Interp_Builder* builder);  // At this point register
 RegIdx Interp_ConvertNodeRVal(Interp_Builder* builder, Ast_Node* node);
 
 Interp_Val Interp_Assign(Interp_Builder* builder, Interp_Val src, TypeInfo* srcType, Interp_Val dst, TypeInfo* dstType);
-void Interp_ConvertExternProc(Interp* interp, Ast_ProcDecl* astProc);
-Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc);
+Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc, bool* outYielded);
 Interp_Type Interp_ConvertType(TypeInfo* type);
 RegIdx Interp_ConvertTypeConversion(Interp_Builder* builder, RegIdx src, Interp_Type srcType, TypeInfo* srcFullType, TypeInfo* dst);
 RegIdx Interp_ConvertTypeConversion(Interp_Builder* builder, RegIdx src, Interp_Type srcType, Interp_Type dstType, bool srcIsSigned, bool dstIsSigned);

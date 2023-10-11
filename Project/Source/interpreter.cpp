@@ -5,20 +5,32 @@
 #include "interpreter.h"
 #include "bytecode_builder.h"
 
-void GenBytecode(Interp* interp, Ast_Node* node)
+bool GenBytecode(Interp* interp, Ast_Node* node)
 {
     if(node->kind == AstKind_ProcDecl)
     {
         auto decl = (Ast_ProcDecl*)node;
-        if(decl->declSpecs & Decl_Extern)
-            Interp_ConvertExternProc(interp, decl);
+        
+        auto symbol  = Interp_MakeSymbol(interp);
+        symbol->type = decl->declSpecs & Decl_Extern ? Interp_ExternSym : Interp_ProcSym;
+        symbol->decl = decl;
+        symbol->name = decl->name->string;
+        symbol->typeInfo = decl->type;
+        decl->symIdx = interp->symbols.length - 1;
+        return true;
     }
     else if(node->kind == AstKind_ProcDef)
     {
         auto astProc = (Ast_ProcDef*)node;
-        auto proc = Interp_ConvertProc(interp, astProc);
+        bool yielded = false;
+        auto proc = Interp_ConvertProc(interp, astProc, &yielded);
+        
+        if(yielded) return false;
+        
         if(cmdLineArgs.emitBytecode)
-            Interp_PrintProc(proc);
+            Interp_PrintProc(proc, interp->symbols);
+        
+        return true;
     }
     else if(node->kind == AstKind_VarDecl)
     {
@@ -29,8 +41,12 @@ void GenBytecode(Interp* interp, Ast_Node* node)
         sym->decl = decl;
         sym->name = decl->name->string;
         sym->typeInfo = decl->type;
-        decl->symbol = sym;
+        decl->symIdx = interp->symbols.length - 1;
+        
+        return true;
     }
+    
+    return true;
 }
 
 Interp_Proc* Interp_MakeProc(Interp* interp)
@@ -244,9 +260,10 @@ RegIdx Interp_GetRVal(Interp_Builder* builder, Interp_Val val, TypeInfo* type)
     return val.reg;
 }
 
-Interp Interp_Init()
+Interp Interp_Init(DepGraph* graph)
 {
     Interp interp;
+    interp.graph = graph;
     
     TB_FeatureSet features = { 0 };
     TB_Arch arch = TB_ARCH_X86_64;
@@ -644,7 +661,7 @@ void Interp_ConvertReturn(Interp_Builder* builder, Ast_Return* stmt)
         Interp_ReturnVoid(builder);
     else
     {
-        auto procType = (Ast_ProcType*)proc->symbol->type;
+        auto procType = (Ast_ProcType*)builder->symbols[proc->symIdx].type;
         
         ScratchArena scratch;
         Slice<Interp_Val> regs;
@@ -698,7 +715,11 @@ Interp_Val Interp_ConvertIdent(Interp_Builder* builder, Ast_IdentExpr* expr)
     if(expr->declaration->kind == AstKind_ProcDecl)  // Procedure
     {
         auto procDecl = (Ast_ProcDecl*)expr->declaration;
-        auto address = Interp_GetSymbolAddress(builder, procDecl->symbol);
+        
+        if(procDecl->phase < CompPhase_Bytecode)
+            Dg_Yield(builder->graph, procDecl, CompPhase_Bytecode);
+        
+        auto address = Interp_GetSymbolAddress(builder, procDecl->symIdx);
         
         res.reg = address;
     }
@@ -710,7 +731,7 @@ Interp_Val Interp_ConvertIdent(Interp_Builder* builder, Ast_IdentExpr* expr)
         bool isGlobalVariable = decl->declIdx == -1;
         if(isGlobalVariable)
         {
-            auto address = Interp_GetSymbolAddress(builder, decl->symbol);
+            auto address = Interp_GetSymbolAddress(builder, decl->symIdx);
             Assert(address != RegIdx_Unused);
             res.reg = address;
         }
@@ -1213,37 +1234,39 @@ Interp_Val Interp_Assign(Interp_Builder* builder, Interp_Val src, TypeInfo* srcT
     return dst;
 }
 
-void Interp_ConvertExternProc(Interp* interp, Ast_ProcDecl* astProc)
-{
-    Assert(astProc->declSpecs & Decl_Extern);
-    
-    auto symbol  = Interp_MakeSymbol(interp);
-    symbol->type = Interp_ExternSym;
-    symbol->decl = astProc;
-    symbol->name = astProc->name->string;
-    symbol->typeInfo = astProc->type;
-    astProc->symbol = symbol;
-}
-
 // @cleanup The code for handling the ABI is still very messy...
-Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc)
+Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc, bool* outYielded)
 {
     Interp_Builder builderVar;
     auto builder = &builderVar;
+    builder->graph = interp->graph;
     
     auto astDecl = Ast_GetProcDefType(astProc);
     
-    auto proc = Interp_MakeProc(interp);
+    Interp_Proc* proc = 0;
+    if(astProc->procIdx == ProcIdx_Unused)
+        proc = Interp_MakeProc(interp);
+    else
+    {
+        proc = &interp->procs[astProc->procIdx];
+        
+        // Start from a clean slate
+        proc->~Interp_Proc();
+        Interp_Proc defaultProc;
+        *proc = defaultProc;
+    }
+    
     builder->proc = proc;
+    builder->symbols = interp->symbols;
+    astProc->procIdx = interp->procs.length - 1;
     
-    auto symbol  = Interp_MakeSymbol(interp);
-    symbol->type = Interp_ProcSym;
-    symbol->decl = astProc->decl;
-    symbol->name = astProc->decl->name->string;
-    symbol->typeInfo = astProc->decl->type;
+    if(astProc->decl->phase <= CompPhase_Bytecode)
+    {
+        Dg_Yield(interp->graph, astProc->decl, CompPhase_Bytecode);
+        return false;
+    }
     
-    astProc->decl->symbol = symbol;
-    proc->symbol = symbol;
+    proc->symIdx = astProc->decl->symIdx;
     
     proc->argRules.Resize(astDecl->args.length);
     // NOTE: We also have all returns except for the last one. Those are just pointers.
@@ -1358,6 +1381,7 @@ Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc)
             proc->retType = Interp_ConvertType(astDecl->retTypes.last());
     }
     
+    *outYielded = builder->yielded;
     return proc;
 }
 

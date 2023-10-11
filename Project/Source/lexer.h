@@ -115,12 +115,6 @@ struct Token
     };
 };
 
-enum ParseStatus
-{
-    CompStatus_Error = 1,
-    CompStatus_Success = 0
-};
-
 // TODO: Implement file paths
 struct Tokenizer
 {

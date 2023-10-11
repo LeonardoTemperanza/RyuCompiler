@@ -114,7 +114,7 @@ int main(int argCount, char** argValue)
     Atom_InternStrings(intern);
     
     // Main program loop
-    Interp interp = Interp_Init();
+    Interp interp;
     bool status = MainDriver(&parser, &interp, fileAst);
     
     if(!status)

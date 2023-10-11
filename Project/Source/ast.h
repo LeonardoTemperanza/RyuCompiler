@@ -17,7 +17,10 @@
 struct TB_Node;
 struct TB_Function;
 struct TB_FunctionPrototype;
-struct Interp_Symbol;
+typedef uint32 SymIdx;
+typedef uint32 ProcIdx;
+#define SymIdx_Unused UINT_MAX
+#define ProcIdx_Unused UINT_MAX
 
 struct Ast_FileScope;
 
@@ -237,7 +240,7 @@ struct Ast_Node
     Ast_NodeKind kind;
     
     Dg_Idx entityIdx = Dg_Null;
-    CompPhase phase = CompPhase_Parse;
+    CompPhase phase = CompPhase_Typecheck;
 };
 
 inline bool Ast_IsExpr(Ast_Node* node)
@@ -405,10 +408,7 @@ struct Ast_ArrType : public TypeInfo
     Ast_ArrType() { typeId = Typeid_Arr; };
     
     TypeInfo* baseType;
-    // TODO: to be replaced with constValue
     Ast_Expr* sizeExpr;
-    
-    // TODO: This will also be replaced with a constValue
     
     // Filled in later in the sizing stage
     uint64 sizeValue = 0;
@@ -458,6 +458,7 @@ struct Ast_StructType : public TypeInfo
 struct Ast_Declaration : public Ast_Node
 {
     Ast_DeclSpec declSpecs;
+    Token* typeTok;
     TypeInfo* type;
     Atom* name;
     
@@ -477,14 +478,14 @@ struct Ast_VarDecl : public Ast_Declaration
     int declIdx = -1;
     
     // This is only used for global variables
-    Interp_Symbol* symbol;
+    SymIdx symIdx = SymIdx_Unused;
 };
 
 struct Ast_ProcDecl : public Ast_Declaration
 {
     Ast_ProcDecl() { kind = AstKind_ProcDecl; };
     
-    Interp_Symbol* symbol = 0;
+    SymIdx symIdx = SymIdx_Unused;
 };
 
 struct Ast_ProcDef : public Ast_Node
@@ -498,12 +499,9 @@ struct Ast_ProcDef : public Ast_Node
     // procedure. Useful for codegen
     Array<Ast_Declaration*> declsFlat;
     
-    // Array of types which don't known their respective
-    // size yet. This is useful in the sizing stage
-    Array<TypeInfo*> toSize;
-    
     // Codegen stuff (later some stuff will be removed)
     // This stuff could just be in a PtrMap
+    ProcIdx procIdx = ProcIdx_Unused;
     TB_Function* tildeProc = 0;
 };
 
@@ -696,4 +694,10 @@ cforceinline TokenType Ast_GetAssignUnderlyingOp(TokenType tokType, bool* outIsA
     
     *outIsAssign = false;
     return tokType;
+}
+
+// To determine whether a node has passed a certain stage in the pipeline
+cforceinline bool NodePassedStage(Ast_Node* node, CompPhase phase)
+{
+    return node->phase > phase;
 }

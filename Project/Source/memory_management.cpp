@@ -139,7 +139,7 @@ void* Arena_ResizeLastAlloc(Arena* arena, void* oldMemory, size_t oldSize, size_
                 
                 // Zero new memory for debugging
 #ifdef Debug
-                memset(&arena->buffer[arena->offset], 0, newSize - oldSize);
+                memset(&arena->buffer[arena->prevOffset + oldSize], 0, newSize - oldSize);
 #endif
             }
             

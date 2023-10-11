@@ -28,7 +28,7 @@ struct Typer
     bool status = true;
 };
 
-Typer InitTyper(Arena* arena, Parser* parser);
+Typer InitTyper(Arena* arena, Tokenizer* tokenizer);
 void SemanticError(Typer* t, Token* token, String message, ...);
 void SemanticErrorContinue(Typer* t, Token* token, String message, ...);
 void CannotConvertToScalarTypeError(Typer* t, TypeInfo* type, Token* where);

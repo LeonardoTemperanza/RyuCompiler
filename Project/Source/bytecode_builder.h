@@ -20,6 +20,9 @@ struct Builder_MiddleInsert
 
 struct Interp_Builder
 {
+    DepGraph* graph;
+    bool yielded = false;
+    
     // Maps declaration indices to registers that contain their
     // addresses.
     Array<RegIdx> declToAddr;
@@ -37,6 +40,7 @@ struct Interp_Builder
     RegIdx regCounter = 0;
     
     Interp_Proc* proc;
+    Slice<Interp_Symbol> symbols;
     
     // Used for adding a potentially large array of instructions
     // in the middle of the array. These kinds of trasformations
@@ -108,7 +112,7 @@ void Interp_MemZero(Interp_Builder* builder, RegIdx dst, RegIdx count, uint64 al
 void Interp_MemCpy(Interp_Builder* builder, RegIdx dst, RegIdx src, RegIdx count, uint64 align, bool isVolatile);
 RegIdx Interp_ArrayAccess(Interp_Builder* builder);
 RegIdx Interp_MemberAccess(Interp_Builder* builder, RegIdx base, int64 offset);
-RegIdx Interp_GetSymbolAddress(Interp_Builder* builder, Interp_Symbol* symbol);
+RegIdx Interp_GetSymbolAddress(Interp_Builder* builder, SymIdx symbol);
 void Interp_Select(Interp_Builder* builder);
 RegIdx Interp_Add(Interp_Builder* builder, RegIdx reg1, RegIdx reg2);
 RegIdx Interp_Sub(Interp_Builder* builder, RegIdx reg1, RegIdx reg2);
@@ -166,7 +170,7 @@ InstrIdx Interp_Branch(Interp_Builder* builder);
 void Interp_Return(Interp_Builder* builder, RegIdx retValue);
 
 // Print Utilities
-void Interp_PrintProc(Interp_Proc* proc);
-void Interp_PrintInstr(Interp_Proc* proc, Interp_Instr* instr);
+void Interp_PrintProc(Interp_Proc* proc, Slice<Interp_Symbol> syms);
+void Interp_PrintInstr(Interp_Proc* proc, Interp_Instr* instr, Slice<Interp_Symbol> syms);
 void Interp_PrintBin(Interp_Instr* instr);
 void Interp_PrintUnary(Interp_Instr* instr);

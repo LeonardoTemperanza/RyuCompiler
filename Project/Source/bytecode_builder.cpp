@@ -462,7 +462,7 @@ RegIdx Interp_MemberAccess(Interp_Builder* builder, RegIdx base, int64 offset)
     return newElement->dst;
 }
 
-RegIdx Interp_GetSymbolAddress(Interp_Builder* builder, Interp_Symbol* symbol)
+RegIdx Interp_GetSymbolAddress(Interp_Builder* builder, SymIdx symbol)
 {
     auto proc = builder->proc;
     auto newElement = Interp_InsertInstr(builder);
@@ -831,7 +831,7 @@ void Interp_ReturnVoid(Interp_Builder* builder)
     newElement->unary.src = 0;
 }
 
-void Interp_PrintInstr(Interp_Proc* proc, Interp_Instr* instr)
+void Interp_PrintInstr(Interp_Proc* proc, Interp_Instr* instr, Slice<Interp_Symbol> syms)
 {
     if(instr->bitfield & InstrBF_ViolatesSSA)
         printf("(Violates SSA) ");
@@ -953,11 +953,11 @@ void Interp_PrintInstr(Interp_Proc* proc, Interp_Instr* instr)
         case Op_GetSymbolAddress:
         {
             auto symbol = instr->symAddress.symbol;
-            if(!symbol)
+            if(symbol == SymIdx_Unused)
                 printf("NULL");
             else
             {
-                printf("%s",  instr->symAddress.symbol->decl->name->string);
+                printf("%s", syms[instr->symAddress.symbol].decl->name->string);
             }
             break;
         }
@@ -1043,10 +1043,10 @@ void Interp_PrintPassRule(TB_PassingRule rule)
     }
 }
 
-void Interp_PrintProc(Interp_Proc* proc)
+void Interp_PrintProc(Interp_Proc* proc, Slice<Interp_Symbol> syms)
 {
     // Print proc name, etc.
-    printf("%s:\n", proc->symbol->name);
+    printf("%s:\n", syms[proc->symIdx].name);
     
     // Print passing rules
     printf("Arg passing rules: ");
@@ -1076,7 +1076,7 @@ void Interp_PrintProc(Interp_Proc* proc)
         for(int i = numChars; i < numSpaces; ++i)
             printf(" ");
         
-        Interp_PrintInstr(proc, &proc->instrs[i]);
+        Interp_PrintInstr(proc, &proc->instrs[i], syms);
     }
     
     printf("\n");
