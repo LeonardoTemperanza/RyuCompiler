@@ -2,13 +2,13 @@
 #include "base.h"
 #include "os_agnostic.h"
 #include "miniwindows.h"
-//#include "windows.h"
 #include "microsoft_craziness.h"
 
 static DWORD win32ThreadContextIdx = 0;
 static HANDLE win32ConsoleHandle = 0;
 static CONSOLE_SCREEN_BUFFER_INFO win32SavedScreenBufferInfo;
-static bool win32Initted = false;
+static bool win32TlsInitted = false;
+static bool win32ConsoleScreenBufferInitted = false;
 
 void OS_Init()
 {
@@ -16,7 +16,17 @@ void OS_Init()
     win32ConsoleHandle = GetStdHandle(STD_ERROR_HANDLE);
     
     GetConsoleScreenBufferInfo(win32ConsoleHandle, &win32SavedScreenBufferInfo);
-    win32Initted = true;
+    
+    win32TlsInitted = true;
+    win32ConsoleScreenBufferInitted = true;
+}
+
+void OS_OutputColorInit()
+{
+    win32ConsoleHandle = GetStdHandle(STD_ERROR_HANDLE);
+    GetConsoleScreenBufferInfo(win32ConsoleHandle, &win32SavedScreenBufferInfo);
+    
+    win32ConsoleScreenBufferInitted = true;
 }
 
 // Memory utilities
@@ -24,7 +34,14 @@ void* ReserveMemory(size_t size)
 {
     ProfileFunc(prof);
     
+    // Deterministic addresses for debug builds
+#ifdef UseFixedAddr
+    static LPVOID baseAddr = (LPVOID)GB(1024);
+    void* result = VirtualAlloc(baseAddr, size, MEM_RESERVE, PAGE_READWRITE);
+    baseAddr = (LPVOID)((uintptr)baseAddr + size);
+#else
     void* result = VirtualAlloc(0, size, MEM_RESERVE, PAGE_READWRITE);
+#endif
     Assert(result && "VirtualAlloc failed!");
     return result;
 }
@@ -46,19 +63,24 @@ void FreeMemory(void* mem, size_t size)
 // Thread context
 void SetThreadContext(void* ptr)
 {
-    assert(win32Initted);
+    assert(win32TlsInitted);
     TlsSetValue(win32ThreadContextIdx, ptr);
 }
 
 void* GetThreadContext()
 {
-    assert(win32Initted);
+    assert(win32TlsInitted);
     return (void*)TlsGetValue(win32ThreadContextIdx);
 }
 
 // Timing and profiling utilities
 uint64 GetRdtscFreq()
 {
+    static bool calculated = false;
+    static uint64 value = 0;
+    
+    if(calculated) return value;
+    
     uint32 tscFreq = 3000000000;
     bool fastPath = false;
     HMODULE ntdll = LoadLibrary("ntdll.dll");
@@ -97,27 +119,31 @@ uint64 GetRdtscFreq()
         tscFreq = (tscEnd - tscBegin) * frequency.QuadPart / (qpcEnd.QuadPart - qpcBegin.QuadPart);
     }
     
+    calculated = true;
+    value = tscFreq;
     return tscFreq;
 }
 
-
 void SetErrorColor()
 {
-    assert(win32Initted);
+    assert(win32ConsoleScreenBufferInitted);
     GetConsoleScreenBufferInfo(win32ConsoleHandle, &win32SavedScreenBufferInfo);
     SetConsoleTextAttribute(win32ConsoleHandle, 12);  // Bright red color
 }
 
 void ResetColor()
 {
-    assert(win32Initted);
+    assert(win32ConsoleScreenBufferInitted);
     SetConsoleTextAttribute(win32ConsoleHandle, win32SavedScreenBufferInfo.wAttributes);
 }
 
-int RunPlatformSpecificLinker(char* outputPath, char** objFiles, int objFileCount)
+char* GetPlatformLinkerName()
 {
-    assert(win32Initted);
-    
+    return "msvc link.exe";
+}
+
+int RunPlatformLinker(char* outputPath, char** objFiles, int objFileCount)
+{
     Find_Result findRes = find_visual_studio_and_windows_sdk();
     defer(free_resources(&findRes););
     
@@ -169,7 +195,7 @@ int RunPlatformSpecificLinker(char* outputPath, char** objFiles, int objFileCoun
     // Wait for the end of the process
     WaitForSingleObject(processInfo.hProcess, INFINITE);
     
-    // TODO: Get return value of the process
+    // TODO: Get return value of the process and return it to the caller
     
     CloseHandle(processInfo.hProcess);
     CloseHandle(processInfo.hThread);

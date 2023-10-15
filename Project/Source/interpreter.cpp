@@ -7,6 +7,8 @@
 
 bool GenBytecode(Interp* interp, Ast_Node* node)
 {
+    ProfileFunc(prof);
+    
     if(node->kind == AstKind_ProcDecl)
     {
         auto decl = (Ast_ProcDecl*)node;
@@ -175,10 +177,15 @@ RegIdx Interp_PassArg(Interp_Builder* builder, Interp_Val arg, TypeInfo* type, T
 
 Interp_Val Interp_GetRet(Interp_Builder* builder, TB_PassingRule rule, RegIdx retReg, TypeInfo* retType)
 {
-    // If it's indirect, just retrieve the address
-    if (rule == TB_PASSING_INDIRECT) return { retReg, true };
-    
     Interp_Val res;
+    
+    // If it's indirect, just retrieve the address
+    if (rule == TB_PASSING_INDIRECT)
+    {
+        res.type = Interp_LValue;
+        res.reg  = retReg;
+        return res;
+    }
     
     // Structs can only be stack variables for
     // bytecode generation purposes, so we need to
@@ -294,6 +301,8 @@ RegIdx Interp_ConvertNodeRVal(Interp_Builder* builder, Ast_Node* node)
 // should not handle type conversions.
 Interp_Val Interp_ConvertNode(Interp_Builder* builder, Ast_Node* node)
 {
+    ProfileFunc(prof);
+    
     Interp_Val res;
     
     switch(node->kind)
@@ -357,7 +366,8 @@ Interp_Val Interp_ConvertNode(Interp_Builder* builder, Ast_Node* node)
         auto expr = (Ast_Expr*)node;
         
         if(expr->type->typeId != Typeid_Struct &&
-           expr->type->typeId != Typeid_Ident)
+           expr->type->typeId != Typeid_Ident  &&
+           expr->type->typeId != Typeid_Proc)
         {
             // Convert type
             auto convType = Interp_ConvertType(expr->type);
@@ -756,22 +766,33 @@ Slice<Interp_Val> Interp_ConvertCall(Interp_Builder* builder, Ast_FuncCall* call
     auto proc = builder->proc;
     auto target = Interp_ConvertNode(builder, call->target);
     Assert(target.type == Interp_LValue);
+    
+    auto procType = (Ast_ProcType*)GetBaseTypeShallow(call->target->type);
+    Assert(procType->typeId == Typeid_Proc);
+    
+    // Implicitly load the pointer to the pointer to the function, to get the
+    // pointer to the function.
+    if(call->target->type->typeId != Typeid_Proc)
+    {
+        // Same as dereferencing
+        target.reg = Interp_Load(builder, Interp_Ptr, target.reg, 8, false);
+    }
+    
     auto targetReg = target.reg;
     
-    auto procDecl = Ast_GetCallType(call);
-    rets.Resize(scratch1, procDecl->retTypes.length);
+    rets.Resize(scratch1, procType->retTypes.length);
     
     TB_PassingRule retRule = TB_PASSING_IGNORE;
-    if(procDecl->retTypes.length > 0)
+    if(procType->retTypes.length > 0)
     {
-        auto retDebugType = Tc_ConvertToDebugType(proc->module, procDecl->retTypes.last());
+        auto retDebugType = Tc_ConvertToDebugType(proc->module, procType->retTypes.last());
         retRule = tb_get_passing_rule_from_dbg(proc->module, retDebugType, false);
         
         // Arguments related to return values first (last one is first, the rest are in order)
         if(retRule == TB_PASSING_INDIRECT)
         {
-            uint64 size = procDecl->retTypes.last()->size;
-            uint64 align = procDecl->retTypes.last()->align;
+            uint64 size = procType->retTypes.last()->size;
+            uint64 align = procType->retTypes.last()->align;
             auto local = Interp_Local(builder, size, align);
             args.Append(scratch2, local);
         }
@@ -780,8 +801,8 @@ Slice<Interp_Val> Interp_ConvertCall(Interp_Builder* builder, Ast_FuncCall* call
     for(int i = 0; i < rets.length - 1; ++i)
     {
         // The rest of the returns are all indirect
-        uint64 size = procDecl->retTypes[i]->size;
-        uint64 align = procDecl->retTypes[i]->align;
+        uint64 size = procType->retTypes[i]->size;
+        uint64 align = procType->retTypes[i]->align;
         auto local = Interp_Local(builder, size, align);
         args.Append(scratch2, local);
     }
@@ -789,8 +810,7 @@ Slice<Interp_Val> Interp_ConvertCall(Interp_Builder* builder, Ast_FuncCall* call
     for_array(i, call->args)
     {
         // Get passing rule
-        Assert(call->target->type->typeId == Typeid_Proc);
-        auto debugType = Tc_ConvertToDebugType(proc->module, procDecl->args[i]->type);
+        auto debugType = Tc_ConvertToDebugType(proc->module, procType->args[i]->type);
         TB_PassingRule rule = tb_get_passing_rule_from_dbg(proc->module, debugType, false);
         
         auto val = Interp_ConvertNode(builder, call->args[i]);
@@ -800,7 +820,7 @@ Slice<Interp_Val> Interp_ConvertCall(Interp_Builder* builder, Ast_FuncCall* call
     
     RegIdx singleRet = Interp_Call(builder, target.reg, args);
     
-    if(procDecl->retTypes.length <= 0)
+    if(procType->retTypes.length <= 0)
         return { 0, 0 };
     
     // Handle returns
@@ -817,11 +837,11 @@ Slice<Interp_Val> Interp_ConvertCall(Interp_Builder* builder, Ast_FuncCall* call
     for(int i = 0; i < rets.length - 1; ++i)
     {
         auto retReg = (retRule == TB_PASSING_INDIRECT) + i;
-        rets[i] = Interp_GetRet(builder, TB_PASSING_INDIRECT, retReg, procDecl->retTypes[i]);
+        rets[i] = Interp_GetRet(builder, TB_PASSING_INDIRECT, retReg, procType->retTypes[i]);
     }
     
-    if(procDecl->retTypes.length > 0)
-        rets[rets.length-1] = Interp_GetRet(builder, retRule, singleRet, procDecl->retTypes.last());
+    if(procType->retTypes.length > 0)
+        rets[rets.length-1] = Interp_GetRet(builder, retRule, singleRet, procType->retTypes.last());
     
     return rets;
 }
@@ -843,23 +863,22 @@ Interp_Val Interp_ConvertBinExpr(Interp_Builder* builder, Ast_BinaryExpr* expr)
     }
     else  // All other operators
     {
-        bool isAssign = false;
-        TokenType op = Ast_GetAssignUnderlyingOp((TokenType)expr->op, &isAssign);
         auto lhsFull = Interp_ConvertNode(builder, expr->lhs);
         auto rhsFull = Interp_ConvertNode(builder, expr->rhs);
         
+        if(expr->op == '=')
+            return Interp_Assign(builder, rhsFull, expr->rhs->type, lhsFull, expr->lhs->type);
+        
+        // No structs are involved here for sure (+= or any other
+        // operator does not work on structs)
+        
+        bool isAssign = false;
+        TokenType op = Ast_GetAssignUnderlyingOp((TokenType)expr->op, &isAssign);
+        
         // If operator is '=' lhs rvalue is not needed
-        RegIdx lhs = RegIdx_Unused;
-        if(op != '=')
-        {
-            lhs = Interp_GetRVal(builder, lhsFull, expr->lhs->type);
-            Assert(lhs != RegIdx_Unused);
-        }
-        
-        auto rhs = Interp_GetRVal(builder, rhsFull, expr->rhs->type);
-        res = rhsFull;
-        
-        Assert(rhs != RegIdx_Unused);
+        RegIdx lhs = Interp_GetRVal(builder, lhsFull, expr->lhs->type);
+        RegIdx rhs = Interp_GetRVal(builder, rhsFull, expr->rhs->type);
+        Assert(lhs != RegIdx_Unused && rhs != RegIdx_Unused);
         
         if(IsTypeIntegral(expr->type))
         {
@@ -905,10 +924,10 @@ Interp_Val Interp_ConvertBinExpr(Interp_Builder* builder, Ast_BinaryExpr* expr)
             } switch_nocheck_end;
         }
         
+        res.type = Interp_RValue;
+        
         if(isAssign)
             res = Interp_Assign(builder, res, expr->rhs->type, lhsFull, expr->lhs->type);
-        else
-            res.type = Interp_RValue;
     }
     
     return res;
@@ -1113,7 +1132,7 @@ Interp_Val Interp_ConvertUnaryExpr(Interp_Builder* builder, Ast_UnaryExpr* expr)
         case '~': res.reg = Interp_Not(builder, srcReg); break;
         case '*':
         {
-            // Take the r-value and simply turn it into an r-value
+            // Take the r-value and simply turn it into an l-value
             Assert(IsTypeDereferenceable(expr->expr->type));
             res.reg = srcReg;
             res.type = Interp_LValue;
@@ -1147,6 +1166,7 @@ Interp_Val Interp_ConvertSubscript(Interp_Builder* builder, Ast_Subscript* expr)
 Interp_Val Interp_ConvertMemberAccess(Interp_Builder* builder, Ast_MemberAccess* expr)
 {
     Interp_Val res;
+    res.type = Interp_LValue;
     
     auto lhs = Interp_ConvertNode(builder, expr->target);
     Assert(Interp_IsValueValid(lhs) && lhs.type == Interp_LValue);
@@ -1156,18 +1176,21 @@ Interp_Val Interp_ConvertMemberAccess(Interp_Builder* builder, Ast_MemberAccess*
     // (In this language that's the same thing)
     if(IsTypeDereferenceable(expr->target->type))
     {
-        auto baseType = GetBaseType(expr->target->type);
-        auto baseInterpType = Interp_ConvertType(baseType);
-        base = Interp_Load(builder, baseInterpType, base, baseType->align, false);
+        // Same as dereferencing, you load the pointer to the pointer to the variable
+        // to get to the pointer to the variable. (The result is still an LValue)
+        base = Interp_Load(builder, Interp_Ptr, base, 8, false);
     }
     
     Assert(expr->structDecl);
-    res.type = Interp_LValue;
-    // I think this will use the CompPhase system
+    
     int64 offset = expr->structDecl->memberOffsets[expr->memberIdx];
+    
     // If the offset is 0, we can just avoid the instruction altogether.
     if(offset != 0)
         res.reg = Interp_MemberAccess(builder, base, offset);
+    else
+        res.reg = base;
+    
     return res;
 }
 
@@ -1224,6 +1247,11 @@ Interp_Val Interp_Assign(Interp_Builder* builder, Interp_Val src, TypeInfo* srcT
         Assert(src.type == Interp_LValue);
         RegIdx sizeReg = Interp_ImmUInt(builder, Interp_Int64, type->size);
         Interp_MemCpy(builder, dst.reg, src.reg, sizeReg, type->align, false);
+    }
+    else if(srcType->typeId == Typeid_Proc)
+    {
+        Assert(src.type == Interp_LValue);
+        Interp_Store(builder, Interp_ConvertType(type), dst.reg, src.reg, 8, false);
     }
     else
     {
@@ -1312,7 +1340,7 @@ Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc, bool* outY
             if(!isArg || proc->argRules[i] == TB_PASSING_DIRECT)
             {
                 auto varDecl = (Ast_VarDecl*)decl;
-                auto addr = Interp_Local(builder, varDecl->type->size, varDecl->type->align, isArg);
+                auto addr = Interp_Local(builder, varDecl->type->size, varDecl->type->align);
                 
                 builder->declToAddr[i] = addr;
             }
@@ -1339,7 +1367,7 @@ Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc, bool* outY
             {
                 Interp_Store(builder, Interp_ConvertType(argType),
                              builder->declToAddr[i], retArgs + i,
-                             argType->align, false, true);
+                             argType->align, false);
                 
                 break;
             }
@@ -1395,11 +1423,11 @@ Interp_Type Interp_ConvertType(TypeInfo* type)
         case Typeid_Bool:
         case Typeid_Char:
         case Typeid_Integer:
-        case Typeid_Proc:
         case Typeid_Ident:
         case Typeid_Struct:
         case Typeid_None:    res.type = InterpType_Int;   break;
         case Typeid_Float:   res.type = InterpType_Float; break;
+        case Typeid_Proc:
         case Typeid_Ptr:
         case Typeid_Arr:     res.type = InterpType_Ptr;   break;
         case Typeid_Raw:     Assert(false && "Raw type is not next to a pointer");
@@ -1415,6 +1443,10 @@ Interp_Type Interp_ConvertType(TypeInfo* type)
     else if(type->typeId == Typeid_Bool)
     {
         res.data = 1;
+    }
+    else if(type->typeId == Typeid_Proc)
+    {
+        res.data = 64;
     }
     else
     {

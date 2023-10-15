@@ -2,6 +2,7 @@
 #pragma once
 
 #include "base.h"
+#include "atom.h"
 
 // NOTE(Leo): ASCII characters are reserved in the enum
 // space, so that they can be used as token types. For instance,
@@ -109,30 +110,34 @@ struct Token
     // Additional information
     union
     {
+        Atom* ident;
         int64 intValue;
         float floatValue;
         double doubleValue;
     };
 };
 
-// TODO: Implement file paths
 struct Tokenizer
 {
-    char* startOfFile;
+    String path = { 0, 0 };
+    
+    char* fileContents;
     char* at;
     uint32 startOfCurLine = 0;
     uint32 curLineNum = 1;
+    int commentNestLevel = 0;
     
     Arena* arena;
-    // Stream of tokens which compose the entire file
     Slice<Token> tokens = { 0, 0 };
     
-    String fullFilePath = { 0, 0 };
+    AtomTable interner;
     
-    // Used for the not very good "Continue" function API
+    // Used for the not very good "Continue" functions
     bool compileErrorPrinted = false;
     int lastCompileErrorNumChars = 0;
 };
+
+Tokenizer InitTokenizer(Arena* arena, Arena* internArena, char* fileContents, String path);
 
 static Token GetToken(Tokenizer* t);
 

@@ -64,6 +64,8 @@ Interp_Instr* Interp_InsertInstr(Interp_Builder* builder)
 
 void Interp_AdvanceReg(Interp_Builder* builder)
 {
+    defer(builder->proc->maxReg = max(builder->proc->maxReg, builder->regCounter));
+    
     // Find the next register in the permanentRegs array
     ++builder->regCounter;
     int foundIdx = -1;
@@ -88,6 +90,7 @@ void Interp_AdvanceReg(Interp_Builder* builder)
         
         ++builder->regCounter;
     }
+    
 }
 
 RegIdx Interp_GetFirstUnused(Interp_Builder* builder)
@@ -230,6 +233,8 @@ void Interp_DebugBreak(Interp_Builder* builder)
 
 RegIdx Interp_Bin(Interp_Builder* builder, Interp_OpCode op, RegIdx reg1, RegIdx reg2)
 {
+    Assert(reg1 != RegIdx_Unused && reg2 != RegIdx_Unused);
+    
     auto newElement = Interp_InsertInstr(builder);
     newElement->op       = op;
     newElement->dst      = builder->regCounter;
@@ -241,25 +246,27 @@ RegIdx Interp_Bin(Interp_Builder* builder, Interp_OpCode op, RegIdx reg1, RegIdx
 
 RegIdx Interp_Unary(Interp_Builder* builder, Interp_OpCode op, RegIdx src, Interp_Type type)
 {
+    Assert(src != RegIdx_Unused);
+    
     auto newElement = Interp_InsertInstr(builder);
     newElement->op   = op;
     newElement->dst  = builder->regCounter;
     newElement->unary.type = type;
     newElement->unary.src  = src;
     
-    builder->permanentRegs.Append(builder->regCounter);
     Interp_AdvanceReg(builder);
     return newElement->dst;
 }
 
 RegIdx Interp_Unary(Interp_Builder* builder, Interp_OpCode op, RegIdx src)
 {
+    Assert(src != RegIdx_Unused);
+    
     auto newElement = Interp_InsertInstr(builder);
     newElement->op   = op;
     newElement->dst  = builder->regCounter;
     newElement->unary.src  = src;
     
-    builder->permanentRegs.Append(builder->regCounter);
     Interp_AdvanceReg(builder);
     return newElement->dst;
 }
@@ -314,14 +321,13 @@ RegIdx Interp_Bitcast(Interp_Builder* builder, RegIdx src, Interp_Type type)
 
 // Local uses reg1 and reg2 to store size and alignment,
 // Dest is the resulting address
-RegIdx Interp_Local(Interp_Builder* builder, uint64 size, uint64 align, bool setUpArg)
+RegIdx Interp_Local(Interp_Builder* builder, uint64 size, uint64 align)
 {
     auto newElement = Interp_InsertInstr(builder);
     newElement->op          = Op_Local;
     newElement->dst         = builder->regCounter;
     newElement->local.size  = size;
     newElement->local.align = align;
-    if(setUpArg) newElement->bitfield |= InstrBF_SetUpArgs;
     
     // Addresses for locals are used across different
     // statements, so they need to be added to the
@@ -334,6 +340,8 @@ RegIdx Interp_Local(Interp_Builder* builder, uint64 size, uint64 align, bool set
 // Ignoring atomics for now
 RegIdx Interp_Load(Interp_Builder* builder, Interp_Type type, RegIdx addr, uint64 align, bool isVolatile)
 {
+    Assert(addr != RegIdx_Unused);
+    
     auto newElement = Interp_InsertInstr(builder);
     newElement->op         = Op_Load;
     newElement->dst        = builder->regCounter;
@@ -345,15 +353,16 @@ RegIdx Interp_Load(Interp_Builder* builder, Interp_Type type, RegIdx addr, uint6
     return newElement->dst;
 }
 
-Interp_Instr* Interp_Store(Interp_Builder* builder, Interp_Type type, RegIdx addr, RegIdx val, uint64 align, bool isVolatile, bool setUpArg)
+Interp_Instr* Interp_Store(Interp_Builder* builder, Interp_Type type, RegIdx addr, RegIdx val, uint64 align, bool isVolatile)
 {
+    Assert(addr != RegIdx_Unused && val != RegIdx_Unused);
+    
     auto newElement = Interp_InsertInstr(builder);
     newElement->op          = Op_Store;
     newElement->dst         = 0;
     newElement->store.addr  = addr;
     newElement->store.align = align;
     newElement->store.val   = val;
-    if(setUpArg) newElement->bitfield |= InstrBF_SetUpArgs;
     
     return newElement;
 }

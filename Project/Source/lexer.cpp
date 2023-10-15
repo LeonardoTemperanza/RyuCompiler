@@ -99,6 +99,19 @@ const TokenType operatorTypes[] =
 };
 #undef X
 
+
+
+Tokenizer InitTokenizer(Arena* arena, Arena* internArena, char* fileContents, String path)
+{
+    Tokenizer t;
+    t.arena = arena;
+    t.fileContents = fileContents;
+    t.at = fileContents;
+    t.path = path;
+    t.interner = InitAtomTable(internArena);
+    return t;
+}
+
 inline bool IsAlphabetic(char c)
 {
     return ((c >= 'a') && (c <= 'z'))
@@ -150,7 +163,7 @@ static void EatAllWhitespace(Tokenizer* t)
     {
         if(IsNewline(t->at[0]))
         {
-            t->startOfCurLine = t->at - t->startOfFile + 1;
+            t->startOfCurLine = t->at - t->fileContents + 1;
             ++t->curLineNum;
             ++t->at;
         }
@@ -160,29 +173,42 @@ static void EatAllWhitespace(Tokenizer* t)
             // Handle comments
             while(!IsNewline(t->at[0])) ++t->at;
             
-            t->startOfCurLine = t->at - t->startOfFile + 1;
+            t->startOfCurLine = t->at - t->fileContents + 1;
             ++t->curLineNum;
             ++t->at;
         }
         // Multiline comments
         else if(t->at[0] == '/' && t->at[1] == '*')
         {
-            while(t->at[0] != '*' || t->at[1] != '/')
+            // Eat the '/' and the '*'
+            t->at += 2;
+            t->commentNestLevel = 1;
+            while(t->commentNestLevel > 0)
             {
                 // Stop if we got to EOF 
                 if(t->at[0] == 0)
                     return;
                 if(IsNewline(t->at[0]))
                 {
-                    t->startOfCurLine = t->at - t->startOfFile + 1;
+                    t->startOfCurLine = t->at - t->fileContents + 1;
                     ++t->curLineNum;
+                }
+                
+                if(t->at[0] == '*' && t->at[1] == '/')
+                {
+                    --t->commentNestLevel;
+                    t->at += 2;
+                    continue;
+                }
+                else if(t->at[0] == '/' && t->at[1] == '*')
+                {
+                    ++t->commentNestLevel;
+                    t->at += 2;
+                    continue;
                 }
                 
                 ++t->at;
             }
-            
-            // Eat the '*' and the '/'
-            t->at += 2;
         }
         else
             loop = false;
@@ -195,6 +221,8 @@ static void LexFile(Tokenizer* t)
     
     while(true)
     {
+        // TODO: Intern operators here, ...
+        
         Token tok = GetToken(t);
         t->tokens.Append(t->arena, tok);
         
@@ -211,7 +239,7 @@ static Token GetToken(Tokenizer* t)
     result.type    = Tok_Error;
     result.sl      = t->startOfCurLine;
     result.lineNum = t->curLineNum;
-    result.sc      = t->at - t->startOfFile;
+    result.sc      = t->at - t->fileContents;
     result.ec      = result.sc;
     result.text    = { t->at, 1 };
     
@@ -220,25 +248,31 @@ static Token GetToken(Tokenizer* t)
         result.type = Tok_EOF;
         result.ec = result.sc;
     }
-    else if(IsAllowedForStartIdent(t->at[0]))  // Identifiers
+    else if(IsAllowedForStartIdent(t->at[0]))  // Identifiers or keywords
     {
         result.type = Tok_Ident;
         for(int i = 1; IsAllowedForMiddleIdent(t->at[i]); ++i)
             ++result.text.length;
         
+        bool isKeyword = false;
         for(int i = 0; i < StArraySize(keywordStrings); ++i)
         {
             if(keywordStrings[i] == result.text)
             {
                 result.type = keywordTypes[i];
+                isKeyword = true;
                 break;
             }
         }
         
         t->at += result.text.length;
         result.ec = result.sc + result.text.length - 1;
+        
+        // Intern the string
+        if(!isKeyword)
+            result.ident = Atom_GetOrAddAtom(&t->interner, result.text, HashString(result.text));
     }
-    else if(IsNumeric(t->at[0]))// || (t->at[0] == '-' && IsNumeric(t->at[1])))  // Numbers
+    else if(IsNumeric(t->at[0]))  // Numbers
     {
         // Determine which type of number it is
         int length = 0;
@@ -252,7 +286,6 @@ static Token GetToken(Tokenizer* t)
                 isFloatingPoint = true;
         }
         while(IsAllowedForMiddleNum(t->at[length]));
-        
         
         // Use c-stdlib functions for number parsing
         // (parsing floating pointer numbers with accurate precision
@@ -304,19 +337,8 @@ static Token GetToken(Tokenizer* t)
         result.text.length = length;
         result.ec = result.sc + result.text.length - 1;
     }
-    /*
-    else if(String_FirstCharsMatchEntireString(result.text.ptr, StrLit("true")))
-    {
-        String trueLit = StrLit("true");
-        
-    }
-    else if(String_FirstCharsMatchEntireString(result.text.ptr, StrLit("false")))
-    {
-        String falseLit = StrLit("false");
-    }*/
     else  // Anything else (operators, parentheses, etc)
     {
-        
         bool found = false;
         String foundStr = { 0, 0 };
         for(int i = 0; i < StArraySize(operatorStrings); ++i)
@@ -401,16 +423,16 @@ void CompileError(Tokenizer* t, Token* token, String message)
         return;
     }
     
-    char* fileContents = t->startOfFile;
+    char* fileContents = t->fileContents;
+    t->lastCompileErrorNumChars = 0;
+    
+    t->lastCompileErrorNumChars += fprintf(stderr, "%.*s", (int)t->path.length, t->path.ptr); fprintf(stderr, "(%d,%d): ", token->lineNum, token->sc - token->sl + 1);
     
     SetErrorColor();
-    t->lastCompileErrorNumChars = fprintf(stderr, "Error ");
+    fprintf(stderr, "Error");
     ResetColor();
-    fprintf(stderr, "(%d,%d): ",
-            token->lineNum,
-            token->sc - token->sl + 1);
     
-    fprintf(stderr, "%.*s\n", (int)message.length, message.ptr);
+    fprintf(stderr, ": %.*s\n", (int)message.length, message.ptr);
     
     PrintFileLine(token, fileContents);
     
@@ -429,15 +451,12 @@ void CompileErrorContinue(Tokenizer* t, Token* token, String message)
         return;
     }
     
-    char* fileContents = t->startOfFile;
+    char* fileContents = t->fileContents;
     
     for(int i = 0; i < t->lastCompileErrorNumChars; ++i)
         fprintf(stderr, " ");
     
-    fprintf(stderr, "(%d,%d): ",
-            token->lineNum,
-            token->sc - token->sl + 1);
-    
+    fprintf(stderr, "(%d,%d): Note: ", token->lineNum, token->sc - token->sl + 1);
     fprintf(stderr, "%.*s\n", (int)message.length, message.ptr);
     
     PrintFileLine(token, fileContents);

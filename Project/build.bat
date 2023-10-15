@@ -24,6 +24,8 @@ REM Enable to debug memory issues such as free after use
 REM set sanitizer=/fsanitize=address
 set sanitizer=
 
+REM /DUseFixedAddr to enable fixed addresses for virtual memory allocations
+REM /DDebugDep to enable printing debug information regarding the dep graph
 set debug_flags=/DDebug /Zi %sanitizer%
 set profile_flags=/DProfile
 
@@ -45,12 +47,15 @@ set build_ret=%errorlevel%
 
 REM Optimized build with debug information
 REM cl /O2 %debug_flags% %common%
+REM set build_ret=%errorlevel%
 
 REM Profiling of optimized, final build, no debug info
 REM cl /O2 %profile_flags% %common%
+REM set build_ret=%errorlevel%
 
 REM Final build
 REM cl /O2 %common%
+REM set build_ret=%errorlevel%
 
 echo Done.
 
@@ -58,7 +63,7 @@ REM For quicker testing
 if %build_ret%==0 ( 
 echo Running program:
 pushd .\TestPrograms
-ryu interp_test.c -emit_bc -emit_ir -time -o output.exe
+ryu interp_test.ryu -emit_bc -emit_ir -o output.exe
 
 call output.exe
 

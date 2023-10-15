@@ -21,15 +21,22 @@ struct FilePaths
     Array<char*> objFiles;
 };
 
+// Times measured in number of ticks returned by __rdtsc()
 struct Timings
 {
-    
+    double frontend = 0;
+    double irGen = 0;
+    double backend = 0;
+    double linker = 0;
 };
+
+Timings timings;
 
 FilePaths ParseCmdLineArgs(Slice<char*> args);
 void PrintHelp();
 template<typename t>
 void PrintArg(char* argName, char* desc, t defVal, int lpad, int rpad);
+void PrintTimings();
 
 // TODO: @cleanup Push some of the stuff here to the proper modules
 int main(int argCount, char** argValue)
@@ -50,10 +57,7 @@ int main(int argCount, char** argValue)
     }
     else if(noFiles)
     {
-        // NOTE: @robustness Need to do this to print red text...
-        // Should separate the initialization for the colored text (which are
-        // probably only needed in windows) into a separate procedure and then call that.
-        OS_Init();
+        OS_OutputColorInit();
         
         SetErrorColor();
         fprintf(stderr, "Error");
@@ -73,6 +77,8 @@ int main(int argCount, char** argValue)
     // Start of application
     ProfileFunc(prof);
     
+    uint64 frontendTimeStart = __rdtsc();
+    
     // Main thread context
     ThreadContext threadCtx;
     ThreadCtx_Init(&threadCtx, GB(2), KB(32));
@@ -88,8 +94,7 @@ int main(int argCount, char** argValue)
     Arena internArena = Arena_VirtualMemInit(size, commitSize);
     Arena entityArena = Arena_VirtualMemInit(size, commitSize);
     
-    Tokenizer tokenizer = { fileContents, fileContents };
-    tokenizer.arena = &astArena;
+    Tokenizer tokenizer = InitTokenizer(&astArena, &internArena, fileContents, { filePaths.srcFiles[0], (int64)strlen(filePaths.srcFiles[0]) });
     Parser parser = { &astArena, &tokenizer };
     parser.internArena = &internArena;
     parser.entityArena = &entityArena;
@@ -109,13 +114,11 @@ int main(int argCount, char** argValue)
     fflush(stderr);
 #endif
     
-    // Interning
-    Slice<Slice<ToIntern>> intern = { &parser.internArray, 1 };
-    Atom_InternStrings(intern);
-    
     // Main program loop
     Interp interp;
     bool status = MainDriver(&parser, &interp, fileAst);
+    
+    timings.frontend += 1.0 / GetRdtscFreq() * (__rdtsc() - frontendTimeStart);
     
     if(!status)
     {
@@ -129,6 +132,8 @@ int main(int argCount, char** argValue)
 #endif
     
     Tc_CodegenAndLink(fileAst, &interp, filePaths.objFiles);
+    
+    if(cmdLineArgs.time) PrintTimings();
     
     return !status;
 }
@@ -147,7 +152,7 @@ enum FileExtension
 };
 
 constexpr FileExtension extensionTypes[] = { File_Ryu, File_Obj, File_Obj };
-constexpr char* extensionStrings[] = { "c", "o", "obj" };
+constexpr char* extensionStrings[] = { "ryu", "o", "obj" };
 
 // The returned char* should not be freed individually, it's a substring of path
 FileExtension GetExtensionFromPath(char* path, char** outExt)
@@ -214,6 +219,7 @@ FilePaths ParseCmdLineArgs(Slice<char*> args)
         ++argStr.ptr;
         --argStr.length;
         
+        // Use the X macro to parse arguments based on their type, default value, etc.
 #define X(varName, string, type, defaultVal, desc) \
 if(strcmp(argStr.ptr, string) == 0) { ++at; cmdLineArgs.varName = ParseArg<type>(args, &at); continue; }
         
@@ -240,14 +246,14 @@ void PrintHelp()
     
     printf("Options:\n");
     
+    // Use the X macro to print the arguments
 #define X(varName, string, type, defaultVal, desc) PrintArg<type>(string, desc, defaultVal, lpad, rpad);
     CmdLineArgsInfo
 #undef X
 }
 
 // Only specializations can be used
-template<typename t>
-int PrintArgAttributes(t defVal) { static_assert(false, "Unknown command line argument type"); }
+template<typename t> int PrintArgAttributes(t defVal) { static_assert(false, "Unknown command line argument type"); }
 template<> int PrintArgAttributes<int>(int defVal) { return printf("<int value> (default: %d)", defVal); }
 template<> int PrintArgAttributes<bool>(bool defVal) { return 0; }
 template<> int PrintArgAttributes<char*>(char* defVal) { return printf("<string value> (default: %s)", defVal); }
@@ -264,33 +270,43 @@ void PrintArg(char* argName, char* desc, t defVal, int lpad, int rpad)
     
     numChars += PrintArgAttributes<t>(defVal);
     
-    Assert(numChars < rpad - 1);
-    
     // Print right padding
-    printf("%*c", rpad - numChars, ' ');
+    printf("%*c", max(0, rpad - numChars), ' ');
     
     printf("%s", desc);
     
     printf("\n");
 }
 
-Slice<char*> ParseSrcFilePaths(Slice<char*> args)
+void PrintTimings()
 {
-    ScratchArena scratch;
-    Slice<char*> res = { 0, 0 };
+    const double totalExceptLinker = timings.frontend + timings.irGen + timings.backend;
+    const double total = totalExceptLinker + timings.linker;
+    const int pad = 19;
+    int numChars = 0;
     
-    // The first argument is the name of the executable
-    for(int i = 1; i < args.length; ++i)
-    {
-        if(args[i][0] != '-')
-            res.Append(scratch, args[i]);
-    }
+    printf("----- Timings -----\n");
+    numChars = printf("Frontend:", timings.frontend);
+    printf("%*c%lfs\n", max(1, pad - numChars), ' ', timings.frontend);
+    numChars = printf("IR Generation:");
+    printf("%*c%lfs\n", max(1, pad - numChars), ' ', timings.irGen);
+    // TODO: Update this with the llvm backend
+    numChars = printf("Backend (Tilde):");
+    printf("%*c%lfs\n", max(1, pad - numChars), ' ', timings.backend);
     
-    return res;
-}
-
-Slice<char*> ParseObjFilePaths(Slice<char*> args)
-{
-    Assert(false);
-    return { 0, 0 };
+    numChars = printf("Total (no link):");
+    printf("%*c%lfs\n\n", max(1, pad - numChars), ' ', totalExceptLinker);
+    
+    // TODO: Linker name is platform dependant
+    if(cmdLineArgs.useTildeLinker)
+        numChars = printf("Linker (Tilde):");
+    else
+        numChars = printf("Linker (%s):", GetPlatformLinkerName());
+    
+    printf("%*c%lfs\n\n", max(1, pad - numChars), ' ', timings.linker);
+    
+    numChars = printf("Total:", total);
+    printf("%*c%lfs\n", max(1, pad - numChars), ' ', total);
+    
+    printf("-------------------\n");
 }

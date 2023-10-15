@@ -39,9 +39,9 @@
 #endif
 
 // Common utility functions
-#define KB(num) (num)*1024LLU
-#define MB(num) KB(num)*1024LLU
-#define GB(num) MB(num)*1024LLU
+#define KB(num) ((num)*1024LLU)
+#define MB(num) (KB(num)*1024LLU)
+#define GB(num) (MB(num)*1024LLU)
 
 #define StArraySize(array) sizeof(array) / sizeof(array[0])
 
@@ -58,6 +58,9 @@
 #else
 #define cforceinline __forceinline
 #endif
+
+// "Typed malloc"
+#define tmalloc(type, num) (type*)malloc(sizeof(type)*(num))
 
 // Switch statement that disables the
 // "switch statements should cover all cases"
@@ -107,7 +110,8 @@ static SpallBuffer spallBuffer;
 void InitSpall();
 void QuitSpall();
 
-#define ProfileFunc(guardName) ProfileFuncGuard guardName(__FUNCTION__, sizeof(__FUNCTION__));
+#define ProfileFunc(guardName)  ProfileFuncGuard guardName(__FUNCTION__, sizeof(__FUNCTION__));
+#define ProfileBlock(guardName, blockName) ProfileFuncGuard guardName(blockName, sizeof(blockName));
 
 struct ProfileFuncGuard
 {
@@ -118,6 +122,7 @@ struct ProfileFuncGuard
 
 #else
 #define ProfileFunc(guardName)
+#define ProfileBlock(guardName, blockName)
 #endif  /* Profile */
 
 // Generic data structures
@@ -180,29 +185,6 @@ struct Array : public Slice<t>
 #endif
 };
 
-// Pointer map data structure
-
-template<typename k, typename v>
-struct PtrMapEntry
-{
-    static_assert(sizeof(k) == sizeof(void*), "Key must be pointer");
-    
-    k key;
-    v val;
-    uint32 next;
-};
-
-template<typename k, typename v>
-struct PtrMap
-{
-    Slice<uint32> hashes;
-    PtrMapEntry<k, v>* entries;
-    uint32 count;
-    uint32 capacity;
-};
-
-uint32 PtrHashFunction(uintptr ptr);
-
 // Generic string. This could be null-terminated or not,
 // but in the case of strings allocated in a custom allocator,
 // it's better to keep the null terminator for C compatibility.
@@ -227,9 +209,69 @@ struct String
 #endif
 };
 
-// Hash function from the stb library
-uint64 HashString(String str, uint64 seed);
-uint64 HashString(char* str, uint64 seed);
+// Hash function from the stb library. Could be better but it's fine for now
+uint64 HashString(String str, uint64 seed = 0x31415926);
+uint64 HashString(char* str, uint64 seed = 0x31415926);
+
+// Generic hash table structure for 64 bit keys, for when you want a quick performance boost
+
+template<typename k, typename v>
+struct HashTableEntry
+{
+    static_assert(sizeof(k) == 8, "Key must be 64 bits");
+    
+    k key;
+    v val;
+    bool occupied;
+};
+
+float HashTable_LoadFactor = 0.5f;
+template<typename k, typename v>
+struct HashTable
+{
+    HashTableEntry<k, v>* entries = 0;
+    uint32 count;
+    uint32 capacity;
+    
+    void Init(uint32 capacity);
+    // From odin-lang's PtrMap hash
+    uint32 HashFunction(uintptr key);
+    v* Get(k key);
+    void Add(k key, v val);
+    void Grow(uint32 newSize);
+    void Free();
+};
+
+uint32 HashTable_ProbingScheme(uint32 hash, uint32 iter, uint32 length);
+
+// Hash table built for string keys. Strings are not copied, allocated or freed
+// so the management of the strings themselves is up to the user.
+
+template<typename v>
+struct StringTableEntry
+{
+    String key;
+    v val;
+    bool occupied;
+};
+
+template<typename v>
+struct StringTable
+{
+    StringTableEntry<v>* entries = 0;
+    uint32 count;
+    uint32 capacity;
+    
+    void Init(uint32 capacity);
+    uint64 HashFunction(String key);
+    v* Get(String key);
+    void AllocString();
+    void Add(String key, v val);
+    void Grow(uint32 newSize);
+    void Free();
+};
+
+uint32 StringTable_ProbingScheme(uint32 hash, uint32 iter, uint32 length);
 
 // Math utilities
 inline bool IsPowerOf2(uintptr a)
@@ -242,6 +284,9 @@ cforceinline t max(t i, t j) { return i < j? j : i; }
 
 template<typename t>
 cforceinline t min(t i, t j) { return i > j? j : i; }
+
+template<typename t>
+cforceinline t clamp(t val, t minVal, t maxVal) { return val < minVal ? minVal : (val > maxVal ? maxVal : val); }
 
 int numDigits(int n);
 

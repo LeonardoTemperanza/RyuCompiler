@@ -98,26 +98,6 @@ Slice<t> Slice<t>::CopyToArena(Arena* to)
     return result;
 }
 
-// PtrMap
-
-uint32 PtrHashFunction(uintptr ptr)
-{
-    // If 32-bit is ever considered, update the implementation to include 32-bit
-#ifdef Env32Bit
-#error "PtrHashFunction Implementation currently doesn't support 32-bit."
-#endif
-    
-    uint32 result;
-    ptr = (~ptr) + (ptr << 21);
-    ptr = ptr ^ (ptr >> 24);
-    ptr = (ptr + (ptr << 3)) + (ptr << 8);
-	ptr = ptr ^ (ptr >> 14);
-    ptr = (ptr + (ptr << 2)) + (ptr << 4);
-    ptr = ptr ^ (ptr << 28);
-	result = (uint32)ptr;
-    return result;
-}
-
 void String::Append(Arena* a, char element)
 {
     // If empty, allocate a new array
@@ -253,6 +233,221 @@ void Array<t>::FreeAll()
     this->ptr      = 0;
     this->capacity = 0;
     this->length   = 0;
+}
+
+template<typename k, typename v>
+void HashTable<k, v>::Init(uint32 capacity)
+{
+    this->capacity = capacity;
+    uint64 numBytes = sizeof(HashTableEntry<k, v>) * capacity;
+    entries = (HashTableEntry<k, v>*)malloc(numBytes);
+    memset(entries, 0, numBytes);
+}
+
+template<typename k, typename v>
+uint32 HashTable<k, v>::HashFunction(uintptr key)
+{
+    uint32 res;
+#if 1
+    // 64 bit
+    key = (~key) + (key << 21);
+	key = key ^ (key >> 24);
+	key = (key + (key << 3)) + (key << 8);
+	key = key ^ (key >> 14);
+	key = (key + (key << 2)) + (key << 4);
+	key = key ^ (key << 28);
+	res = (uint32)key;
+#else
+    // 32-bit
+    u32 state = (cast(u32)key) * 747796405u + 2891336453u;
+	u32 word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+	res = (word >> 22u) ^ word;
+#endif
+    
+    return res;
+}
+
+template<typename k, typename v>
+v* HashTable<k, v>::Get(k key)
+{
+    uint32 hash = HashFunction((uintptr)key);
+    for(int i = 0; i <= count + 1; ++i)
+    {
+        Assert(i != count + 1);
+        
+        uint32 idx = HashTable_ProbingScheme(hash, i, capacity);
+        if(entries[idx].occupied && entries[idx].key == key)
+            return &entries[idx].val;
+        else return 0;
+    }
+    
+    return 0;
+}
+
+template<typename k, typename v>
+void HashTable<k, v>::Add(k key, v val)
+{
+    uint32 hash = HashFunction((uintptr)key);
+    for(int i = 0; i <= count + 1; ++i)
+    {
+        Assert(i != count + 1);
+        
+        uint32 idx = HashTable_ProbingScheme(hash, i, capacity);
+        if(entries[idx].occupied) continue;
+        
+        // Not occupied, add new value
+        entries[idx].key = key;
+        entries[idx].occupied = true;
+        entries[idx].val = val;
+        ++count;
+        break;
+    }
+    
+    if((float)count / capacity > HashTable_LoadFactor)
+        Grow(capacity * 2);
+}
+
+template<typename k, typename v>
+void HashTable<k, v>::Grow(uint32 newSize)
+{
+    uint64 numBytes = sizeof(HashTableEntry<k, v>) * newSize;
+    auto newEntries = (HashTableEntry<k, v>*)malloc(numBytes);
+    memset(newEntries, 0, numBytes);
+    
+    for(int i = 0; i < capacity; ++i)
+    {
+        if(!entries[i].occupied) continue;
+        // TODO: @performance Instead of recalculating the hash,
+        // They could all just be stored in a separate array. Not
+        // sure if that's faster though
+        uint32 hash = HashFunction((uintptr)entries[i].key);
+        
+        for(int j = 0; j <= count + 1; ++j)
+        {
+            Assert(j != count + 1);
+            
+            int idx = HashTable_ProbingScheme(hash, j, newSize);
+            if(newEntries[idx].occupied) continue;
+            
+            newEntries[idx] = entries[i];
+            break;
+        }
+    }
+    
+    free(entries);
+    entries = newEntries;
+    capacity = newSize;
+}
+
+template<typename k, typename v>
+void HashTable<k, v>::Free()
+{
+    free(entries);
+}
+
+cforceinline uint32 HashTable_ProbingScheme(uint32 hash, uint32 iter, uint32 length)
+{
+    // Linear
+    return (hash + iter) % length;
+}
+
+template<typename v>
+void StringTable<v>::Init(uint32 capacity)
+{
+    this->capacity = capacity;
+    uint64 numBytes = sizeof(StringTableEntry<v>) * capacity;
+    entries = (StringTableEntry<v>*)malloc(numBytes);
+    memset(entries, 0, numBytes);
+}
+
+template<typename v>
+uint64 StringTable<v>::HashFunction(String key)
+{
+    return HashString(str);
+}
+
+template<typename v>
+v* StringTable<v>::Get(String key)
+{
+    uint32 hash = HashFunction((uintptr)key);
+    for(int i = 0; i <= count + 1; ++i)
+    {
+        Assert(i != count + 1);
+        
+        uint32 idx = StringTable_ProbingScheme(hash, i, capacity);
+        if(entries[idx].occupied && entries[idx].key == key)
+            return &entries[idx].val;
+        else return 0;
+    }
+    
+    return 0;
+}
+
+template<typename v>
+void StringTable<v>::Add(String key, v val)
+{
+    uint32 hash = HashFunction((uintptr)key);
+    for(int i = 0; i <= count + 1; ++i)
+    {
+        Assert(i != count + 1);
+        
+        uint32 idx = StringTable_ProbingScheme(hash, i, capacity);
+        if(entries[idx].occupied) continue;
+        
+        // Not occupied, add new value
+        entries[idx].key = key;
+        entries[idx].occupied = true;
+        entries[idx].val = val;
+        ++count;
+        break;
+    }
+    
+    if((float)count / capacity > StringTable_LoadFactor)
+        Grow(capacity * 2);
+}
+
+template<typename v>
+void StringTable<v>::Grow(uint32 newSize)
+{
+    uint64 numBytes = sizeof(StringTableEntry<k, v>) * newSize;
+    auto newEntries = (StringTableEntry<k, v>*)malloc(numBytes);
+    memset(newEntries, 0, numBytes);
+    
+    for(int i = 0; i < capacity; ++i)
+    {
+        if(!entries[i].occupied) continue;
+        // TODO: @performance Instead of recalculating the hash,
+        // They could all just be stored in a separate array
+        uint32 hash = HashFunction((uintptr)entries[i].key);
+        
+        for(int j = 0; j <= count + 1; ++j)
+        {
+            Assert(j != count + 1);
+            
+            int idx = StringTable_ProbingScheme(hash, j, newSize);
+            if(newEntries[idx].occupied) continue;
+            
+            newEntries[idx] = entries[i];
+            break;
+        }
+    }
+    
+    free(entries);
+    entries = newEntries;
+    capacity = newSize;
+}
+
+template<typename v>
+void StringTable<v>::Free()
+{
+    Arena_TempEnd(temp);
+    free(entries);
+}
+
+cforceinline uint32 StringTable_ProbingScheme(uint32 hash, uint32 iter, uint32 length)
+{
+    // Linear
+    return (hash + iter) % length;
 }
 
 int numDigits(int n)
@@ -475,7 +670,7 @@ Arena* GetScratchArena(ThreadContext* threadCtx, int idx)
 #ifdef Profile
 void InitSpall()
 {
-    spallCtx = spall_init_file("constellate.spall", 1000000.0 / GetRdtscFreq());
+    spallCtx = spall_init_file("ryu_profile.spall", 1000000.0 / GetRdtscFreq());
     
     size_t bufferSize = GB(1);
     uchar* buffer = (uchar*)malloc(bufferSize);
@@ -493,12 +688,12 @@ void QuitSpall()
 
 ProfileFuncGuard::ProfileFuncGuard(char* funcName, uint64 stringLength)
 {
-    spall_buffer_begin(&spallCtx, &spallBuffer, funcName, stringLength, __rdtsc());
+    spall_buffer_begin(&spallCtx, &spallBuffer, funcName, stringLength, (double)__rdtsc());
 }
 
 ProfileFuncGuard::~ProfileFuncGuard()
 {
-    spall_buffer_end(&spallCtx, &spallBuffer, __rdtsc());
+    spall_buffer_end(&spallCtx, &spallBuffer, (double)__rdtsc());
 }
 
 #endif  /* Profile */

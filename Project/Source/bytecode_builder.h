@@ -21,6 +21,7 @@ struct Builder_MiddleInsert
 struct Interp_Builder
 {
     DepGraph* graph;
+    // See the dependency graph system
     bool yielded = false;
     
     // Maps declaration indices to registers that contain their
@@ -97,9 +98,9 @@ RegIdx Interp_Ptr2Int(Interp_Builder* builder, RegIdx src, Interp_Type type);
 RegIdx Interp_Int2Float(Interp_Builder* builder, RegIdx src, Interp_Type type, bool isSigned);
 RegIdx Interp_Float2Int(Interp_Builder* builder, RegIdx src, Interp_Type type, bool isSigned);
 RegIdx Interp_Bitcast(Interp_Builder* builder, RegIdx src, Interp_Type type);
-RegIdx Interp_Local(Interp_Builder* builder, uint64 size, uint64 align, bool setUpArg = false);
+RegIdx Interp_Local(Interp_Builder* builder, uint64 size, uint64 align);
 RegIdx Interp_Load(Interp_Builder* builder, Interp_Type type, RegIdx addr, uint64 align, bool isVolatile);
-Interp_Instr* Interp_Store(Interp_Builder* builder, Interp_Type type, RegIdx addr, RegIdx val, uint64 align, bool isVolatile, bool setUpArg = false);
+Interp_Instr* Interp_Store(Interp_Builder* builder, Interp_Type type, RegIdx addr, RegIdx val, uint64 align, bool isVolatile);
 RegIdx Interp_ImmBool(Interp_Builder* builder, bool imm);
 RegIdx Interp_ImmSInt(Interp_Builder* builder, Interp_Type type, int64 imm);
 RegIdx Interp_ImmUInt(Interp_Builder* builder, Interp_Type type, uint64 imm);

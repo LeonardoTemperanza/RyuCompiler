@@ -11,6 +11,8 @@
 
 DepGraph Dg_InitGraph(Arena* phaseArenas[CompPhase_EnumSize][2])
 {
+    ProfileFunc(prof);
+    
     DepGraph graph;
     graph.arena = Arena_VirtualMemInit(GB(1), MB(2));
     
@@ -33,6 +35,8 @@ DepGraph Dg_InitGraph(Arena* phaseArenas[CompPhase_EnumSize][2])
 
 bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
 {
+    ProfileFunc(prof);
+    
     // Typer initialization
     size_t size = GB(1);
     size_t commitSize = MB(2);
@@ -67,6 +71,8 @@ bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
     // Fill the typecheck queue with initial values
     for_array(i, p->entities)
     {
+        ProfileBlock(prof, "InitQueue");
+        
         auto& typecheckQueue = g.queues[CompPhase_Typecheck];
         typecheckQueue.input.Append(typecheckQueue.inputArena, i);
     }
@@ -85,6 +91,11 @@ bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
         // For each stage in the pipeline
         for(int i = CompPhase_Uninit + 1; i < CompPhase_EnumSize; ++i)
         {
+#if DebugDep
+            String phase = Dg_CompPhase2Str((CompPhase)i);
+            fprintf(stderr, "%.*s:\n", (int)phase.length, phase.ptr);
+#endif
+            
             auto& queue = g.queues[i];
             Dg_StartIteration(&g, &queue);
             
@@ -188,6 +199,8 @@ void Dg_UpdateQueue(DepGraph* graph, Queue* q, int inputIdx, bool success)
 
 void Dg_PerformStage(DepGraph* graph, Queue* q)
 {
+    ProfileFunc(prof);
+    
     Swap(auto, *q->inputArena, *q->processingArena);
     Swap(auto, q->input, q->processing);
     
@@ -263,6 +276,8 @@ void Dg_PerformStage(DepGraph* graph, Queue* q)
 uint32 globalIdx = 0;
 bool Dg_DetectCycle(DepGraph* g, Queue* q)
 {
+    ProfileFunc(prof);
+    
     // Apply Tarjan's algorithm to find all Strongly Connected Components
     // Found here: https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm
     
@@ -315,18 +330,26 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
         
         if(end <= start + 1)  // If only one item, there might be no cycle
         {
-            for_array(i, g->items[q->input[start]].waitFor)
+            auto& startNode = g->items[q->input[start]];
+            if(!(startNode.flags & Entity_Error))  // Ignore errors
             {
-                auto& dep = g->items[q->input[start]].waitFor[i];
-                
-                // Ignore dated dependency
-                if(dep.neededPhase < g->items[dep.idx].phase)
-                    continue;
-                
-                if(g->items[dep.idx].sccIdx == groupId)
+                for_array(i, startNode.waitFor)
                 {
-                    isCycle = true;
-                    break;
+                    auto& dep = startNode.waitFor[i];
+                    
+                    // Ignore errors
+                    if(g->items[dep.idx].flags & Entity_Error)
+                        continue;
+                    
+                    // Ignore dated dependency and errors
+                    if(dep.neededPhase < g->items[dep.idx].phase)
+                        continue;
+                    
+                    if(g->items[dep.idx].sccIdx == groupId)
+                    {
+                        isCycle = true;
+                        break;
+                    }
                 }
             }
         }
@@ -340,7 +363,7 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
         if(isCycle)
         {
 #if DebugDep
-            fprintf(stderr, ", cycle");
+            fprintf(stderr, ", cycle\n");
 #endif
             
             ++numCycles;
@@ -440,7 +463,7 @@ void Dg_ExplainCyclicDependency(DepGraph* g, Queue* q, Dg_Idx start, Dg_Idx end)
     SetErrorColor();
     fprintf(stderr, "Error");
     ResetColor();
-    fprintf(stderr, ": Cyclic dependency was detected in the code;\n");
+    fprintf(stderr, ": Cyclic dependency was detected in the code; (TODO: complete message)\n");
     
 #if 0
     auto& startItem = g->items[q->input[start]];
@@ -518,10 +541,10 @@ String Dg_CompPhase2Sentence(CompPhase phase, bool pastTense)
         switch(phase)
         {
             case CompPhase_Uninit:      res = StrLit("[uninitialized phase]"); break;
-            case CompPhase_Typecheck:   res = StrLit("determine its size");    break;
-            case CompPhase_ComputeSize: res = StrLit("generate its bytecode"); break;
-            case CompPhase_Bytecode:    res = StrLit("run at compile time");   break;
-            case CompPhase_Run:         res = StrLit("[done]");                break;
+            case CompPhase_Typecheck:   res = StrLit("determine its type");    break;
+            case CompPhase_ComputeSize: res = StrLit("determine its size");    break;
+            case CompPhase_Bytecode:    res = StrLit("generate its bytecode"); break;
+            case CompPhase_Run:         res = StrLit("run at compile time");   break;
             case CompPhase_EnumSize:    res = StrLit("[enum size]");           break;
             default:                    res = StrLit("[invalid enum]");        break;
         }
@@ -532,7 +555,7 @@ String Dg_CompPhase2Sentence(CompPhase phase, bool pastTense)
         {
             case CompPhase_Uninit:      res = StrLit("[uninitialized phase]");     break;
             case CompPhase_Typecheck:   res = StrLit("determined its type");       break;
-            case CompPhase_ComputeSize: res = StrLit("determined its type");       break;
+            case CompPhase_ComputeSize: res = StrLit("determined its size");       break;
             case CompPhase_Bytecode:    res = StrLit("generated its bytecode");    break;
             case CompPhase_Run:         res = StrLit("run its compile time code"); break;
             case CompPhase_EnumSize:    res = StrLit("[enum size]");               break;
@@ -585,6 +608,12 @@ void Dg_DebugPrintDeps(DepGraph* g)
         numChars += fprintf(stderr, "%.*s ... ", (int)nodeStr.length, nodeStr.ptr);
         String phase = Dg_CompPhase2Str(g->items[i].phase);
         numChars += fprintf(stderr, "(%.*s)", (int)phase.length, phase.ptr);
+        
+        if(g->items[i].node->kind == AstKind_ProcDecl)
+            fprintf(stderr, " (decl)");
+        
+        if(g->items[i].flags & Entity_Error)
+            fprintf(stderr, " (error)");
         
         auto& waitFor = g->items[i].waitFor;
         if(waitFor.length <= 0)

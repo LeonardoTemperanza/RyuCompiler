@@ -17,6 +17,7 @@ t* Ast_MakeNode(Arena* arena, Token* token)
     // Pack the nodes for better cache locality
     t* result = Arena_AllocAndInitPack(arena, t);
     result->where = token;
+    
     return result;
 }
 
@@ -46,6 +47,31 @@ t Ast_InitNode(Token* token)
     t result;
     result.where = token;
     return result;
+}
+
+void AddDeclToScope(Ast_Block* block, Ast_Declaration* decl)
+{
+    if(block->decls.length + 1 >= Ast_Block::maxArraySize && !(block->flags & Block_UseHashTable))
+    {
+        block->flags |= Block_UseHashTable;
+        
+        // maxArraySize * 2 would cause it to immediately reach max load factor so
+        // it's multiplied by 4
+        block->declsTable.Init(Ast_Block::maxArraySize * 4);
+        
+        for_array(i, block->decls)
+        {
+            block->declsTable.Add(block->decls[i]->name, block->decls[i]);
+        }
+        
+        block->declsTable.Add(decl->name, decl);
+    }
+    else if(block->flags & Block_UseHashTable)
+    {
+        block->declsTable.Add(decl->name, decl);
+    }
+    
+    block->decls.Append(decl);
 }
 
 Ast_FileScope* ParseFile(Parser* p)
@@ -108,7 +134,6 @@ Ast_ProcDecl* ParseProc(Parser* p, Ast_DeclSpec specs)
     
     auto procDecl = Ast_MakeEntityNode<Ast_ProcDecl>(p, p->at);
     procDecl->declSpecs = specs;
-    p->scope->decls.Append(procDecl);
     
     Token* ident = 0;
     TypeInfo* typeInfo = ParseType(p, &ident);
@@ -120,7 +145,8 @@ Ast_ProcDecl* ParseProc(Parser* p, Ast_DeclSpec specs)
     
     procDecl->where = ident;
     procDecl->type = typeInfo;
-    DeferStringInterning(p, ident->text, &procDecl->name);
+    procDecl->name = procDecl->where->ident;
+    AddDeclToScope(p->scope, procDecl);
     
     if(p->at->type == ';')
     {
@@ -150,7 +176,7 @@ Ast_ProcDecl* ParseProc(Parser* p, Ast_DeclSpec specs)
         // NOTE(Leo): Adding arguments as declarations in the procedure body
         for_array(i, procType->args)
         {
-            procDef->block.decls.Append(procType->args[i]);
+            AddDeclToScope(&procDef->block, procType->args[i]);
             procDef->declsFlat.Append(procType->args[i]);
         }
         
@@ -192,9 +218,10 @@ Ast_StructDef* ParseStructDef(Parser* p, Ast_DeclSpec specs)
     if(!IsTokIdent(ident->type))
         ExpectedTokenError(p, ident, Tok_Ident);
     
+    structDef->where = ident;
     structDef->type = typeInfo;
-    DeferStringInterning(p, ident->text, &structDef->name);
-    p->scope->decls.Append(structDef);
+    structDef->name = ident->ident;
+    AddDeclToScope(p->scope, structDef);
     return structDef;
 }
 
@@ -264,9 +291,9 @@ Ast_VarDecl* ParseVarDecl(Parser* p, Ast_DeclSpec specs, bool forceInit, bool ig
     decl->type = type;
     decl->typeTok = typeTok;
     decl->declSpecs = specs;
-    DeferStringInterning(p, t->text, &decl->name);
+    decl->name = t->ident;
     
-    p->scope->decls.Append(decl);
+    AddDeclToScope(p->scope, decl);
     
     if(isGlobal)
         decl->declIdx = -1;
@@ -736,8 +763,8 @@ Ast_Expr* ParsePostfixExpression(Parser* p)
                 auto memberAccess = Ast_MakeNode<Ast_MemberAccess>(p->arena, p->at);
                 ++p->at;
                 
-                String ident = EatRequiredToken(p, Tok_Ident)->text;
-                DeferStringInterning(p, ident, &memberAccess->memberName);
+                Token* ident = EatRequiredToken(p, Tok_Ident);
+                memberAccess->memberName = ident->ident;
                 memberAccess->target = curExpr;
                 curExpr = memberAccess;
                 
@@ -814,7 +841,7 @@ Ast_Expr* ParsePrimaryExpression(Parser* p)
     else if(IsTokIdent(p->at->type))
     {
         auto ident = Ast_MakeNode<Ast_IdentExpr>(p->arena, p->at);
-        DeferStringInterning(p, p->at->text, &ident->ident);
+        ident->name = p->at->ident;
         ++p->at;
         return ident;
     }
@@ -887,8 +914,7 @@ TypeInfo* ParseType(Parser* p, Token** outIdent)
             if(p->at->type == Tok_Ident)  // Compound type
             {
                 auto tmp = Ast_MakeType<Ast_IdentType>(p->arena);
-                DeferStringInterning(p, p->at->text, &tmp->ident);
-                
+                tmp->name = p->at->ident;
                 *baseType = tmp;
                 
                 // TODO: polymorphic parameters
@@ -1040,7 +1066,7 @@ Ast_ProcType ParseProcType(Parser* p, Token** outIdent, bool forceArgNames)
             auto argDecl = Ast_MakeNode<Ast_VarDecl>(p->arena, t);
             argDecl->type = type;
             argDecl->declSpecs = specs;
-            DeferStringInterning(p, t->text, &argDecl->name);
+            argDecl->name = t->ident;
             
             args.Append(scratch, argDecl);
             argDecl->declIdx = args.length - 1;
@@ -1148,7 +1174,7 @@ Ast_StructType ParseStructType(Parser* p, Token** outIdent)
     decl.memberOffsets.length = types.length;
     
     for_array(i, decl.memberNames)
-        DeferStringInterning(p, decl.memberNameTokens[i]->text, &decl.memberNames[i]);
+        decl.memberNames[i] = decl.memberNameTokens[i]->ident;
     
     EatRequiredToken(p, '}');
     return decl;
@@ -1171,13 +1197,13 @@ Ast_DeclSpec ParseDeclSpecs(Parser* p)
     return res;
 }
 
-
+#if 0
 void DeferStringInterning(Parser* p, String string, Atom** atom)
 {
-    static const uint64 hashSeed = 0x31415926;
-    ToIntern toIntern = { string, HashString(string, hashSeed), atom };
+    ToIntern toIntern = { string, HashString(string), atom };
     p->internArray.Append(p->internArena, toIntern);
 }
+#endif
 
 // A table could be used for this information
 // These are binary operators only

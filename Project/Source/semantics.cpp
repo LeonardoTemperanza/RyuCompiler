@@ -1,4 +1,5 @@
 
+#include "base.h"
 #include "lexer.h"
 #include "ast.h"
 #include "dependency_graph.h"
@@ -172,7 +173,7 @@ bool CheckStructDef(Typer* t, Ast_StructDef* structDef)
     auto structType = Ast_GetStructType(structDef);
     for_array(i, structType->memberTypes)
     {
-        if(!CheckType(t, structType->memberTypes[i], structDef->where))
+        if(!CheckType(t, structType->memberTypes[i], structType->memberNameTokens[i] - 1))
             return false;
     }
     
@@ -182,6 +183,14 @@ bool CheckStructDef(Typer* t, Ast_StructDef* structDef)
 bool CheckVarDecl(Typer* t, Ast_VarDecl* decl)
 {
     if(!CheckType(t, decl->type, Ast_GetVarDeclTypeToken(decl))) return false;
+    
+    // TODO: check for array of pure proc types (not pointers)
+    if(decl->type->typeId == Typeid_Proc)
+    {
+        SemanticError(t, decl->where, StrLit("Pure 'proc' type not allowed for variable declaration, use '^proc' instead"));
+        return false;
+    }
+    
     if(!CheckNotAlreadyDeclared(t, t->curScope, decl)) return false;
     
     if(decl->initExpr)
@@ -531,7 +540,7 @@ bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt)
             auto call = (Ast_FuncCall*)stmt->rights[rightCounter];
             if(!CheckFuncCall(t, call, true)) return false;
             
-            auto procDecl = Ast_GetCallType(call);
+            auto procDecl = (Ast_ProcType*)GetBaseType(call->target->type);
             toCheck = procDecl->retTypes;
         }
         else
@@ -594,7 +603,7 @@ Ast_Declaration* CheckIdent(Typer* t, Ast_IdentExpr* expr)
 {
     ProfileFunc(prof);
     
-    auto node = IdentResolution(t, t->curScope, expr->where, expr->ident);
+    auto node = IdentResolution(t, t->curScope, expr->where, expr->name);
     if(!node)
     {
         SemanticError(t, expr->where, StrLit("Undeclared identifier."));
@@ -626,23 +635,33 @@ bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign)
     if(!CheckNode(t, call->target)) return false;
     
     // Implicit dereference
-    if(call->target->type->typeId == Typeid_Ptr)
-        call->target->type = GetBaseType(call->target->type);
+    TypeInfo* callType = GetBaseTypeShallow(call->target->type);
     
-    if(call->target->type->typeId != Typeid_Proc)
+    if(callType->typeId != Typeid_Proc)
     {
         SemanticError(t, call->where, StrLit("Cannot call target of type '%T'"), call->target->type);
         return false;
     }
     
-    auto procDecl = (Ast_ProcType*)call->target->type;
+    auto procType = (Ast_ProcType*)callType;
+    
+    if(t->currentProc)
+    {
+        // Functions with returns can be called without really using said
+        // returns. This ensures that the size of the returns will be computed
+        // before moving on to bytecode generation.
+        for_array(i, procType->retTypes)
+        {
+            t->currentProc->toComputeSize.Append(procType->retTypes[i]);
+        }
+    }
     
     // If the number of return types is > 0, and we're not in a
     // multi assign statement, then throw an error because multiple
     // returns cannot be used in this context.
     // NOTE: Maybe rethink this language feature, so that it can be more
     // flexible?
-    if(!isMultiAssign && procDecl->retTypes.length > 1)
+    if(!isMultiAssign && procType->retTypes.length > 1)
     {
         SemanticError(t, call->where,
                       StrLit("Calling procedures with multiple return values in expression is not allowed. Use a MultiAssign statement instead."));
@@ -652,7 +671,7 @@ bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign)
     // Check that number of parameters and types correspond
     // Support varargs in the future maybe?
     
-    if(call->args.length != procDecl->args.length)
+    if(call->args.length != procType->args.length)
     {
         SemanticError(t, call->where, StrLit("Procedure does not take %d arguments"), call->args.length);
         return false;
@@ -663,16 +682,16 @@ bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign)
     {
         if(!CheckNode(t, call->args[i]))
             return false;
-        if(!ImplicitConversion(t, call->args[i], call->args[i]->type, procDecl->args[i]->type))
+        if(!ImplicitConversion(t, call->args[i], call->args[i]->type, procType->args[i]->type))
             return false;
         
-        call->args[i]->castType = procDecl->args[i]->type;
+        call->args[i]->castType = procType->args[i]->type;
     }
     
-    if(procDecl->retTypes.length <= 0)
+    if(procType->retTypes.length <= 0)
         call->type = &Typer_None;
     else
-        call->type = procDecl->retTypes[0];
+        call->type = procType->retTypes[0];
     
     return true;
 }
@@ -924,6 +943,10 @@ bool CheckUnaryExpr(Typer* t, Ast_UnaryExpr* expr)
             }
             
             expr->type = GetBaseTypeShallow(expr->expr->type);
+            if(t->currentProc)
+            {
+                t->currentProc->toComputeSize.Append(expr->type);
+            }
             break;
         }
         case '&':
@@ -988,7 +1011,7 @@ bool CheckTypecast(Typer* t, Ast_Typecast* expr)
             auto ident1 = (Ast_IdentType*)type1;
             auto ident2 = (Ast_IdentType*)type2;
             
-            if(ident1->ident != ident2->ident)
+            if(ident1->name != ident2->name)
             {
                 SemanticError(t, expr->where, StrLit("Cannot cast from type '%T' to type '%T'"), type2, type1);
                 return false;
@@ -1032,10 +1055,17 @@ bool CheckMemberAccess(Typer* t, Ast_MemberAccess* expr)
     if(!CheckNode(t, expr->target)) return false;
     
     // Implicit dereference
-    if(expr->target->type->typeId == Typeid_Ptr)
-        expr->target->type = GetBaseType(expr->target->type);
+    auto targetType = expr->target->type;
+    if(targetType->typeId == Typeid_Ptr)
+    {
+        targetType = GetBaseTypeShallow(expr->target->type);
+        if(t->currentProc)
+        {
+            t->currentProc->toComputeSize.Append(targetType);
+        }
+    }
     
-    TypeId targetTypeId = expr->target->type->typeId;
+    TypeId targetTypeId = targetType->typeId;
     if(targetTypeId != Typeid_Struct && targetTypeId != Typeid_Ident)
     {
         SemanticError(t, expr->target->where, StrLit("Cannot apply '.' operator to expression of type '%T'"), expr->target->type);
@@ -1044,24 +1074,23 @@ bool CheckMemberAccess(Typer* t, Ast_MemberAccess* expr)
     
     // Type lookup
     
-    Ast_StructType* structDecl = 0;
+    Ast_StructType* structType = 0;
     if(targetTypeId == Typeid_Struct)
-        structDecl = (Ast_StructType*)expr->target->type;
+        structType = (Ast_StructType*)targetType;
     else if(targetTypeId == Typeid_Ident)
-        structDecl = (Ast_StructType*)(((Ast_IdentType*)expr->target->type)->structDef->type);  // This is kind of stupid
+        structType = (Ast_StructType*)(((Ast_IdentType*)targetType)->structDef->type);  // This is kind of stupid
     
-    // TODO: rework this to use the CompPhase, return false if the struct
-    // declaration has not yet been typechecked. Think about how to make this
-    // work actually...
-    Assert(structDecl);
+    // TODO: later when types are a result of run directives or other things
+    // We might need to yield here
+    Assert(structType);
     
     // The struct declaration has already been typechecked at this point.
-    expr->structDecl = structDecl;
+    expr->structDecl = structType;
     
     int idx = -1;
-    for(int i = 0; i < structDecl->memberNames.length; ++i)
+    for(int i = 0; i < structType->memberNames.length; ++i)
     {
-        if(structDecl->memberNames[i] == expr->memberName)
+        if(structType->memberNames[i] == expr->memberName)
         {
             idx = i;
             break;
@@ -1070,20 +1099,17 @@ bool CheckMemberAccess(Typer* t, Ast_MemberAccess* expr)
     
     if(idx == -1)
     {
-        // TODO: @errorquality Improve this error message
-        SemanticError(t, expr->where, StrLit("Member '...' in struct '...' was not found"));
+        MemberNotFoundError(t, expr->where, expr->memberName->s, expr->target->where->text);
         return false;
     }
     
     // Get the type corresponding to the member in the struct
     
-    if(!CheckType(t, structDecl->memberTypes[idx], expr->where))
-    {
+    if(!CheckType(t, structType->memberTypes[idx], expr->where))
         return false;
-    }
     
     expr->memberIdx = idx;
-    expr->type   = structDecl->memberTypes[idx];
+    expr->type      = structType->memberTypes[idx];
     return true;
 }
 
@@ -1162,7 +1188,7 @@ bool CheckType(Typer* t, TypeInfo* type, Token* where)
     if(baseType->typeId == Typeid_Ident)
     {
         auto identDecl = (Ast_IdentType*)baseType;
-        auto node = IdentResolution(t, t->curScope, where, identDecl->ident);
+        auto node = IdentResolution(t, t->curScope, where, identDecl->name);
         if(!node || node->kind != AstKind_StructDef)
         {
             SemanticError(t, where, StrLit("Type with such name was not found."));
@@ -1185,16 +1211,10 @@ bool ComputeSize(Typer* t, Ast_Node* node)
             auto structDef = (Ast_StructDef*)node;
             auto declStruct = Ast_GetStructType(structDef);
             ComputeSize_Ret ret = ComputeStructSize(t, declStruct, structDef->where, &outcome);
-            
             if(outcome)
             {
                 declStruct->size = ret.size;
                 declStruct->align = ret.align;
-                //printf("Outcome = true, Size: %d\n", ret.size);
-            }
-            else
-            {
-                //printf("Outcome = false\n");
             }
             
             return outcome;
@@ -1215,6 +1235,11 @@ bool ComputeSize(Typer* t, Ast_Node* node)
             {
                 auto decl = procDef->declsFlat[i];
                 if(!FillInTypeSize(t, decl->type, decl->typeTok)) return false;
+            }
+            
+            for_array(i, procDef->toComputeSize)
+            {
+                if(!FillInTypeSize(t, procDef->toComputeSize[i], 0)) return false;
             }
             
             return true;
@@ -1337,6 +1362,20 @@ ComputeSize_Ret ComputeStructSize(Typer* t, Ast_StructType* declStruct, Token* e
     return { sizeResult, alignResult };
 }
 
+cforceinline bool ApplyOrderConstraint(Ast_Declaration* decl)
+{
+    bool res = true;
+    res &= (decl->kind != AstKind_ProcDecl);
+    res &= (decl->kind != AstKind_StructDef);
+    if(decl->kind == AstKind_VarDecl)
+    {
+        auto var = (Ast_VarDecl*)decl;
+        res &= (var->declIdx != -1);  // If it's a global variable declaration don't apply it
+    }
+    
+    return res;
+}
+
 // This will later use a hash-table.
 // Each scope will have its own hash-table, and the search will just be
 // a linked-list traversal of hash-tables (or arrays if the number of decls is low)
@@ -1346,24 +1385,38 @@ Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Token* where, Atom*
     
     for(Ast_Block* curScope = scope; curScope; curScope = curScope->enclosing)
     {
-        auto& decls = curScope->decls;
-        
-        for(int i = 0; i < decls.length; ++i)
+        if(curScope->flags & Block_UseHashTable)
         {
-            bool applyOrderConstraint = true;
-            applyOrderConstraint &= (decls[i]->kind != AstKind_ProcDecl);
-            applyOrderConstraint &= (decls[i]->kind != AstKind_StructDef);
-            if(decls[i]->kind == AstKind_VarDecl)
+            uint32 hash = curScope->declsTable.HashFunction((uintptr)ident);
+            for(int i = 0; ; ++i)
             {
-                auto var = (Ast_VarDecl*)decls[i];
-                applyOrderConstraint &= (var->declIdx != -1);  // If it's a global variable declaration don't apply it
+                uint32 idx = HashTable_ProbingScheme(hash, i, curScope->declsTable.capacity);
+                auto& entry = curScope->declsTable.entries[idx];
+                if(!entry.occupied) break;
+                
+                if(entry.key == ident)
+                {
+                    bool applyOrderConstraint = ApplyOrderConstraint(entry.val);
+                    if(applyOrderConstraint && entry.val->where >= where)
+                        continue;
+                    
+                    return entry.val;
+                }
             }
+        }
+        else
+        {
+            auto& decls = curScope->decls;
             
-            if(applyOrderConstraint && curScope->decls[i]->where >= where)
-                continue;
-            
-            if(curScope->decls[i]->name == ident)
-                return curScope->decls[i];
+            for(int i = 0; i < decls.length; ++i)
+            {
+                bool applyOrderConstraint = ApplyOrderConstraint(decls[i]);
+                if(applyOrderConstraint && curScope->decls[i]->where >= where)
+                    continue;
+                
+                if(curScope->decls[i]->name == ident)
+                    return curScope->decls[i];
+            }
         }
     }
     
@@ -1372,15 +1425,37 @@ Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Token* where, Atom*
 
 bool CheckNotAlreadyDeclared(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
 {
-    for(int i = 0; i < scope->decls.length && scope->decls[i]->where < decl->where; ++i)
+    if(scope->flags & Block_UseHashTable)
     {
-        if(scope->decls[i]->name == decl->name)
+        uint32 hash = scope->declsTable.HashFunction((uintptr)decl->name);
+        for(int i = 0; i <= scope->declsTable.count + 1; ++i)
         {
-            if(scope->decls[i] != decl)
+            Assert(i != scope->declsTable.count + 1);
+            
+            uint32 idx = HashTable_ProbingScheme(hash, i, scope->declsTable.capacity);
+            auto& entry = scope->declsTable.entries[idx];
+            if(!entry.occupied) break;
+            
+            if(entry.key == decl->name && entry.val->where < decl->where)
             {
                 SemanticError(t, decl->where, StrLit("Redefinition, this symbol was already defined in this scope, ..."));
                 SemanticErrorContinue(t, scope->decls[i]->where, StrLit("... here"));
                 return false;
+            }
+        }
+    }
+    else
+    {
+        for(int i = 0; i < scope->decls.length && scope->decls[i]->where < decl->where; ++i)
+        {
+            if(scope->decls[i]->name == decl->name)
+            {
+                if(scope->decls[i] != decl)
+                {
+                    SemanticError(t, decl->where, StrLit("Redefinition, this symbol was already defined in this scope, ..."));
+                    SemanticErrorContinue(t, scope->decls[i]->where, StrLit("... here"));
+                    return false;
+                }
             }
         }
     }
@@ -1558,7 +1633,7 @@ bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2)
             {
                 auto ident1 = (Ast_IdentType*)type1;
                 auto ident2 = (Ast_IdentType*)type2;
-                if(ident1->ident == ident2->ident)
+                if(ident1->name == ident2->name)
                     return true;
                 return false;
             }  // Check if same ident
@@ -1648,7 +1723,7 @@ bool ImplicitConversion(Typer* t, Ast_Expr* exprSrc, TypeInfo* src, TypeInfo* ds
     
     if(!TypesCompatible(t, src, dst))
     {
-        SemanticError(t, exprSrc->where, StrLit("Cannot implicitly convert type '%T' to '%T'"), src, dst);
+        //SemanticError(t, exprSrc->where, StrLit("Cannot implicitly convert type '%T' to '%T'"), src, dst);
         return false;
     }
     
@@ -1670,57 +1745,52 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
     {
         if(type->typeId <= Typeid_BasicTypesEnd && type->typeId >= Typeid_BasicTypesBegin)
         {
-            if(type->typeId == Typeid_Float)
+            switch_nocheck(type->typeId)
             {
-                if(type->size == 4)
-                    strBuilder.Append("float");
-                else if(type->size == 8)
-                    strBuilder.Append("double");
-                else Assert(false && "Unreachable code");
-            }
-            else if(type->typeId == Typeid_Integer)
-            {
-                if(!type->isSigned)
-                    strBuilder.Append('u');
-                
-                char buf[6];
-                int numChars = snprintf(buf, 6, "int%lld", type->size * 8);
-                String str = { buf, numChars };
-                strBuilder.Append(str);
-            }
-            else if(type->typeId == Typeid_Bool)
-            {
-                strBuilder.Append("bool");
-            }
-            else if(type->typeId == Typeid_Char)
-            {
-                strBuilder.Append("char");
-            }
-            else if(type->typeId == Typeid_None)
-            {
-                strBuilder.Append("none");
-            }
-            else if(type->typeId == Typeid_Raw)
-            {
-                strBuilder.Append("raw");
-            }
-            else Assert(false && "Unreachable code");
+                default: Assert(false && "TypeInfo2Str, unrecognized type");
+                case Typeid_Float:
+                {
+                    if(type->size == 4)
+                        strBuilder.Append("float");
+                    else if(type->size == 8)
+                        strBuilder.Append("double");
+                    else Assert(false && "Unreachable code");
+                    
+                    break;
+                }
+                case Typeid_Integer:
+                {
+                    if(!type->isSigned)
+                        strBuilder.Append('u');
+                    
+                    char buf[6];
+                    int numChars = snprintf(buf, 6, "int%lld", type->size * 8);
+                    String str = { buf, numChars };
+                    strBuilder.Append(str);
+                    
+                    break;
+                }
+                case Typeid_Bool: strBuilder.Append("bool"); break;
+                case Typeid_Char: strBuilder.Append("char"); break;
+                case Typeid_None: strBuilder.Append("none"); break;
+            } switch_nocheck_end;
             
+            // For any primitive type, just quit
             quit = true;
         }
         else switch_nocheck(type->typeId)
         {
             default: Assert(false); break;
-            case Typeid_None:
+            case Typeid_Ident:
             {
-                strBuilder.Append("none");
+                String ident = ((Ast_IdentType*)type)->name->s;
+                strBuilder.Append(ident);
                 quit = true;
                 break;
             }
-            case Typeid_Ident:
+            case Typeid_Struct:
             {
-                String ident = ((Ast_IdentType*)type)->ident->s;
-                strBuilder.Append(ident);
+                strBuilder.Append("type");
                 quit = true;
                 break;
             }
@@ -1948,4 +2018,16 @@ void IncompatibleReturnsError(Typer* t, Token* where, int numStmtRets, int numPr
         SemanticErrorContinue(t, t->currentProc->where, StrLit("... but the procedure returns 1 value."));
     else
         SemanticErrorContinue(t, t->currentProc->where, StrLit("... but the procedure returns %d values."), numProcRets);
+}
+
+void MemberNotFoundError(Typer* t, Token* where, String memberName, String structName)
+{
+    ScratchArena scratch;
+    StringBuilder b(scratch);
+    b.Append("Could not find member '");
+    b.Append(memberName);
+    b.Append("' in '");
+    b.Append(structName);
+    b.Append('\'');
+    SemanticError(t, where, b.string);
 }

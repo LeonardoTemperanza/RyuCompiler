@@ -276,9 +276,8 @@ struct Interp_RegInterval
 enum Interp_InstrBitfieldEnum
 {
     InstrBF_RetVoid     = 1 << 0,
-    InstrBF_SetUpArgs   = 1 << 1,
-    InstrBF_ViolatesSSA = 1 << 2,  // This is used for logical operators
-    InstrBF_MergeSSA    = 1 << 3,  // This is used for logical operators
+    InstrBF_ViolatesSSA = 1 << 1,  // This is used for logical operators
+    InstrBF_MergeSSA    = 1 << 2,  // This is used for logical operators
 };
 
 typedef uint8 InstrBitfield;
@@ -446,10 +445,11 @@ struct Interp_Instr
 #define for_interparray(index, start, count) for(int i = start; i < start+count; ++i)
 #endif
 
-// @performance Instead of using dynamic arrays a new linear allocator
-// that doesn't use virtual memory could be implemented...
 struct Interp_Proc
 {
+    // Used to allocate the register array
+    RegIdx maxReg = 0;
+    
     // These are per-proc so that indices can be smaller
     Array<InstrIdx> instrArrays;
     Array<RegIdx> regArrays;

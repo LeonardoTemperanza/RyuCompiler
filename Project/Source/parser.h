@@ -27,6 +27,8 @@ struct Parser
 template<typename t>
 t* Ast_MakeEntityNode(Parser* p, Token* token);
 
+void AddDeclToScope(Ast_Block* block, Ast_Declaration* decl);
+
 Ast_FileScope* ParseFile(Parser* p);
 Ast_ProcDecl* ParseProc(Parser* p, Ast_DeclSpec specs);
 Ast_StructDef* ParseStructDef(Parser* p, Ast_DeclSpec specs);
@@ -56,7 +58,9 @@ void CheckDeclSpecs(Parser* p, Ast_DeclSpec specs, Ast_DeclSpec allowedSpecs);
 
 // Inserts the string and the associated atom address to patch later
 // in the parser array (internArray)
+#if 0
 void DeferStringInterning(Parser* p, String string, Atom** atom);
+#endif
 
 // Operators
 

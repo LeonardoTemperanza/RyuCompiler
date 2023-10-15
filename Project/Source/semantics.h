@@ -36,6 +36,7 @@ void CannotConvertToIntegralTypeError(Typer* t, TypeInfo* type, Token* where);
 void CannotDereferenceTypeError(Typer* t, TypeInfo* type, Token* where);
 void IncompatibleTypesError(Typer* t, TypeInfo* type1, TypeInfo* type2, Token* where);
 void IncompatibleReturnsError(Typer* t, Token* where, int numStmtRets, int numProcRets);
+void MemberNotFoundError(Typer* t, Token* where, String memberName, String structName);
 
 // Semantics
 inline bool IsNodeLValue(Ast_Node* node)
@@ -93,8 +94,8 @@ bool FillInTypeSize(Typer* t, TypeInfo* type, Token* errTok);
 ComputeSize_Ret ComputeStructSize(Typer* t, Ast_StructType* declStruct, Token* errTok, bool* outcome);
 
 // Identifier resolution
+bool ApplyOrderConstraint(Ast_Declaration* decl);
 Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Token* where, Atom* ident);
-bool AddDeclaration(Typer* t, Ast_Block* scope, Ast_Declaration* decl);
 bool CheckNotAlreadyDeclared(Typer* t, Ast_Block* scope, Ast_Declaration* decl);
 
 // Types

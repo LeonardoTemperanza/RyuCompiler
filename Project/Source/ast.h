@@ -280,14 +280,26 @@ struct Ast_Expr : public Ast_Node
 
 struct Ast_Stmt : public Ast_Node {};
 
+enum BlockFlags
+{
+    Block_UseHashTable = 1 << 0,
+};
+
 struct Ast_Block : public Ast_Stmt
 {
     Ast_Block() { kind = AstKind_Block; };
+    
+    static const uint32 maxArraySize = 64;
+    static_assert(maxArraySize > 1, "Max array size must be more than one");
+    
+    uint8 flags = 0;
     
     // NOTE(Leo): These are sorted by position in the file,
     // their 'where' pointer can be used to compare positions
     // and detect "use before decl" scenarios.
     Array<Ast_Declaration*> decls;
+    // When the array gets too big, a table is used instead.
+    HashTable<Atom*, Ast_Declaration*> declsTable;
     
     Ast_Block* enclosing = 0;
     Slice<Ast_Node*> stmts = { 0, 0 };
@@ -431,7 +443,7 @@ struct Ast_IdentType : public TypeInfo
 {
     Ast_IdentType() { typeId = Typeid_Ident; };
     
-    Atom* ident;
+    Atom* name;
     
     Slice<Ast_Expr*> polyParams = { 0, 0 };
     
@@ -446,7 +458,7 @@ struct Ast_StructType : public TypeInfo
     Slice<TypeInfo*> memberTypes = { 0, 0 };
     Slice<Atom*>     memberNames = { 0, 0 };
     
-    // For errors?
+    // For errors
     Slice<Token*> memberNameTokens = { 0, 0 };
     
     // Filled in later in the sizing stage 
@@ -496,8 +508,13 @@ struct Ast_ProcDef : public Ast_Node
     Ast_Block block;
     
     // Flattened form of all declarations in the
-    // procedure. Useful for codegen
+    // procedure. Useful for codegen and other things
     Array<Ast_Declaration*> declsFlat;
+    
+    // Array of types whose size should be computed
+    // and set during the ComputeSize stage and before
+    // bytecode generation (in addition to the declarations)
+    Array<TypeInfo*> toComputeSize;
     
     // Codegen stuff (later some stuff will be removed)
     // This stuff could just be in a PtrMap
@@ -571,7 +588,7 @@ struct Ast_IdentExpr : public Ast_Expr
 {
     Ast_IdentExpr() { kind = AstKind_Ident; };
     
-    Atom* ident;
+    Atom* name;
     
     // Filled in by the typechecker
     Ast_Declaration* declaration = 0;
@@ -644,6 +661,8 @@ inline bool Ast_IsExprBitManipulation(Ast_BinaryExpr* expr)
 template<typename t>
 t* Ast_MakeNode(Arena* arena, Token* token);
 Ast_Node* Ast_MakeNode(Arena* arena, Token* token, Ast_NodeKind kind);
+template<>
+Ast_Declaration* Ast_MakeNode<Ast_Declaration>(Arena* arena, Token* token);
 
 template<typename t>
 t Ast_InitNode(Token* token);
@@ -656,7 +675,6 @@ t Ast_InitNode(Token* token);
 cforceinline Ast_ProcType* Ast_GetProcType(Ast_ProcDecl* procDecl) { return (Ast_ProcType*)procDecl->type; }
 cforceinline Ast_ProcType* Ast_GetProcDefType(Ast_ProcDef* procDef) { return (Ast_ProcType*)procDef->decl->type; }
 cforceinline Ast_StructType* Ast_GetStructType(Ast_StructDef* structDef) { return (Ast_StructType*)structDef->type; }
-cforceinline Ast_ProcType* Ast_GetCallType(Ast_FuncCall* call) { return (Ast_ProcType*)call->target->type; }
 
 cforceinline Token* Ast_GetVarDeclTypeToken(Ast_VarDecl* decl)
 {

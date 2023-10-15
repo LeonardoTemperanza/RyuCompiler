@@ -1,0 +1,165 @@
+
+proc putchar(int c)->int c;
+proc puts(^char str)->int numChars;
+
+proc free(^raw ptr);
+
+struct Person
+{
+    int64 id;
+    Town t;
+}
+
+proc main()->int
+{
+    LinkedList ll = InitLinkedList();
+    defer FreeLinkedList(&ll);
+    
+    AddNode(&ll, 97);
+    AddNode(&ll, 98);
+    AddNode(&ll, 99);
+    AddNode(&ll, 99);
+    AddNode(&ll, 99);
+    AddNode(&ll, 99);
+    AddNode(&ll, 99);
+    AddNode(&ll, 99);
+    AddNode(&ll, 99);
+    AddNode(&ll, 99);
+    
+    PrintLinkedList(ll);
+    
+    return 0;
+}
+
+proc InitLinkedList()->LinkedList
+{
+    LinkedList l;
+    l.first = 0;
+    l.last = 0;
+    return l;
+}
+
+proc FreeLinkedList(^LinkedList ll)
+{
+    ^Node it = ll.first;
+    while(it)
+    {
+        ^Node next = it.next;
+        free(it);
+        it = next;
+    }
+    
+    ll.first = ll.last = 0;
+}
+
+proc AddNode(^LinkedList ll, int16 id)
+{
+    ^Node newNode = cast(^Node) malloc(300);
+    newNode.id = id;
+    newNode.next = 0;
+    
+    if(ll.first == 0)
+    {
+        ll.first = newNode;
+        ll.last = newNode;
+        return;
+    }
+    
+    ll.last.next = newNode;
+    ll.last = newNode;
+}
+
+proc PrintLinkedList(LinkedList list)
+{
+    for(^Node n = list.first; n != 0; n = n.next)
+    {
+        putchar(n.id);
+    }
+    
+    
+    /*
+    ^Node n = list.first;
+    if(n)
+    {
+        putchar(n.id);
+        n = n.next;
+        if(n)
+        {
+            putchar(n.id);
+            n = n.next;
+            if(n)
+            {
+                putchar(n.id);
+                n = n.next;
+                if(n)
+                {
+                    putchar(n.id);
+                    n = n.next;
+                    if(n)
+                    {
+                        putchar(n.id);
+                        n = n.next;
+                        if(n)
+                        {
+                            putchar(n.id);
+                            n = n.next;
+                            if(n)
+                            {
+                                putchar(n.id);
+                                n = n.next;
+                                if(n)
+                                {
+                                    putchar(n.id);
+                                    n = n.next;
+                                    if(n)
+                                    {
+                                        putchar(n.id);
+                                        n = n.next;
+                                        if(n)
+                                        {
+                                            putchar(n.id);
+                                            n = n.next;
+                                            if(n)
+                                            {
+                                                
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+*/
+}
+
+proc malloc(uint64 size)->^raw;
+
+struct LinkedList
+{
+    ^Node first;
+    ^Node last;
+};
+
+struct Node
+{
+    ^Node next;
+    Person p;
+    int64 id;
+}
+
+struct Town
+{
+    String name;
+    int64 numInhabitants;
+}
+
+struct String
+{
+    ^char ptr;
+    int64 length;
+}

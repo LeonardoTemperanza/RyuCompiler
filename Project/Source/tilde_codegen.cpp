@@ -7,18 +7,24 @@
 
 #ifndef UnityBuild
 extern CmdLineArgs cmdLineArgs;
+extern Timings timings;
 #endif
 
-Tc_Context Tc_InitCtx(TB_Module* module, bool emitAsm)
+Tc_Context Tc_InitCtx(TB_Module* module, Arena* strArena, bool emitAsm)
 {
     Tc_Context result;
     result.module = module;
     result.emitAsm = emitAsm;
+    result.type2Proto.Init(64);
     return result;
 }
 
 void Tc_CodegenAndLink(Ast_FileScope* file, Interp* interp, Slice<char*> objFiles)
 {
+    ProfileFunc(prof);
+    
+    defer(tb_free_thread_resources());
+    
     ScratchArena scratch;
     objFiles = objFiles.CopyToArena(scratch);
     
@@ -28,20 +34,16 @@ void Tc_CodegenAndLink(Ast_FileScope* file, Interp* interp, Slice<char*> objFile
     TB_FeatureSet featureSet = { 0 };
     TB_Arch arch  = TB_ARCH_X86_64;
     TB_System sys = TB_SYSTEM_WINDOWS;
-    TB_DebugFormat debugFmt = TB_DEBUGFMT_NONE;
     TB_Module* module = tb_module_create(arch, sys, &featureSet, false);
+    defer(tb_module_destroy(module));
     
-    TB_ExecutableType exeType = TB_EXECUTABLE_PE;
+    Arena strArena = Arena_VirtualMemInit(GB(4), MB(2));
+    Tc_Context ctx = Tc_InitCtx(module, &strArena, cmdLineArgs.emitAsm);
     
-    Tc_Context ctx = Tc_InitCtx(module, cmdLineArgs.emitAsm);
-    
-    Arena regArena = Arena_VirtualMemInit(MB(512), MB(2));
-    Arena symArena = Arena_VirtualMemInit(MB(512), MB(2));
-    Arena flagArena = Arena_VirtualMemInit(MB(512), MB(2));
-    ctx.regArena = &regArena;
-    ctx.symArena = &symArena;
-    ctx.flagArena = &flagArena;
     ctx.symbols = interp->symbols;
+    
+    //tb_arena_create(&ctx.procArena, KB(4));
+    //defer(tb_arena_destroy(&ctx.procArena));
     
     // Generate symbols
     for_array(i, interp->symbols)
@@ -64,74 +66,13 @@ void Tc_CodegenAndLink(Ast_FileScope* file, Interp* interp, Slice<char*> objFile
         return;
     }
     
-    // Linking
-    if(cmdLineArgs.useTildeLinker)  // Tilde backend linker
-    {
-        TB_Linker* linker = tb_linker_create(exeType, arch);
-        defer(tb_linker_destroy(linker));
-        
-        tb_linker_append_module(linker, ctx.module);
-        
-        for_array(i, objFiles)
-        {
-            // Load object file into memory and feed it to the linker
-            FILE* objContent = fopen(objFiles[i], "rb");
-            if(!objContent)
-            {
-                SetErrorColor();
-                fprintf(stderr, "Error");
-                ResetColor();
-                fprintf(stderr, ": Failed to open object file '%s', will be ignored.\n", objFiles[i]);
-            }
-            
-            TB_Slice name = { strlen(objFiles[i]), (uint8*)objFiles[i] };
-            TB_Slice content = { GetFileSize(objContent), (uint8*)objContent };
-            tb_linker_append_object(linker, name, content);
-        }
-        
-        // Append user defined object files to the module
-        
-        // C run-time library
-        //tb_linker_append_library()
-        
-        tb_linker_set_entrypoint(linker, "main");
-        
-        TB_ExportBuffer buffer = tb_linker_export(linker);
-        defer(tb_export_buffer_free(buffer));
-        
-        if(!tb_export_buffer_to_file(buffer, cmdLineArgs.outputFile))
-        {
-            SetErrorColor();
-            fprintf(stderr, "Error");
-            ResetColor();
-            fprintf(stderr, ": Failed to export executable file.\n");
-            return;
-        }
-    }
-    else  // Platform specific linker
-    {
-        // Export object file
-        TB_ExportBuffer buffer = tb_module_object_export(module, debugFmt);
-        defer(tb_export_buffer_free(buffer));
-        if(!tb_export_buffer_to_file(buffer, "output.o"))
-        {
-            SetErrorColor();
-            fprintf(stderr, "Error");
-            ResetColor();
-            fprintf(stderr, ": Failed to export object file.\n");
-            return;
-        }
-        
-        // Add newly created object file
-        objFiles.Append(scratch, "output.o");
-        
-        // Pass object file to linker
-        RunPlatformSpecificLinker(cmdLineArgs.outputFile, objFiles.ptr, objFiles.length);
-    }
+    Tc_Link(ctx.module, objFiles, arch);
 }
 
 void Tc_GenSymbol(Tc_Context* ctx, Interp_Symbol* symbol)
 {
+    ProfileFunc(prof);
+    
     TB_Symbol* res = 0;
     switch(symbol->type)
     {
@@ -172,10 +113,11 @@ void Tc_GenSymbol(Tc_Context* ctx, Interp_Symbol* symbol)
 
 void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
 {
-    ScratchArena scratch;
+    ProfileFunc(prof);
     
-    // Generate procedure itself
-    tb_arena_create(&ctx->procArena, MB(1));
+    uint64 irGenStart = __rdtsc();
+    
+    ScratchArena scratch;
     
     Interp_Symbol& symbol = ctx->symbols[proc->symIdx];
     
@@ -185,10 +127,12 @@ void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
     // in the interpreter instructions.
     TB_DebugType* procType = Tc_ConvertProcToDebugType(ctx->module, symbol.typeInfo);
     
-    // @robustness Just doing this for now because it's easier, should
-    // generate the prototype directly from the interp procedure
     size_t paramCount = 0;
-    TB_Node** paramNodes = tb_function_set_prototype_from_dbg(curProc, procType, &ctx->procArena, &paramCount);
+    TB_FunctionPrototype* proto = tb_prototype_from_dbg(ctx->module, procType);
+    tb_function_set_prototype(curProc, proto, 0);
+    
+    Tc_InitRegs(ctx, proc->maxReg+1, proc->instrs.length);
+    defer(Tc_FreeRegs(ctx));
     
     Assert(symbol.typeInfo->typeId == Typeid_Proc);
     auto procDecl = (Ast_ProcType*)symbol.typeInfo;
@@ -196,31 +140,24 @@ void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
     if(procDecl->retTypes.length <= 0)
         abiArgsCount = procDecl->args.length;
     
-    ctx->regs.Resize(ctx->regArena, abiArgsCount);
     for(int i = 0; i < abiArgsCount; ++i)
         ctx->regs[i] = tb_inst_param(curProc, i);
     
     // Populate arg addresses as well
-    for(int i = 0; i < paramCount; ++i)
-    {
-        if(proc->argRules[i] == TB_PASSING_DIRECT)
-        {
-            Tc_ExpandRegs(ctx, i + abiArgsCount);
-            ctx->regs[i + abiArgsCount] = paramNodes[i];
-        }
-    }
+    //for(int i = 0; i < paramCount; ++i)
+    //{
+    //if(proc->argRules[i] == TB_PASSING_DIRECT)
+    //{
+    //ctx->regs[i + abiArgsCount] = paramNodes[i];
+    //}
+    //}
     
-    bool isMain = symbol.name == "main";
-    if(isMain)
+    if(symbol.name == "main")
         ctx->mainProc = curProc;
+    
     ctx->proc = curProc;
     
-    // Init arrays
-    
-    // Get all basic blocks
-    ctx->bbs.ptr = Arena_AllocArray(scratch, proc->instrs.length, Tc_Region);
-    ctx->bbs.length = proc->instrs.length;
-    
+    // Get all basic blocks/regions
     for_array(i, proc->instrs)
     {
         if(proc->instrs[i].op == Op_Region)
@@ -239,12 +176,23 @@ void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
     // Generate its instructions
     Tc_GenInstrs(ctx, curProc, proc);
     
-    // Perform optimization and codegen passes
+    timings.irGen += 1.0 / GetRdtscFreq() * (__rdtsc() - irGenStart);
     
-    TB_Passes* p = tb_pass_enter(curProc, &ctx->procArena);
+    Tc_BackendGenProc(curProc, 0, ctx->emitAsm);
+}
+
+void Tc_BackendGenProc(TB_Function* proc, TB_Arena* arena, bool emitAsm)
+{
+    ProfileFunc(prof);
+    
+    uint64 backendStart = __rdtsc();
+    defer(timings.backend += 1.0 / GetRdtscFreq() * (__rdtsc() - backendStart));
+    
+    TB_Passes* p = tb_pass_enter(proc, arena);
     if(cmdLineArgs.emitIr)
     {
         tb_pass_print(p);
+        printf("\n");
         fflush(stdout);
     }
     
@@ -257,68 +205,14 @@ void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
         tb_pass_mem2reg(p);
     }
     
-    TB_FunctionOutput* output = tb_pass_codegen(p, ctx->emitAsm);
+    TB_FunctionOutput* output = tb_pass_codegen(p, emitAsm);
     tb_pass_exit(p);
     
-    if(ctx->emitAsm)
+    if(emitAsm)
     {
         tb_output_print_asm(output, stdout);
+        printf("\n");
     }
-    
-    printf("\n");
-}
-
-TB_DataType Tc_ToTBType(Interp_Type type)
-{
-    TB_DataType result;
-    result.type = type.type;
-    result.width = type.width;
-    result.data = type.data;
-    return result;
-}
-
-void Tc_ExpandRegs(Tc_Context* ctx, int idx)
-{
-    if(idx+1 > ctx->regs.length)
-    {
-        ctx->regs.Resize(ctx->regArena, idx + 1);
-        ctx->syms.Resize(ctx->symArena, idx + 1);
-        ctx->isLValue.Resize(ctx->flagArena, idx + 1);
-        for(int i = ctx->regs.length; i < idx+1; ++i)
-            ctx->isLValue[i] = false;
-    }
-}
-
-TB_Node** Tc_GetNodeArray(Tc_Context* ctx, Interp_Proc* proc, int arrayStart, int arrayCount, Arena* allocTo)
-{
-    auto nodes = Arena_AllocArray(allocTo, arrayCount, TB_Node*);
-    for(int i = 0; i < arrayCount; ++i)
-        nodes[i] = ctx->regs[proc->regArrays[arrayStart + i]];
-    
-    return nodes;
-}
-
-TB_Node** Tc_GetBBArray(Tc_Context* ctx, Interp_Proc* proc, int arrayStart, int arrayCount, Arena* allocTo)
-{
-    auto nodes = Arena_AllocArray(allocTo, arrayCount, TB_Node*);
-    for(int i = 0; i < arrayCount; ++i)
-        nodes[i] = ctx->bbs[proc->instrArrays[arrayStart + i]].region;
-    
-    return nodes;
-}
-
-TB_SwitchEntry* Tc_GetSwitchEntries(Tc_Context* ctx, Interp_Proc* proc, Interp_Instr instr, Arena* allocTo)
-{
-    Assert(instr.op == Op_Branch);
-    
-    auto res = Arena_AllocArray(allocTo, instr.branch.count, TB_SwitchEntry);
-    for(int i = 0; i < instr.branch.count; ++i)
-    {
-        res[i].key   = proc->constArrays[instr.branch.keyStart + i];
-        res[i].value = ctx->bbs[proc->instrArrays[instr.branch.caseStart + i]].region;
-    }
-    
-    return res;
 }
 
 void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
@@ -331,12 +225,6 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
     for(int i = 0; i < proc->instrs.length; ++i)
     {
         auto& instr = proc->instrs[i];
-        
-        // Ignore the argument locals (and stores) because TB automatically inserts those
-        if(instr.bitfield & InstrBF_SetUpArgs) continue;
-        
-        Tc_ExpandRegs(ctx, instr.dst);
-        
         auto& dst = regs[instr.dst];
         auto& unarySrc = regs[instr.unary.src];
         auto& src1 = regs[instr.bin.src1];
@@ -378,7 +266,7 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
                 }
                 else  // >= 2
                 {
-                    Assert(false);
+                    Assert(false && "Can't have more than one return value");
                 }
                 
                 break;
@@ -544,6 +432,142 @@ void Tc_GenInstrs(Tc_Context* ctx, TB_Function* tildeProc, Interp_Proc* proc)
     }
 }
 
+void Tc_InitRegs(Tc_Context* ctx, uint64 numRegs, uint64 numInstrs)
+{
+    ctx->regs = new TB_Node*[numRegs];
+    ctx->syms = new SymIdx[numRegs];
+    ctx->bbs  = new Tc_Region[numInstrs];
+}
+
+void Tc_FreeRegs(Tc_Context* ctx)
+{
+    delete[] ctx->regs;
+    delete[] ctx->syms;
+    delete[] ctx->bbs;
+}
+
+TB_DataType Tc_ToTBType(Interp_Type type)
+{
+    TB_DataType result;
+    result.type = type.type;
+    result.width = type.width;
+    result.data = type.data;
+    return result;
+}
+
+TB_Node** Tc_GetNodeArray(Tc_Context* ctx, Interp_Proc* proc, int arrayStart, int arrayCount, Arena* allocTo)
+{
+    auto nodes = Arena_AllocArray(allocTo, arrayCount, TB_Node*);
+    for(int i = 0; i < arrayCount; ++i)
+    {
+        auto reg = proc->regArrays[arrayStart + i];
+        TB_Node* node = ctx->regs[reg];
+        nodes[i] = node;
+    }
+    
+    return nodes;
+}
+
+TB_Node** Tc_GetBBArray(Tc_Context* ctx, Interp_Proc* proc, int arrayStart, int arrayCount, Arena* allocTo)
+{
+    auto nodes = Arena_AllocArray(allocTo, arrayCount, TB_Node*);
+    for(int i = 0; i < arrayCount; ++i)
+        nodes[i] = ctx->bbs[proc->instrArrays[arrayStart + i]].region;
+    
+    return nodes;
+}
+
+TB_SwitchEntry* Tc_GetSwitchEntries(Tc_Context* ctx, Interp_Proc* proc, Interp_Instr instr, Arena* allocTo)
+{
+    Assert(instr.op == Op_Branch);
+    
+    auto res = Arena_AllocArray(allocTo, instr.branch.count, TB_SwitchEntry);
+    for(int i = 0; i < instr.branch.count; ++i)
+    {
+        res[i].key   = proc->constArrays[instr.branch.keyStart + i];
+        res[i].value = ctx->bbs[proc->instrArrays[instr.branch.caseStart + i]].region;
+    }
+    
+    return res;
+}
+
+void Tc_Link(TB_Module* module, Slice<char*> objFiles, TB_Arch arch)
+{
+    ProfileFunc(prof);
+    
+    uint64 linkTimeStart = __rdtsc();
+    defer(timings.linker += 1.0 / GetRdtscFreq() * (__rdtsc() - linkTimeStart));
+    
+    ScratchArena scratch;
+    
+    if(cmdLineArgs.useTildeLinker)  // Tilde backend linker
+    {
+        TB_ExecutableType exeType = TB_EXECUTABLE_PE;
+        
+        TB_Linker* linker = tb_linker_create(exeType, arch);
+        defer(tb_linker_destroy(linker));
+        
+        tb_linker_append_module(linker, module);
+        
+        for_array(i, objFiles)
+        {
+            // Load object file into memory and feed it to the linker
+            FILE* objContent = fopen(objFiles[i], "rb");
+            if(!objContent)
+            {
+                SetErrorColor();
+                fprintf(stderr, "Error");
+                ResetColor();
+                fprintf(stderr, ": Failed to open object file '%s', will be ignored.\n", objFiles[i]);
+            }
+            
+            TB_Slice name = { strlen(objFiles[i]), (uint8*)objFiles[i] };
+            TB_Slice content = { GetFileSize(objContent), (uint8*)objContent };
+            tb_linker_append_object(linker, name, content);
+        }
+        
+        // Append user defined object files to the module
+        
+        // C run-time library
+        //tb_linker_append_library()
+        
+        tb_linker_set_entrypoint(linker, "main");
+        
+        TB_ExportBuffer buffer = tb_linker_export(linker);
+        defer(tb_export_buffer_free(buffer));
+        
+        if(!tb_export_buffer_to_file(buffer, cmdLineArgs.outputFile))
+        {
+            SetErrorColor();
+            fprintf(stderr, "Error");
+            ResetColor();
+            fprintf(stderr, ": Failed to export executable file.\n");
+            return;
+        }
+    }
+    else  // Platform specific linker
+    {
+        // Export object file
+        TB_DebugFormat debugFmt = TB_DEBUGFMT_NONE;
+        TB_ExportBuffer buffer = tb_module_object_export(module, debugFmt);
+        defer(tb_export_buffer_free(buffer));
+        if(!tb_export_buffer_to_file(buffer, "output.o"))
+        {
+            SetErrorColor();
+            fprintf(stderr, "Error");
+            ResetColor();
+            fprintf(stderr, ": Failed to export object file.\n");
+            return;
+        }
+        
+        // Add newly created object file
+        objFiles.Append(scratch, "output.o");
+        
+        // Pass object file to linker
+        RunPlatformLinker(cmdLineArgs.outputFile, objFiles.ptr, objFiles.length);
+    }
+}
+
 TB_DebugType* Tc_ConvertToDebugType(TB_Module* module, TypeInfo* type)
 {
     // Primitive types
@@ -579,7 +603,6 @@ TB_DebugType* Tc_ConvertToDebugType(TB_Module* module, TypeInfo* type)
     TB_DebugType* structType = 0;
     Ast_StructType* astType = 0;
     
-    // TODO: Support unions
     if(type->typeId == Typeid_Struct)
     {
         astType = (Ast_StructType*)type;
@@ -619,9 +642,9 @@ TB_DebugType* Tc_ConvertProcToDebugType(TB_Module* module, TypeInfo* type)
     ScratchArena scratch;
     
     auto procDecl = (Ast_ProcType*)type;
-    int numArgs = procDecl->args.length + procDecl->retTypes.length - 1;
-    if(procDecl->retTypes.length <= 0) numArgs = procDecl->args.length;
+    int numArgs = procDecl->args.length + max(0, (int)procDecl->retTypes.length - 1);
     int numTbRets = (procDecl->retTypes.length > 0);
+    
     TB_DebugType* procType = tb_debug_create_func(module, TB_CDECL, numArgs, numTbRets, false);
     TB_DebugType** paramTypesToFill = tb_debug_func_params(procType);
     TB_DebugType** returnTypesToFill = tb_debug_func_returns(procType);
