@@ -1,6 +1,6 @@
 # Ryu Programming Language
 
-**Warning:** The project only works on Windows at the moment, though it will be supported eventually.
+**Warning:** The project only works on Windows at the moment, though other platforms will be supported eventually.
 
 **Warning:** This project is still in development and is not yet fully usable (if not for small toy projects). It's not really meant to be fully-fledged and compete with other programming languages right now. It was originally meant to be a valuable learning experience for me, and hopefully others could learn from this too.
 
