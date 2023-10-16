@@ -44,7 +44,7 @@ Ast_Defer* ParseDefer(Parser* p);
 Ast_Return* ParseReturn(Parser* p);
 template<typename t> Ast_Stmt* ParseJump(Parser* p);  // Used for break, continue, and fallthrough
 Ast_Block* ParseBlock(Parser* p);
-Ast_Block* ParseOneOrMoreStmtBlock(Parser* p);  // Used for blocks in e.g. if stmts
+void ParseOneOrMoreStmtBlock(Parser* p, Ast_Block* outBlock);  // Used for blocks in e.g. if stmts
 
 Ast_Expr* ParseExpression(Parser* p, int prec = INT_MAX, bool ignoreEqual = false);
 Ast_Expr* ParsePostfixExpression(Parser* p);

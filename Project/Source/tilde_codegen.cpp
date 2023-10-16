@@ -81,7 +81,7 @@ void Tc_GenSymbol(Tc_Context* ctx, Interp_Symbol* symbol)
             auto proc = (Ast_ProcDecl*)symbol->decl;
             auto& sym = ctx->symbols[proc->symIdx];
             
-            TB_Function* tbProc = tb_function_create(ctx->module, sym.name.length, sym.name.ptr, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
+            TB_Function* tbProc = tb_function_create(ctx->module, sym.name.length, sym.name.ptr, TB_LINKAGE_PUBLIC);
             
             res = (TB_Symbol*)tbProc;
             break;
@@ -129,7 +129,7 @@ void Tc_GenProc(Tc_Context* ctx, Interp_Proc* proc)
     
     size_t paramCount = 0;
     TB_FunctionPrototype* proto = tb_prototype_from_dbg(ctx->module, procType);
-    tb_function_set_prototype(curProc, proto, 0);
+    tb_function_set_prototype(curProc, tb_module_get_text(ctx->module), proto, 0);
     
     Tc_InitRegs(ctx, proc->maxReg+1, proc->instrs.length);
     defer(Tc_FreeRegs(ctx));

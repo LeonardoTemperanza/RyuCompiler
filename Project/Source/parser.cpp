@@ -418,12 +418,17 @@ Ast_If* ParseIf(Parser* p)
     
     EatRequiredToken(p, Tok_If);
     
+    stmt->thenBlock = Ast_MakeNode<Ast_Block>(p->arena, p->at);
+    stmt->thenBlock->enclosing = p->scope;
+    p->scope = stmt->thenBlock;
+    defer(p->scope = p->scope->enclosing);
+    
     EatRequiredToken(p, '(');
     auto declSpecs = ParseDeclSpecs(p);
     stmt->condition = ParseDeclOrExpr(p, declSpecs);
     EatRequiredToken(p, ')');
     
-    stmt->thenBlock = ParseOneOrMoreStmtBlock(p);
+    ParseOneOrMoreStmtBlock(p, stmt->thenBlock);
     
     if(p->at->type == Tok_Else)
     {
@@ -440,6 +445,11 @@ Ast_For* ParseFor(Parser* p)
     
     auto stmt = Ast_MakeNode<Ast_For>(p->arena, p->at);
     EatRequiredToken(p, Tok_For);
+    
+    stmt->body = Ast_MakeNode<Ast_Block>(p->arena, p->at);
+    stmt->body->enclosing = p->scope;
+    p->scope = stmt->body;
+    defer(p->scope = p->scope->enclosing);
     
     EatRequiredToken(p, '(');
     if(p->at->type != ';')
@@ -463,7 +473,7 @@ Ast_For* ParseFor(Parser* p)
     
     EatRequiredToken(p, ')');
     
-    stmt->body = ParseOneOrMoreStmtBlock(p);
+    ParseOneOrMoreStmtBlock(p, stmt->body);
     return stmt;
 }
 
@@ -475,12 +485,17 @@ Ast_While* ParseWhile(Parser* p)
     
     EatRequiredToken(p, Tok_While);
     
+    stmt->doBlock = Ast_MakeNode<Ast_Block>(p->arena, p->at);
+    stmt->doBlock->enclosing = p->scope;
+    p->scope = stmt->doBlock;
+    defer(p->scope = p->scope->enclosing);
+    
     EatRequiredToken(p, '(');
     auto declSpecs = ParseDeclSpecs(p);
     stmt->condition = ParseDeclOrExpr(p, declSpecs);
     EatRequiredToken(p, ')');
     
-    stmt->doBlock = ParseOneOrMoreStmtBlock(p);
+    ParseOneOrMoreStmtBlock(p, stmt->doBlock);
     return stmt;
 }
 
@@ -608,7 +623,7 @@ Ast_Block* ParseBlock(Parser* p)
     while(p->at->type != '}' && p->at->type != Tok_EOF)
     {
         Ast_Node* stmt = ParseStatement(p);
-        block->stmts.Append(scratch.arena(), stmt);
+        block->stmts.Append(scratch, stmt);
     }
     
     block->stmts = block->stmts.CopyToArena(p->arena);
@@ -617,39 +632,33 @@ Ast_Block* ParseBlock(Parser* p)
     return block;
 }
 
-Ast_Block* ParseOneOrMoreStmtBlock(Parser* p)
+void ParseOneOrMoreStmtBlock(Parser* p, Ast_Block* outBlock)
 {
     ProfileFunc(prof);
     
-    auto thenBlock = Ast_MakeNode<Ast_Block>(p->arena, p->at);
-    thenBlock->enclosing = p->scope;
-    p->scope = thenBlock;
-    defer(p->scope = p->scope->enclosing);
-    
     if(p->at->type == '{')  // Multiple statements
     {
+        outBlock->where = p->at;
         ++p->at;
         
         ScratchArena scratch;
         while(p->at->type != '}' && p->at->type != Tok_EOF)
         {
             Ast_Node* stmt = ParseStatement(p);
-            thenBlock->stmts.Append(scratch.arena(), stmt);
+            outBlock->stmts.Append(scratch.arena(), stmt);
         }
         
-        thenBlock->stmts = thenBlock->stmts.CopyToArena(p->arena);
+        outBlock->stmts = outBlock->stmts.CopyToArena(p->arena);
         
         EatRequiredToken(p, '}');
     }
     else  // Only one statement
     {
-        thenBlock->stmts = { 0, 1 };
+        outBlock->stmts = { 0, 1 };
         auto stmtPtr = Arena_AllocVarPack(p->arena, Ast_Node*);
         *stmtPtr = ParseStatement(p);
-        thenBlock->stmts.ptr = stmtPtr;
+        outBlock->stmts.ptr = stmtPtr;
     }
-    
-    return thenBlock;
 }
 
 // NOTE: All unary operators always have higher precedence over

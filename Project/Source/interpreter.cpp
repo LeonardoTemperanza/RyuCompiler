@@ -497,6 +497,7 @@ void Interp_ConvertFor(Interp_Builder* builder, Ast_For* stmt)
         Interp_ConvertBlock(builder, stmt->body);
         bool blockGenJump = builder->genJump;
         builder->genJump = false;
+        builder->genJump = false;
         
         Interp_EndOfExpression(builder);
         

@@ -1,55 +1,45 @@
 
+// When importing modules is implemented, there will be
+// a "cstd.ryu" file that will include the c standard library
+proc malloc(uint64 size)->^raw;
 proc putchar(int c)->int c;
-proc puts(^char str)->int numChars;
-
-proc free(^raw ptr);
-
-struct Person
-{
-    int64 id;
-    Town t;
-}
 
 proc main()->int
 {
-    LinkedList ll = InitLinkedList();
-    defer FreeLinkedList(&ll);
-    
+    LinkedList ll;
+    // Initting a linked list with InitLinkedList triggers a bug in Tilde Backend.
+    ll.first = ll.last = 0;
     AddNode(&ll, 97);
     AddNode(&ll, 98);
     AddNode(&ll, 99);
-    AddNode(&ll, 99);
-    AddNode(&ll, 99);
-    AddNode(&ll, 99);
-    AddNode(&ll, 99);
-    AddNode(&ll, 99);
-    AddNode(&ll, 99);
-    AddNode(&ll, 99);
+    AddNode(&ll, 100);
+    AddNode(&ll, 101);
     
     PrintLinkedList(ll);
     
     return 0;
 }
 
-proc InitLinkedList()->LinkedList
+struct LinkedList
 {
-    LinkedList l;
-    l.first = 0;
-    l.last = 0;
-    return l;
+    ^Node first;
+    ^Node last;
 }
 
-proc FreeLinkedList(^LinkedList ll)
+struct Node
 {
-    ^Node it = ll.first;
-    while(it)
-    {
-        ^Node next = it.next;
-        free(it);
-        it = next;
-    }
-    
-    ll.first = ll.last = 0;
+    ^Node next;
+    int64 a;
+    int64 b;
+    int64 id;
+}
+
+proc InitLinkedList()->LinkedList
+{
+    LinkedList ll;
+    ll.first = 0;
+    ll.last = 0;
+    return ll;
 }
 
 proc AddNode(^LinkedList ll, int16 id)
@@ -75,91 +65,4 @@ proc PrintLinkedList(LinkedList list)
     {
         putchar(n.id);
     }
-    
-    
-    /*
-    ^Node n = list.first;
-    if(n)
-    {
-        putchar(n.id);
-        n = n.next;
-        if(n)
-        {
-            putchar(n.id);
-            n = n.next;
-            if(n)
-            {
-                putchar(n.id);
-                n = n.next;
-                if(n)
-                {
-                    putchar(n.id);
-                    n = n.next;
-                    if(n)
-                    {
-                        putchar(n.id);
-                        n = n.next;
-                        if(n)
-                        {
-                            putchar(n.id);
-                            n = n.next;
-                            if(n)
-                            {
-                                putchar(n.id);
-                                n = n.next;
-                                if(n)
-                                {
-                                    putchar(n.id);
-                                    n = n.next;
-                                    if(n)
-                                    {
-                                        putchar(n.id);
-                                        n = n.next;
-                                        if(n)
-                                        {
-                                            putchar(n.id);
-                                            n = n.next;
-                                            if(n)
-                                            {
-                                                
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-*/
-}
-
-proc malloc(uint64 size)->^raw;
-
-struct LinkedList
-{
-    ^Node first;
-    ^Node last;
-};
-
-struct Node
-{
-    ^Node next;
-    Person p;
-    int64 id;
-}
-
-struct Town
-{
-    String name;
-    int64 numInhabitants;
-}
-
-struct String
-{
-    ^char ptr;
-    int64 length;
 }

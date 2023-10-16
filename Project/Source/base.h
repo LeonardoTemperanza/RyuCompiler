@@ -12,9 +12,9 @@
 #include <assert.h>
 #include <stdarg.h>
 
-// This is for C-code compatibility, the keyword restrict does
-// not exist in C++
+// This is for C-code compatibility, these keywords do not exist in C++
 #define restrict
+#define _Atomic
 
 #ifdef Debug
 #define Assert(expression) assert(expression)
