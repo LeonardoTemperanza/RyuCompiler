@@ -1,11 +1,7 @@
 
-*.exe
-*.ilk
-*.pdb
-*.obj
+**/*.exe
+**/*.ilk
+**/*.pdb
+**/*.obj
+**/*.o
 Build/Ryu.exe
-*.o
-*.ilk
-*.pdb
-*.obj
-*.exe
