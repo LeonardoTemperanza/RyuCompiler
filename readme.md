@@ -97,7 +97,7 @@ git clone --recurse-submodules https://github.com/Username-Leon/RyuCompiler
 Make sure you have Visual Studio installed. This is not just required for building, as the compiler will need `link.exe` from Visual Studio to produce the executable (unless `-tilde_linker` is specified, but that is experimental). The rest of the commands listed are assumed to be executed inside the **X64 Visual Studio Command Prompt**. If you're not familiar with it, [here's how you can find it](https://learn.microsoft.com/en-us/visualstudio/ide/reference/command-prompt-powershell?view=vs-2022).
 
 #### 2) Build Tilde Backend (Optional)
-This project is a front-end only, and uses the [Tilde Backend](https://github.com/RealNeGate/Cuik) (as well as a platform-specific linker) to generate the final executable. The `.lib` file is already included, but if you wish to build the back-end yourself, you can with the following isntructions.
+This project is a front-end only, and uses the [Tilde Backend](https://github.com/RealNeGate/Cuik) (as well as a platform-specific linker) to generate the final executable. The `.lib` file is already included, but if you wish to build the back-end yourself, you can with the following instructions.
 After having installed a Lua interpreter, just run the following command in the `/Project/Source/tilde_backend/Cuik` directory:
 
 ```bat 
