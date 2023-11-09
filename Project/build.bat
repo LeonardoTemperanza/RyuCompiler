@@ -61,12 +61,14 @@ echo Done.
 
 REM For quicker testing
 if %build_ret%==0 ( 
+echo Success.
 echo Running program:
 pushd .\TestPrograms
-ryu interp_test.ryu -emit_bc -emit_ir -o output.exe
+..\ryu.exe interp_test.ryu -emit_bc -emit_ir -o output.exe
 
 call output.exe
 
+echo.
 echo Result from program: !errorlevel!
 popd
 )

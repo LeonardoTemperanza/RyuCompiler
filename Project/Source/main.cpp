@@ -163,10 +163,7 @@ FileExtension GetExtensionFromPath(char* path, char** outExt)
     for(int i = 0; path[i] != 0; ++i)
     {
         if(path[i] == '.')
-        {
-            dotIdx = i;
-            break;
-        }
+            dotIdx = i;  // Don't break, keep going to find the last one
     }
     
     if(dotIdx == -1)
