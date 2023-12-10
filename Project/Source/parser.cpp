@@ -1409,7 +1409,7 @@ inline void ExpectedTokenError(Parser* p, Token* tok, TokenType tokType)
     else
     {
         ScratchArena scratch;
-        String tokTypeStr = TokTypeToString(tokType, scratch.arena());
+        String tokTypeStr = TokTypeToString(tokType, scratch);
         
         StringBuilder strBuilder(scratch);
         strBuilder.Append(3, StrLit("Expecting '"), tokTypeStr, StrLit("'"));

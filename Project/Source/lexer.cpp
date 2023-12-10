@@ -2,11 +2,6 @@
 #include "lexer.h"
 #include "base.h"
 
-// NOTE(Leo): To add new tokens that map to
-// a specific string just add them to this macro.
-// This is defined in such a way that it's possible
-// to temporarily define a macro "X" that can do
-// anything with these strings and types
 #define KeywordStringTokenMapping     \
 X("proc", Tok_Proc)               \
 X("operator", Tok_Operator)       \
@@ -45,7 +40,6 @@ X("true", Tok_True)               \
 X("false", Tok_False)             \
 /* Decl specifiers */             \
 X("extern", Tok_Extern)           \
-
 
 // NOTE(Leo): Order matters here (<<= before <<)
 #define OperatorStringTokenMapping \
@@ -255,14 +249,11 @@ static Token GetToken(Tokenizer* t)
             ++result.text.length;
         
         bool isKeyword = false;
-        for(int i = 0; i < StArraySize(keywordStrings); ++i)
+        TokenType match = MatchKeywords(t, result.text.length);
+        if(match != (TokenType)-1)
         {
-            if(keywordStrings[i] == result.text)
-            {
-                result.type = keywordTypes[i];
-                isKeyword = true;
-                break;
-            }
+            isKeyword = true;
+            result.type = match;
         }
         
         t->at += result.text.length;
@@ -276,8 +267,8 @@ static Token GetToken(Tokenizer* t)
     {
         // Determine which type of number it is
         int length = 0;
-        bool isFloatingPoint = false;
-        bool isDoublePrecision = false;
+        bool32 isFloatingPoint = false;
+        bool32 isDoublePrecision = false;
         
         do
         {
@@ -343,7 +334,7 @@ static Token GetToken(Tokenizer* t)
         String foundStr = { 0, 0 };
         for(int i = 0; i < StArraySize(operatorStrings); ++i)
         {
-            if(String_FirstCharsMatchEntireString(result.text.ptr, operatorStrings[i]))
+            if(StringBeginsWith(result.text.ptr, operatorStrings[i]))
             {
                 result.text.length = operatorStrings[i].length;
                 result.type = operatorTypes[i];
@@ -367,6 +358,137 @@ static Token GetToken(Tokenizer* t)
     }
     
     return result;
+}
+
+bool MatchAlpha(char* stream, char* str, int tokenLength)
+{
+    int i;
+    for(i = 0; i < tokenLength; ++i)
+    {
+        if(str[i] == 0 || str[i] != stream[i])
+            return false;
+    }
+    
+    // Only return true only if token and string
+    // have the same length
+    return str[i] == 0;
+}
+
+// NOTE: This function should be modified when adding keywords
+TokenType MatchKeywords(Tokenizer* t, int tokenLength)
+{
+    TokenType res = (TokenType)-1;
+    
+    // Simple approach for reducing the cost of
+    // keyword matching; using length instead of
+    // first letter could work too. A more complex
+    // approach would be to use a perfect hash table
+    switch(*t->at)
+    {
+        case 'b':
+        {
+            if(MatchAlpha(t->at, "bool", tokenLength))       res = Tok_Bool;
+            else if(MatchAlpha(t->at, "break", tokenLength)) res = Tok_Break;
+            
+            break;
+        }
+        case 'c':
+        {
+            if(MatchAlpha(t->at, "case", tokenLength))          res = Tok_Case;
+            else if(MatchAlpha(t->at, "continue", tokenLength)) res = Tok_Continue;
+            else if(MatchAlpha(t->at, "const", tokenLength))    res = Tok_Const;
+            else if(MatchAlpha(t->at, "cast", tokenLength))     res = Tok_Cast;
+            else if(MatchAlpha(t->at, "case", tokenLength))     res = Tok_Case;
+            else if(MatchAlpha(t->at, "char", tokenLength))     res = Tok_Char;
+            
+            break;
+        }
+        case 'd':
+        {
+            if(MatchAlpha(t->at, "do", tokenLength))           res = Tok_Do;
+            else if(MatchAlpha(t->at, "default", tokenLength)) res = Tok_Default;
+            else if(MatchAlpha(t->at, "defer", tokenLength))   res = Tok_Defer;
+            else if(MatchAlpha(t->at, "double", tokenLength))  res = Tok_Double;
+            
+            break;
+        }
+        case 'e':
+        {
+            if(MatchAlpha(t->at, "else", tokenLength))        res = Tok_Else;
+            else if(MatchAlpha(t->at, "extern", tokenLength)) res = Tok_Extern;
+            
+            break;
+        }
+        case 'f':
+        {
+            if(MatchAlpha(t->at, "for", tokenLength))              res = Tok_For;
+            else if(MatchAlpha(t->at, "float", tokenLength))       res = Tok_Float;
+            else if(MatchAlpha(t->at, "fallthrough", tokenLength)) res = Tok_Fallthrough;
+            else if(MatchAlpha(t->at, "false", tokenLength))       res = Tok_False;
+            
+            break;
+        }
+        case 'i':
+        {
+            if(MatchAlpha(t->at, "if", tokenLength))         res = Tok_If;
+            else if(MatchAlpha(t->at, "int8", tokenLength))  res = Tok_Int8;
+            else if(MatchAlpha(t->at, "int16", tokenLength)) res = Tok_Int16;
+            else if(MatchAlpha(t->at, "int32", tokenLength)) res = Tok_Int32;
+            else if(MatchAlpha(t->at, "int", tokenLength))   res = Tok_Int32;
+            else if(MatchAlpha(t->at, "int64", tokenLength)) res = Tok_Int64;
+            
+            break;
+        }
+        case 'o':
+        {
+            if(MatchAlpha(t->at, "operator", tokenLength)) res = Tok_Operator;
+            
+            break;
+        }
+        case 'p':
+        {
+            if(MatchAlpha(t->at, "proc", tokenLength)) res = Tok_Proc;
+            
+            break;
+        }
+        case 'r':
+        {
+            if(MatchAlpha(t->at, "raw", tokenLength))         res = Tok_Raw;
+            else if(MatchAlpha(t->at, "return", tokenLength)) res = Tok_Return;
+            
+            break;
+        }
+        case 's':
+        {
+            if(MatchAlpha(t->at, "switch", tokenLength))      res = Tok_Switch;
+            else if(MatchAlpha(t->at, "struct", tokenLength)) res = Tok_Struct;
+            
+            break;
+        }
+        case 't':
+        {
+            if(MatchAlpha(t->at, "true", tokenLength)) res = Tok_True;
+            
+            break;
+        }
+        case 'u':
+        {
+            if(MatchAlpha(t->at, "uint8", tokenLength))       res = Tok_Uint8;
+            else if(MatchAlpha(t->at, "uint16", tokenLength)) res = Tok_Uint16;
+            else if(MatchAlpha(t->at, "uint32", tokenLength)) res = Tok_Uint32;
+            else if(MatchAlpha(t->at, "uint64", tokenLength)) res = Tok_Uint64;
+            
+            break;
+        }
+        case 'w':
+        {
+            if(MatchAlpha(t->at, "while", tokenLength)) res = Tok_While;
+            
+            break;
+        }
+    }
+    
+    return res;
 }
 
 void PrintFileLine(Token* token, char* fileContents)
@@ -426,7 +548,8 @@ void CompileError(Tokenizer* t, Token* token, String message)
     char* fileContents = t->fileContents;
     t->lastCompileErrorNumChars = 0;
     
-    t->lastCompileErrorNumChars += fprintf(stderr, "%.*s", (int)t->path.length, t->path.ptr); fprintf(stderr, "(%d,%d): ", token->lineNum, token->sc - token->sl + 1);
+    t->lastCompileErrorNumChars += fprintf(stderr, "%.*s", (int)t->path.length, t->path.ptr); 
+    fprintf(stderr, "(%d,%d): ", token->lineNum, token->sc - token->sl + 1);
     
     SetErrorColor();
     fprintf(stderr, "Error");

@@ -150,6 +150,8 @@ inline bool IsAllowedForMiddleNum(char c);
 inline bool IsNewline(char c);
 static void EatAllWhitespace(Tokenizer* t);
 static bool FindStringInStream(char* stream, char* string);
+TokenType MatchKeywords(Tokenizer* t, int tokenLength);
+bool MatchAlpha(char* stream, char* str, int tokenLength);
 
 static void LexFile(Tokenizer* t);
 

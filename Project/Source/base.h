@@ -322,7 +322,8 @@ bool operator ==(String s1, String s2);
 bool operator ==(char* s1, String s2);
 bool operator ==(String s1, char* s2);
 
-bool String_FirstCharsMatchEntireString(char* stream, String str);
+bool StringBeginsWith(char* stream, String str);
+bool StringBeginsWith(char* stream, char* str);
 
 // Others
 // Defer, used to execute anything at the end of the scope
@@ -381,6 +382,61 @@ Defer<F> DeferFunc(F&& f)
 //    // delete will be executed here
 //    }
 
+
+// Alternative pointers
+
+// Self-relative 32-bit pointer (Taken from: https://www.gingerbill.org/article/2020/05/17/relative-pointers)
+template<typename t>
+struct RelPtr
+{
+    int32 offset;
+    
+    cforceinline RelPtr() {}
+    cforceinline RelPtr(t* ptr) { this->operator=(ptr); }
+    
+    // NOTE: @UB This stuff is technically UB, but most compilers handle it as expected.
+    cforceinline t* operator ->() { return offset? (t*)(&offset + offset) : nullptr; }
+    cforceinline t* operator * () { return *this->(operator->)(); }
+    
+    cforceinline void operator ++() { offset += sizeof(t); }
+    cforceinline void operator =(t* ptr) { offset = ptr ? (int32)((char*)ptr - (char*)&offset) : 0; }
+};
+
+template<typename t>
+cforceinline RelPtr<t> operator +(RelPtr<t> ptr1, RelPtr<t> ptr2)
+{
+    RelPtr<t> res;
+    res.offset = ptr1.offset + ptr2.offset;
+    return res;
+}
+
+template<typename t>
+cforceinline RelPtr<t> operator -(RelPtr<t> ptr1, RelPtr<t> ptr2)
+{
+    RelPtr<t> res;
+    res.offset = ptr1.offset - ptr2.offset;
+    return res;
+}
+
+// Used for copying chunks of memory
+struct MemRange
+{
+    void* start;
+    int64 offset;
+};
+
+#if 0
+int intTest;
+RelPtr<int> intPtr = &intTest;
+void test()
+{
+    intPtr = &intTest;
+    intPtr = intPtr + intPtr;
+    intPtr = intPtr - intPtr;
+    
+    ++intPtr;
+}
+#endif
 
 // Using this quicksort implementation so that comparisons can be inlined
 

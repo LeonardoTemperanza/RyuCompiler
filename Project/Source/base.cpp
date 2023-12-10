@@ -591,8 +591,9 @@ bool operator ==(char* s1, String s2)
     return s1[i] == 0;
 }
 
-// Exits if it sees a null terminator
-bool String_FirstCharsMatchEntireString(char* stream, String str)
+// Exits if it sees a null terminator,
+// only checks if the first 
+bool StringBeginsWith(char* stream, String str)
 {
     for(int i = 0; i < str.length; ++i)
     {
@@ -603,7 +604,7 @@ bool String_FirstCharsMatchEntireString(char* stream, String str)
     return true;
 }
 
-bool String_FirstCharsMatchEntireString(String stream, char* str)
+bool StringBeginsWith(String stream, char* str)
 {
     for(int i = 0; str[i] != 0; ++i)
     {
