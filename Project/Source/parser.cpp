@@ -61,14 +61,14 @@ void AddDeclToScope(Ast_Block* block, Ast_Declaration* decl)
         
         for_array(i, block->decls)
         {
-            block->declsTable.Add(block->decls[i]->name, block->decls[i]);
+            block->declsTable.Add(block->decls[i]->name.hash, block->decls[i]);
         }
         
-        block->declsTable.Add(decl->name, decl);
+        block->declsTable.Add(decl->name.hash, decl);
     }
     else if(block->flags & Block_UseHashTable)
     {
-        block->declsTable.Add(decl->name, decl);
+        block->declsTable.Add(decl->name.hash, decl);
     }
     
     block->decls.Append(decl);
@@ -1176,14 +1176,17 @@ Ast_StructType ParseStructType(Parser* p, Token** outIdent)
     decl.memberTypes      = types.CopyToArena(p->arena);
     decl.memberNameTokens = tokens.CopyToArena(p->arena);
     
-    decl.memberNames.ptr    = Arena_AllocArrayPack(p->arena, tokens.length, Atom*);
+    decl.memberNames.ptr    = Arena_AllocArrayPack(p->arena, tokens.length, HashedString);
     decl.memberNames.length = tokens.length;
     
     decl.memberOffsets.ptr    = Arena_AllocArrayPack(p->arena, types.length, uint32);
     decl.memberOffsets.length = types.length;
     
+    //for_array(i, decl.memberNames)
+    //decl.memberNames[i] = decl.memberNameTokens[i]->ident;
+    
     for_array(i, decl.memberNames)
-        decl.memberNames[i] = decl.memberNameTokens[i]->ident;
+        decl.memberNames[i] = decl.memberNameTokens[i]->ident; 
     
     EatRequiredToken(p, '}');
     return decl;

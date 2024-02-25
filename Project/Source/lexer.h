@@ -2,7 +2,7 @@
 #pragma once
 
 #include "base.h"
-#include "atom.h"
+//#include "atom.h"
 
 // NOTE(Leo): ASCII characters are reserved in the enum
 // space, so that they can be used as token types. For instance,
@@ -105,12 +105,16 @@ struct Token
     uint32 sl, sc;  // Start of line, starting character
     uint32 ec;      // end character
     uint32 lineNum;
-    String text;
+    
+    union
+    {
+        String text;
+        HashedString ident;
+    };
     
     // Additional information
     union
     {
-        Atom* ident;
         int64 intValue;
         float floatValue;
         double doubleValue;
@@ -129,8 +133,6 @@ struct Tokenizer
     
     Arena* arena;
     Slice<Token> tokens = { 0, 0 };
-    
-    AtomTable interner;
     
     // Used for the not very good "Continue" functions
     bool compileErrorPrinted = false;

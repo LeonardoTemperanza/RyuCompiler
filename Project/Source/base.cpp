@@ -577,9 +577,27 @@ bool operator ==(String s1, char* s2)
 
 // Copied from the operator above because another
 // function call might slow down the program if lots
-// of string compares are being performed
+// of string compares are being performed (on debug
+// builds optimizations are disabled)
 bool operator ==(char* s1, String s2)
 {
+    int i = 0;
+    while(i < s2.length)
+    {
+        if(s1[i] == 0 || s2[i] != s1[i])
+            return false;
+        ++i;
+    }
+    
+    return s1[i] == 0;
+}
+
+inline bool operator ==(HashedString s1, HashedString s2)
+{
+    // Fast path, the hashes match
+    if(s1.hash == s2.hash) return true;
+    
+    // Slow path, regular string compare
     int i = 0;
     while(i < s2.length)
     {

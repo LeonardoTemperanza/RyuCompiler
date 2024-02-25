@@ -11,7 +11,7 @@
 
 #include "base.h"
 #include "dependency_graph.h"
-#include "atom.h"
+//#include "atom.h"
 
 // This stuff is @temporary
 struct TB_Node;
@@ -299,7 +299,10 @@ struct Ast_Block : public Ast_Stmt
     // and detect "use before decl" scenarios.
     Array<Ast_Declaration*> decls;
     // When the array gets too big, a table is used instead.
-    HashTable<Atom*, Ast_Declaration*> declsTable;
+    // (Key is just a hash). When this is constructed, all strings
+    // are hashed beforehand by the lexer, so there's no need to
+    // compute the hash for this.
+    HashTable<int64, Ast_Declaration*> declsTable;
     
     Ast_Block* enclosing = 0;
     Slice<Ast_Node*> stmts = { 0, 0 };
@@ -443,7 +446,7 @@ struct Ast_IdentType : public TypeInfo
 {
     Ast_IdentType() { typeId = Typeid_Ident; };
     
-    Atom* name;
+    HashedString name;
     
     Slice<Ast_Expr*> polyParams = { 0, 0 };
     
@@ -455,8 +458,8 @@ struct Ast_StructType : public TypeInfo
 {
     Ast_StructType() { typeId = Typeid_Struct; };
     
-    Slice<TypeInfo*> memberTypes = { 0, 0 };
-    Slice<Atom*>     memberNames = { 0, 0 };
+    Slice<TypeInfo*>    memberTypes = { 0, 0 };
+    Slice<HashedString> memberNames = { 0, 0 };
     
     // For errors
     Slice<Token*> memberNameTokens = { 0, 0 };
@@ -472,7 +475,7 @@ struct Ast_Declaration : public Ast_Node
     Ast_DeclSpec declSpecs;
     Token* typeTok;
     TypeInfo* type;
-    Atom* name;
+    HashedString name;
     
     // Codegen
     TB_Node* tildeNode;
@@ -588,7 +591,7 @@ struct Ast_IdentExpr : public Ast_Expr
 {
     Ast_IdentExpr() { kind = AstKind_Ident; };
     
-    Atom* name;
+    HashedString name;
     
     // Filled in by the typechecker
     Ast_Declaration* declaration = 0;
@@ -600,7 +603,7 @@ struct Ast_MemberAccess : public Ast_Expr
     
     Ast_Expr* target;
     
-    Atom* memberName;
+    HashedString memberName;
     
     // Filled in by the typechecker
     Ast_StructType* structDecl = 0;

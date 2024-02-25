@@ -96,7 +96,6 @@ int main(int argCount, char** argValue)
     
     Tokenizer tokenizer = InitTokenizer(&astArena, &internArena, fileContents, { filePaths.srcFiles[0], (int64)strlen(filePaths.srcFiles[0]) });
     Parser parser = { &astArena, &tokenizer };
-    parser.internArena = &internArena;
     parser.entityArena = &entityArena;
     
     // Main stuff

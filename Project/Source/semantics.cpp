@@ -1099,7 +1099,7 @@ bool CheckMemberAccess(Typer* t, Ast_MemberAccess* expr)
     
     if(idx == -1)
     {
-        MemberNotFoundError(t, expr->where, expr->memberName->s, expr->target->where->text);
+        MemberNotFoundError(t, expr->where, expr->memberName.str, expr->target->where->text);
         return false;
     }
     
@@ -1379,7 +1379,7 @@ cforceinline bool ApplyOrderConstraint(Ast_Declaration* decl)
 // This will later use a hash-table.
 // Each scope will have its own hash-table, and the search will just be
 // a linked-list traversal of hash-tables (or arrays if the number of decls is low)
-Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Token* where, Atom* ident)
+Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Token* where, HashedString ident)
 {
     ProfileFunc(prof);
     
@@ -1387,14 +1387,17 @@ Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Token* where, Atom*
     {
         if(curScope->flags & Block_UseHashTable)
         {
-            uint32 hash = curScope->declsTable.HashFunction((uintptr)ident);
+            //uint32 hash = curScope->declsTable.HashFunction(ident.hash);
+            int64 hash = ident.hash;
             for(int i = 0; ; ++i)
             {
                 uint32 idx = HashTable_ProbingScheme(hash, i, curScope->declsTable.capacity);
                 auto& entry = curScope->declsTable.entries[idx];
                 if(!entry.occupied) break;
                 
-                if(entry.key == ident)
+                // @temporary
+                // Consider just using a Slice or a DynArray instead here
+                if(entry.key == ident.hash && entry.val->name.str == ident.str)
                 {
                     bool applyOrderConstraint = ApplyOrderConstraint(entry.val);
                     if(applyOrderConstraint && entry.val->where >= where)
@@ -1427,7 +1430,7 @@ bool CheckNotAlreadyDeclared(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
 {
     if(scope->flags & Block_UseHashTable)
     {
-        uint32 hash = scope->declsTable.HashFunction((uintptr)decl->name);
+        int64 hash = decl->name.hash;
         for(int i = 0; i <= scope->declsTable.count + 1; ++i)
         {
             Assert(i != scope->declsTable.count + 1);
@@ -1436,7 +1439,7 @@ bool CheckNotAlreadyDeclared(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
             auto& entry = scope->declsTable.entries[idx];
             if(!entry.occupied) break;
             
-            if(entry.key == decl->name && entry.val->where < decl->where)
+            if(entry.key == decl->name.hash && entry.val->name.str == decl->name.str && entry.val->where < decl->where)
             {
                 SemanticError(t, decl->where, StrLit("Redefinition, this symbol was already defined in this scope, ..."));
                 SemanticErrorContinue(t, scope->decls[i]->where, StrLit("... here"));
@@ -1783,7 +1786,7 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
             default: Assert(false); break;
             case Typeid_Ident:
             {
-                String ident = ((Ast_IdentType*)type)->name->s;
+                String ident = ((Ast_IdentType*)type)->name.str;
                 strBuilder.Append(ident);
                 quit = true;
                 break;

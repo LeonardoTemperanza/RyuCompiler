@@ -966,7 +966,7 @@ void Interp_PrintInstr(Interp_Proc* proc, Interp_Instr* instr, Slice<Interp_Symb
                 printf("NULL");
             else
             {
-                String str = syms[instr->symAddress.symbol].decl->name->s;
+                String str = syms[instr->symAddress.symbol].decl->name.str;
                 printf("%.*s", (int)str.length, str.ptr);
             }
             break;

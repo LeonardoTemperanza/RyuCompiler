@@ -17,9 +17,6 @@ struct Parser
     Arena* entityArena;
     Slice<Dg_Entity> entities;
     
-    Arena* internArena;
-    Slice<ToIntern> internArray = { 0, 0 };
-    
     // False if in error mode
     bool status = true;
 };

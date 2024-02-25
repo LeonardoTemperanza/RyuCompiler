@@ -93,8 +93,6 @@ const TokenType operatorTypes[] =
 };
 #undef X
 
-
-
 Tokenizer InitTokenizer(Arena* arena, Arena* internArena, char* fileContents, String path)
 {
     Tokenizer t;
@@ -102,7 +100,6 @@ Tokenizer InitTokenizer(Arena* arena, Arena* internArena, char* fileContents, St
     t.fileContents = fileContents;
     t.at = fileContents;
     t.path = path;
-    t.interner = InitAtomTable(internArena);
     return t;
 }
 
@@ -236,6 +233,7 @@ static Token GetToken(Tokenizer* t)
     result.sc      = t->at - t->fileContents;
     result.ec      = result.sc;
     result.text    = { t->at, 1 };
+    result.ident.hash = 0;
     
     if(t->at[0] == 0)  // String terminator
     {
@@ -259,9 +257,8 @@ static Token GetToken(Tokenizer* t)
         t->at += result.text.length;
         result.ec = result.sc + result.text.length - 1;
         
-        // Intern the string
-        if(!isKeyword)
-            result.ident = Atom_GetOrAddAtom(&t->interner, result.text, HashString(result.text));
+        // Fill in the hash for faster string comparisons
+        if(!isKeyword) result.ident.hash = HashString(result.text);
     }
     else if(IsNumeric(t->at[0]))  // Numbers
     {

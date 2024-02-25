@@ -209,6 +209,29 @@ struct String
 #endif
 };
 
+struct HashedString
+{
+    union
+    {
+        struct
+        {
+            char* ptr;
+            int64 length;
+        };
+        String str;
+    };
+    
+    int64 hash;
+    
+#ifdef BoundsChecking
+    // For reading the value
+    inline char operator [](int idx) const { Assert(idx < length); return ptr[idx]; };
+#else
+    // For reading the value
+    inline char operator [](int idx) const { return ptr[idx]; };
+#endif
+};
+
 // Hash function from the stb library. Could be better but it's fine for now
 uint64 HashString(String str, uint64 seed = 0x31415926);
 uint64 HashString(char* str, uint64 seed = 0x31415926);
@@ -424,19 +447,6 @@ struct MemRange
     void* start;
     int64 offset;
 };
-
-#if 0
-int intTest;
-RelPtr<int> intPtr = &intTest;
-void test()
-{
-    intPtr = &intTest;
-    intPtr = intPtr + intPtr;
-    intPtr = intPtr - intPtr;
-    
-    ++intPtr;
-}
-#endif
 
 // Using this quicksort implementation so that comparisons can be inlined
 

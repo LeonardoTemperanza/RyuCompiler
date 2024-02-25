@@ -95,7 +95,7 @@ ComputeSize_Ret ComputeStructSize(Typer* t, Ast_StructType* declStruct, Token* e
 
 // Identifier resolution
 bool ApplyOrderConstraint(Ast_Declaration* decl);
-Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Token* where, Atom* ident);
+Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Token* where, HashedString ident);
 bool CheckNotAlreadyDeclared(Typer* t, Ast_Block* scope, Ast_Declaration* decl);
 
 // Types

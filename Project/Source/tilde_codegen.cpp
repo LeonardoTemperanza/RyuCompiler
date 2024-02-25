@@ -89,7 +89,7 @@ void Tc_GenSymbol(Tc_Context* ctx, Interp_Symbol* symbol)
         case Interp_ExternSym:
         {
             auto decl = (Ast_Declaration*)symbol->decl;
-            TB_External* tbExtern = tb_extern_create(ctx->module, decl->name->s.length, decl->name->s.ptr, TB_EXTERNAL_SO_EXPORT);
+            TB_External* tbExtern = tb_extern_create(ctx->module, decl->name.length, decl->name.ptr, TB_EXTERNAL_SO_EXPORT);
             
             res = (TB_Symbol*)tbExtern;
             break;
@@ -613,7 +613,7 @@ TB_DebugType* Tc_ConvertToDebugType(TB_Module* module, TypeInfo* type)
         auto identType = (Ast_IdentType*)type;
         auto structDef = identType->structDef;
         astType = Ast_GetStructType(structDef);
-        structType = tb_debug_create_struct(module, structDef->name->s.length, structDef->name->s.ptr);
+        structType = tb_debug_create_struct(module, structDef->name.length, structDef->name.ptr);
     }
     
     if(structType)
@@ -623,7 +623,7 @@ TB_DebugType* Tc_ConvertToDebugType(TB_Module* module, TypeInfo* type)
         for_array(i, astType->memberTypes)
         {
             auto fillWith = Tc_ConvertToDebugType(module, astType->memberTypes[i]); 
-            types[i] = tb_debug_create_field(module, fillWith, astType->memberNames[i]->s.length, astType->memberNames[i]->s.ptr, astType->memberOffsets[i]);
+            types[i] = tb_debug_create_field(module, fillWith, astType->memberNames[i].length, astType->memberNames[i].ptr, astType->memberOffsets[i]);
         }
         
         tb_debug_record_end(structType, astType->size, astType->align);
@@ -667,8 +667,8 @@ TB_DebugType* Tc_ConvertProcToDebugType(TB_Module* module, TypeInfo* type)
         TypeInfo* curType = procDecl->args[i]->type;
         auto debugType = Tc_ConvertToDebugType(module, curType);
         // Proc field offset is ignored, so it can be 0
-        paramTypesToFill[j] = tb_debug_create_field(module, debugType, procDecl->args[i]->name->s.length,
-                                                    procDecl->args[i]->name->s.ptr, 0);
+        paramTypesToFill[j] = tb_debug_create_field(module, debugType, procDecl->args[i]->name.length,
+                                                    procDecl->args[i]->name.ptr, 0);
     }
     
     if(procDecl->retTypes.length > 0)
