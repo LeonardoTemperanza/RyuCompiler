@@ -418,12 +418,36 @@ struct RelPtr
     cforceinline RelPtr(t* ptr) { this->operator=(ptr); }
     
     // NOTE: @UB This stuff is technically UB, but most compilers handle it as expected.
-    cforceinline t* operator ->() { return offset? (t*)(&offset + offset) : nullptr; }
-    cforceinline t* operator * () { return *this->(operator->)(); }
+    cforceinline t* operator ->() { return offset? (t*)((char*)&offset + offset) : nullptr; }
+    cforceinline t& operator * () { return *this->operator->(); }
     
     cforceinline void operator ++() { offset += sizeof(t); }
+    cforceinline void operator --() { offset -= sizeof(t); }
+    cforceinline void operator +=(int32 inc) { offset += sizeof(t)*inc; }
+    cforceinline void operator -=(int32 dec) { offset -= sizeof(t)*dec; }
     cforceinline void operator =(t* ptr) { offset = ptr ? (int32)((char*)ptr - (char*)&offset) : 0; }
 };
+
+#if 0
+void test()
+{
+    RelPtr<float> ptrs[10];
+    float array[10];
+    for(int i = 0; i < 10; ++i)
+        array[i] = (float)i;
+    
+    for(int i = 0; i < 10; ++i)
+        ptrs[i] = &array[i];
+    
+    float sum = 0.0f;
+    for(int i = 0; i < 10; ++i)
+    {
+        sum += *ptrs[i];
+    }
+    
+    printf("Sum: %f\n", sum);
+}
+#endif
 
 template<typename t>
 cforceinline RelPtr<t> operator +(RelPtr<t> ptr1, RelPtr<t> ptr2)
