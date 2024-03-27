@@ -1,8 +1,6 @@
 
 #pragma once
 
-#include "base.h"
-
 // This provides allocation strategies that are
 // utilized throughout the project
 
@@ -14,7 +12,6 @@
 // (good for SSE, bad for cache locality?)
 // The second one seems to be better because when good
 // cache locality is needed, things are usually stored in an array anyway.
-
 
 #define Arena_FromStack(arenaPtr, stackVar) \
 (decltype(stackVar)*)Arena_AllocAndCopy((arenaPtr), &(stackVar), sizeof(stackVar))
@@ -51,7 +48,7 @@ new (Arena_Alloc((arenaPtr), sizeof(type), (alignment))) type
 
 struct Arena
 {
-    uchar* buffer;
+    unsigned char* buffer;
     size_t length;
     size_t offset;
     size_t prevOffset;
@@ -61,6 +58,8 @@ struct Arena
     // commits (useful for stack-allocated arenas)
     size_t commitSize;
 };
+
+#include "base.h"
 
 // Can be used like:
 // TempArenaMemory tempGaurd = Arena_TempBegin(arena);

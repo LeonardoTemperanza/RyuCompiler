@@ -62,17 +62,17 @@ void DeferStringInterning(Parser* p, String string, Atom** atom);
 // Operators
 
 // NOTE: Declaration keywords need to be inserted here
-inline bool IsTokStartOfDecl(TokenType tokType)
+inline bool IsTokStartOfDecl(TokenKind tokType)
 {
     return tokType == '^' || tokType == '[' || tokType == Tok_Struct || tokType == Tok_Proc
         || tokType == Tok_Extern || tokType == Tok_Var;
 }
 
-int GetOperatorPrec(TokenType tokType);
-bool IsOpPrefix(TokenType tokType);
-bool IsOpPostfix(TokenType tokType);
-bool IsOperatorLToR(TokenType tokType);
-bool IsTokOperator(TokenType tokType);
+int GetOperatorPrec(TokenKind tokType);
+bool IsOpPrefix(TokenKind tokType);
+bool IsOpPostfix(TokenKind tokType);
+bool IsOperatorLToR(TokenKind tokType);
+bool IsTokOperator(TokenKind tokType);
 
 // Also skips nested parentheses
 Token* SkipParens(Token* start, char openParen, char closeParen);
@@ -81,10 +81,10 @@ inline void ParseError(Parser* p, Token* token, String message);
 inline void ParseError(Parser* p, Token* token, int numStrings, char* message1, ...);
 inline void ParseError(Parser* p, Token* token, char* message);
 
-inline Token* EatRequiredToken(Parser* p, TokenType tokType);
+inline Token* EatRequiredToken(Parser* p, TokenKind tokType);
 inline Token* EatRequiredToken(Parser* p, char tokType);
 
-inline void ExpectedTokenError(Parser* p, TokenType tokType);
+inline void ExpectedTokenError(Parser* p, TokenKind tokType);
 inline void ExpectedTokenError(Parser* p, char tokType);
-inline void ExpectedTokenError(Parser* p, Token* tok, TokenType tokType);
+inline void ExpectedTokenError(Parser* p, Token* tok, TokenKind tokType);
 inline void ExpectedTokenError(Parser* p, Token* tok, char tokType);

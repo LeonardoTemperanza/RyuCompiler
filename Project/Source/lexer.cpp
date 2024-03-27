@@ -73,7 +73,7 @@ const String keywordStrings[] =
 #undef X
 
 #define X(_, tokenType) { (tokenType) },
-const TokenType keywordTypes[] =
+const TokenKind keywordTypes[] =
 {
     KeywordStringTokenMapping
 };
@@ -87,7 +87,7 @@ const String operatorStrings[] =
 #undef X
 
 #define X(_, tokenType) { (tokenType) },
-const TokenType operatorTypes[] =
+const TokenKind operatorTypes[] =
 {
     OperatorStringTokenMapping
 };
@@ -217,7 +217,7 @@ static void LexFile(Tokenizer* t)
         Token tok = GetToken(t);
         t->tokens.Append(t->arena, tok);
         
-        if(tok.type == Tok_EOF || tok.type == Tok_Error)
+        if(tok.kind == Tok_EOF || tok.kind == Tok_Error)
             break;
     }
 }
@@ -227,7 +227,7 @@ static Token GetToken(Tokenizer* t)
     EatAllWhitespace(t);
     
     Token result;
-    result.type    = Tok_Error;
+    result.kind    = Tok_Error;
     result.sl      = t->startOfCurLine;
     result.lineNum = t->curLineNum;
     result.sc      = t->at - t->fileContents;
@@ -237,21 +237,21 @@ static Token GetToken(Tokenizer* t)
     
     if(t->at[0] == 0)  // String terminator
     {
-        result.type = Tok_EOF;
+        result.kind = Tok_EOF;
         result.ec = result.sc;
     }
     else if(IsAllowedForStartIdent(t->at[0]))  // Identifiers or keywords
     {
-        result.type = Tok_Ident;
+        result.kind = Tok_Ident;
         for(int i = 1; IsAllowedForMiddleIdent(t->at[i]); ++i)
             ++result.text.length;
         
         bool isKeyword = false;
-        TokenType match = MatchKeywords(t, result.text.length);
-        if(match != (TokenType)-1)
+        TokenKind match = MatchKeywords(t, result.text.length);
+        if(match != (TokenKind)-1)
         {
             isKeyword = true;
-            result.type = match;
+            result.kind = match;
         }
         
         t->at += result.text.length;
@@ -282,7 +282,7 @@ static Token GetToken(Tokenizer* t)
         {
             if(t->at[length] == 'd')
             {
-                result.type = Tok_DoubleNum;
+                result.kind = Tok_DoubleNum;
                 char* endPtr;
                 result.doubleValue = strtod(t->at, &endPtr);
                 Assert(endPtr == t->at + length);
@@ -292,7 +292,7 @@ static Token GetToken(Tokenizer* t)
             }
             else
             {
-                result.type = Tok_FloatNum;
+                result.kind = Tok_FloatNum;
                 char* endPtr;
                 result.floatValue = strtof(t->at, &endPtr);
                 Assert(endPtr == t->at + length);
@@ -304,7 +304,7 @@ static Token GetToken(Tokenizer* t)
         }
         else
         {
-            result.type = Tok_IntNum;
+            result.kind = Tok_IntNum;
             char* endPtr;
             result.intValue = strtoll(t->at, &endPtr, 10);
             if(endPtr == t->at)
@@ -313,7 +313,7 @@ static Token GetToken(Tokenizer* t)
                 fprintf(stderr, "Error");
                 ResetColor();
                 fprintf(stderr, ": Unidentified token\n");
-                result.type = Tok_Error;
+                result.kind = Tok_Error;
                 result.doubleValue = 0.0f;
             }
             else
@@ -334,7 +334,7 @@ static Token GetToken(Tokenizer* t)
             if(StringBeginsWith(result.text.ptr, operatorStrings[i]))
             {
                 result.text.length = operatorStrings[i].length;
-                result.type = operatorTypes[i];
+                result.kind = operatorTypes[i];
                 found = true;
                 break;
             }
@@ -347,7 +347,7 @@ static Token GetToken(Tokenizer* t)
         }
         else
         {
-            result.type = (TokenType)t->at[0];
+            result.kind = (TokenKind)t->at[0];
             result.text.length = 1;
             result.ec   = result.sc;
             ++t->at;
@@ -372,9 +372,9 @@ bool MatchAlpha(char* stream, char* str, int tokenLength)
 }
 
 // NOTE: This function should be modified when adding keywords
-TokenType MatchKeywords(Tokenizer* t, int tokenLength)
+TokenKind MatchKeywords(Tokenizer* t, int tokenLength)
 {
-    TokenType res = (TokenType)-1;
+    TokenKind res = (TokenKind)-1;
     
     // Simple approach for reducing the cost of
     // keyword matching; using length instead of
@@ -536,7 +536,7 @@ void PrintFileLine(Token* token, char* fileContents)
 
 void CompileError(Tokenizer* t, Token* token, String message)
 {
-    if(token->type == Tok_EOF || token->type == Tok_Error)
+    if(token->kind == Tok_EOF || token->kind == Tok_Error)
     {
         printf("Reached unexpected EOF\n");
         return;
@@ -565,7 +565,7 @@ void CompileErrorContinue(Tokenizer* t, Token* token, String message)
         return;
     t->compileErrorPrinted = false;
     
-    if(token->type == Tok_EOF || token->type == Tok_Error)
+    if(token->kind == Tok_EOF || token->kind == Tok_Error)
     {
         printf("Reached unexpected EOF\n");
         return;
@@ -582,7 +582,7 @@ void CompileErrorContinue(Tokenizer* t, Token* token, String message)
     PrintFileLine(token, fileContents);
 }
 
-String TokTypeToString(TokenType tokType, Arena* dest)
+String TokTypeToString(TokenKind tokType, Arena* dest)
 {
     // No need to allocate in these cases
     for(int i = 0; i < StArraySize(keywordTypes); ++i)

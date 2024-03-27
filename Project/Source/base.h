@@ -1,7 +1,11 @@
 
 #pragma once
 
-// This file provides common utilities used in all files
+// This file provides common utilities (that should have been provided by the
+// C standard library, but i digress). This stuff is not only used by the compiler
+// but also the utility programs; for this reason it has some functions which are
+// platform dependent TODO: put basic platform dependent stuff here, there's no reason
+// it should be in a separate file.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -59,9 +63,6 @@
 #define cforceinline __forceinline
 #endif
 
-// "Typed malloc"
-#define tmalloc(type, num) (type*)malloc(sizeof(type)*(num))
-
 // Switch statement that disables the
 // "switch statements should cover all cases"
 // warning for enums.
@@ -88,8 +89,11 @@ typedef uint32_t bool32;
 typedef unsigned char uchar;
 typedef uintptr_t uintptr;
 
-#include "os/os_agnostic.h"
+#include "os/os_generic.h"
 #include "memory_management.h"
+
+void* ReserveMemory(size_t size);
+void CommitMemory(void* mem, size_t size);
 
 // Thread context
 #define ThreadCtx_NumScratchArenas 4
@@ -100,6 +104,7 @@ struct ThreadContext
 
 void ThreadCtx_Init(ThreadContext* threadCtx, size_t scratchReserveSize, size_t scratchCommitSize);
 Arena* GetScratchArena(ThreadContext* threadCtx, Arena** conflictArray, int count);
+Arena* GetScratchArena(ThreadContext* threadCtx, int idx);
 
 #ifdef Profile
 #include "spall/spall.h"
@@ -127,6 +132,11 @@ struct ProfileFuncGuard
 
 // Generic data structures
 template<typename t>
+struct Slice;
+template<typename t>
+struct RelSlice;
+
+template<typename t>
 struct Slice
 {
     t* ptr = 0;
@@ -149,6 +159,8 @@ struct Slice
     // For writing to the value (this returns a left-value)
     cforceinline t& operator [](int idx) { return ptr[idx]; };
 #endif
+    
+    cforceinline operator RelSlice<t>();
 };
 
 #define for_array(loopVar, array) for(int loopVar = 0; loopVar < (array).length; ++loopVar)
@@ -302,11 +314,15 @@ inline bool IsPowerOf2(uintptr a)
     return (a & (a-1)) == 0;
 }
 
+#ifndef max
 template<typename t>
 cforceinline t max(t i, t j) { return i < j? j : i; }
+#endif
 
+#ifndef min
 template<typename t>
 cforceinline t min(t i, t j) { return i > j? j : i; }
+#endif
 
 template<typename t>
 cforceinline t clamp(t val, t minVal, t maxVal) { return val < minVal ? minVal : (val > maxVal ? maxVal : val); }
@@ -315,7 +331,7 @@ int numDigits(int n);
 
 // I/O utilities
 size_t GetFileSize(FILE* file);
-char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName);
+char* ReadEntireFileIntoMemoryAndNullTerminate(const char* fileName);
 
 // String utilities
 
@@ -426,9 +442,57 @@ struct RelPtr
     cforceinline void operator +=(int32 inc) { offset += sizeof(t)*inc; }
     cforceinline void operator -=(int32 dec) { offset -= sizeof(t)*dec; }
     cforceinline void operator =(t* ptr) { offset = ptr ? (int32)((char*)ptr - (char*)&offset) : 0; }
+    
+    //cforceinline operator t  [](int idx) { return *(this->operator->() + idx); }
+    //cforceinline operator t& [](int idx) { return *(this->operator->() + idx); }
+    
+    // Implicit conversion to pointer
+    cforceinline operator t*() { return this->operator->(); }
 };
 
+// Smaller slice datatype
+template<typename t>
+struct RelSlice
+{
+    RelPtr<t> ptr = 0;
+    int32 length = 0;
+    
+    void Append(Arena* a, t element);
+    void Resize(Arena* a, uint32 newSize);
+    void ResizeAndInit(Arena* a, uint32 newSize);
+    Slice<t> CopyToArena(Arena* to);
+    cforceinline t last() { return this->ptr[this->length-1]; };
+    
+#ifdef BoundsChecking
+    // For reading the value
+    cforceinline t  operator [](int idx) const { Assert(idx < length); return ptr[idx]; };
+    // For writing to the value (this returns a left-value)
+    cforceinline t& operator [](int idx) { Assert(idx < length); return ptr[idx]; };
+#else
+    // For reading the value
+    cforceinline t  operator [](int idx) const { return ptr[idx]; };
+    // For writing to the value (this returns a left-value)
+    cforceinline t& operator [](int idx) { return ptr[idx]; };
+#endif
+    
+    // Conversion operator to slice
+    cforceinline operator Slice<t>() { return {.ptr=ptr.operator->(), .length=length}; }
+};
+
+template<typename t>
+cforceinline Slice<t>::operator RelSlice<t>() { return {.ptr=ptr, .length=(int32)length}; }
+
 #if 0
+void test2()
+{
+    RelSlice<int>   intA;
+    RelSlice<float> floatA;
+    
+    intA[2];
+    
+    Slice<int> slice = intA;
+}
+
 void test()
 {
     RelPtr<float> ptrs[10];

@@ -874,7 +874,7 @@ Interp_Val Interp_ConvertBinExpr(Interp_Builder* builder, Ast_BinaryExpr* expr)
         // operator does not work on structs)
         
         bool isAssign = false;
-        TokenType op = Ast_GetAssignUnderlyingOp((TokenType)expr->op, &isAssign);
+        TokenKind op = Ast_GetAssignUnderlyingOp((TokenKind)expr->op, &isAssign);
         
         // If operator is '=' lhs rvalue is not needed
         RegIdx lhs = Interp_GetRVal(builder, lhsFull, expr->lhs->type);

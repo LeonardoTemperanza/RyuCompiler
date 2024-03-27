@@ -1,7 +1,8 @@
 
 #include "base.h"
-#include "os_agnostic.h"
-#include "miniwindows.h"
+#include "os_generic.h"
+#include "windows.h"
+//#include "miniwindows.h"
 #include "microsoft_craziness.h"
 
 static DWORD win32ThreadContextIdx = 0;
@@ -27,37 +28,6 @@ void OS_OutputColorInit()
     GetConsoleScreenBufferInfo(win32ConsoleHandle, &win32SavedScreenBufferInfo);
     
     win32ConsoleScreenBufferInitted = true;
-}
-
-// Memory utilities
-void* ReserveMemory(size_t size)
-{
-    ProfileFunc(prof);
-    
-    // Deterministic addresses for debug builds
-#ifdef UseFixedAddr
-    static LPVOID baseAddr = (LPVOID)GB(1024);
-    void* result = VirtualAlloc(baseAddr, size, MEM_RESERVE, PAGE_READWRITE);
-    baseAddr = (LPVOID)((uintptr)baseAddr + size);
-#else
-    void* result = VirtualAlloc(0, size, MEM_RESERVE, PAGE_READWRITE);
-#endif
-    Assert(result && "VirtualAlloc failed!");
-    return result;
-}
-
-void CommitMemory(void* mem, size_t size)
-{
-    ProfileFunc(prof);
-    
-    void* result = VirtualAlloc(mem, size, MEM_COMMIT, PAGE_READWRITE);
-    Assert(result && "VirtualAlloc failed!");
-}
-
-void FreeMemory(void* mem, size_t size)
-{
-    bool result = VirtualFree(mem, 0, MEM_RELEASE);
-    Assert(result && "VirtualFree failed!");
 }
 
 // Thread context
@@ -188,7 +158,7 @@ int RunPlatformLinker(char* outputPath, char** objFiles, int objFileCount)
     PROCESS_INFORMATION processInfo;
     if(!CreateProcessW(0, cmdStr, 0, 0, false, 0, 0, 0, &startupInfo, &processInfo))
     {
-        printf("Error: Could not create process for MSVC linker\n");
+        fprintf(stderr, "Error: Could not create process for MSVC linker\n");
         return 1;
     }
     

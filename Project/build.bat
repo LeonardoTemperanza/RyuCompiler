@@ -31,7 +31,7 @@ set profile_flags=/DProfile
 
 set warning_level=/W2
 
-set include_dirs="..\Project\Source\tilde_backend\Cuik\tb\include"
+set include_dirs=/I "..\Project\Source\tilde_backend\Cuik\tb\include" /I ..\Project\Source\
 
 REM Compile microsoft_craziness if needed (this one file takes a lot longer to compile
 REM than the rest of the project simply because it needs to include windows.h)
@@ -39,41 +39,51 @@ IF NOT EXIST "microsoft_craziness.obj" (
 cl /nologo /c /DMICROSOFT_CRAZINESS_IMPLEMENTATION /TP ..\Project\Source\os\microsoft_craziness.h -Fo:microsoft_craziness.obj
 )
 
-set common=/FC /Feryu.exe /std:c++20 /permissive %warning_level% /we4061 /we4062 /we4714 /wd4530 /wd4200 /nologo ..\Project\Source\unity_build.cpp microsoft_craziness.obj /I %include_dirs% /link ..\Project\Libs\LLVM-C.lib ..\Project\Libs\tb.lib Ole32.lib OleAut32.lib
+set common=/FC /std:c++20 /permissive %warning_level% /we4061 /we4062 /we4714 /wd4530 /wd4200 /nologo %include_dirs% /link ..\Project\Libs\LLVM-C.lib ..\Project\Libs\tb.lib Ole32.lib OleAut32.lib
+set source_and_objs=..\Project\Source\unity_build.cpp microsoft_craziness.obj
 
 REM TODO: should add the option to pass a command line argument for this
 
 REM Development build, debug is enabled, profiling and optimization disabled
-cl /Zi /Od %debug_flags% %common%
-set build_ret=%errorlevel%
+REM cl /Zi /Feryu.exe %source_and_objs% /Od %debug_flags% %common%
+REM set build_ret=%errorlevel%
 
 REM Optimized build with debug information
-REM cl /O2 %debug_flags% %common%
+REM cl /O2 /Feryu.exe %source_and_objs% %debug_flags% %common%
 REM set build_ret=%errorlevel%
 
 REM Profiling of optimized, final build, no debug info
-REM cl /O2 %profile_flags% %common%
+REM cl /O2 /Feryu.exe %source_and_objs% %profile_flags% %common%
 REM set build_ret=%errorlevel%
 
 REM Final build
-REM cl /O2 %common%
-REM set build_ret=%errorlevel%
+cl /O2 /Feryu.exe %source_and_objs% %common%
+set build_ret=%errorlevel%
 
 echo Done.
 
-REM For quicker testing
-if %build_ret%==0 ( 
-echo Success.
-echo Running program:
-pushd .\TestPrograms
-..\ryu.exe interp_test.ryu -emit_bc -emit_ir -o output.exe
+REM Compile test program
+echo Tests:
+cl /Od /Feryu_test.exe ..\Project\Source\utils\ryu_test.cpp %common%
+set test_build_ret=%errorlevel%
 
-call output.exe
-
-echo.
-echo Result from program: !errorlevel!
-popd
+if %test_build_ret%==0 (
+ryu_test.exe
 )
+
+REM For quicker testing
+REM if %build_ret%==0 ( 
+REM echo Success.
+REM echo Running program:
+REM pushd .\TestPrograms
+REM ..\ryu.exe interp_test.ryu -emit_bc -emit_ir -o output.exe
+
+REM call output.exe
+
+REM echo.
+REM echo Result from program: !errorlevel!
+REM popd
+REM )
 
 :exitlabel
 

@@ -1,16 +1,14 @@
 
 #pragma once
 
+// This is the platform layer. It provides the platform dependent behavior
+// needed specifically by the compiler (and not by any utility program i might write).
+
 #include "memory_management.h"
 
 // Setup
 void OS_Init();
 void OS_OutputColorInit();
-
-// Memory utilities
-void* ReserveMemory(size_t size);
-void CommitMemory(void* mem, size_t size);
-void FreeMemory(void* mem, size_t size);
 
 void SetThreadContext(void* ptr);
 void* GetThreadContext();

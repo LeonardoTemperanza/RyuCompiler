@@ -8,7 +8,7 @@
 // space, so that they can be used as token types. For instance,
 // the plus operator's token type is the ASCII code for '+'.
 // NOTE(Leo): This and TypeId depend on each other (fix??)
-enum TokenType
+enum TokenKind
 {
     // Ascii types
     
@@ -100,7 +100,7 @@ enum TokenType
 
 struct Token
 {
-    TokenType type = Tok_Error;
+    TokenKind kind = Tok_Error;
     
     uint32 sl, sc;  // Start of line, starting character
     uint32 ec;      // end character
@@ -152,12 +152,12 @@ inline bool IsAllowedForMiddleNum(char c);
 inline bool IsNewline(char c);
 static void EatAllWhitespace(Tokenizer* t);
 static bool FindStringInStream(char* stream, char* string);
-TokenType MatchKeywords(Tokenizer* t, int tokenLength);
+TokenKind MatchKeywords(Tokenizer* t, int tokenLength);
 bool MatchAlpha(char* stream, char* str, int tokenLength);
 
 static void LexFile(Tokenizer* t);
 
-inline bool IsTokIdent(TokenType tokType) { return tokType >= Tok_IdentBegin && tokType <= Tok_IdentEnd; }
+inline bool IsTokIdent(TokenKind tokType) { return tokType >= Tok_IdentBegin && tokType <= Tok_IdentEnd; }
 
 void EatToken(Tokenizer* t);
 Token* PeekToken(Tokenizer* t, int lookahead);

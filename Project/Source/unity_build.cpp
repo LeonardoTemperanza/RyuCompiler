@@ -7,16 +7,7 @@
 
 #define UnityBuild
 
-// Include appropriate platform layer file
-#ifdef _WIN32
-#include "os/os_windows.cpp"
-#else
-#ifdef __linux__
-#include "os/os_linux.cpp"
-#else
-#error Unsupported platform
-#endif
-#endif
+#include "os/os_generic.cpp"
 
 #include "base.cpp"
 #include "main.cpp"

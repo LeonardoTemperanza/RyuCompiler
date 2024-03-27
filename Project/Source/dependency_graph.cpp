@@ -594,7 +594,7 @@ void Dg_DebugPrintDeps(DepGraph* g)
         int numChars = 0;
         Token* start = g->items[i].node->where;
         Token* end = start;
-        while(end < start + 2 && end->type != Tok_EOF) ++end;
+        while(end < start + 2 && end->kind != Tok_EOF) ++end;
         
         String nodeStr = { start->text.ptr, end->ec - start->sc + 1 };
         nodeStr = nodeStr.CopyToArena(scratch);
@@ -630,7 +630,7 @@ void Dg_DebugPrintDeps(DepGraph* g)
             {
                 Token* start = g->items[waitFor[j].idx].node->where;
                 Token* end = start;
-                while(end < start + 2 && end->type != Tok_EOF) ++end;
+                while(end < start + 2 && end->kind != Tok_EOF) ++end;
                 
                 String nodeStr = { start->text.ptr, end->ec - start->sc + 1 };
                 nodeStr = nodeStr.CopyToArena(scratch);

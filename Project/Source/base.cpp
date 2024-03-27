@@ -1,7 +1,7 @@
 
 #include "base.h"
 
-char* ReadEntireFileIntoMemoryAndNullTerminate(char* fileName)
+char* ReadEntireFileIntoMemoryAndNullTerminate(const char* fileName)
 {
     ProfileFunc(prof);
     
@@ -632,6 +632,68 @@ bool StringBeginsWith(String stream, char* str)
     
     return true;
 }
+
+#ifdef _WIN32
+#include <windows.h>
+
+void* ReserveMemory(size_t size)
+{
+    ProfileFunc(prof);
+    
+    // Deterministic addresses for debug builds
+#ifdef UseFixedAddr
+    static LPVOID baseAddr = (LPVOID)GB(1024);
+    void* result = VirtualAlloc(baseAddr, size, MEM_RESERVE, PAGE_READWRITE);
+    baseAddr = (LPVOID)((uintptr)baseAddr + size);
+#else
+    void* result = VirtualAlloc(0, size, MEM_RESERVE, PAGE_READWRITE);
+#endif
+    Assert(result && "VirtualAlloc failed!");
+    return result;
+}
+
+void CommitMemory(void* mem, size_t size)
+{
+    ProfileFunc(prof);
+    
+    void* result = VirtualAlloc(mem, size, MEM_COMMIT, PAGE_READWRITE);
+    Assert(result && "VirtualAlloc failed!");
+}
+
+void FreeMemory(void* mem, size_t size)
+{
+    bool result = VirtualFree(mem, 0, MEM_RELEASE);
+    Assert(result && "VirtualFree failed!");
+}
+
+#elif defined(__linux__)
+
+void* ReserveMemory(size_t size)
+{
+    ProfileFunc(prof);
+    
+    void* result = mmap(0, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, (off_t)0);
+    Assert(result != MAP_FAILED && "mmap failed!");
+    if(result == MAP_FAILED)
+        result = 0;
+    return result;
+}
+
+void CommitMemory(void* mem, size_t size)
+{
+    int result = mprotect(mem, size, PROT_READ | PROT_WRITE);
+    Assert(!result && "mprotect failed!");
+}
+
+void FreeMemory(void* mem, size_t size)
+{
+    int result = madvise(mem, size, MADV_DONTNEED);
+    Assert(result != -1 && "madvise failed!");
+}
+
+#else
+#error "Reserve, Commit, and FreeMemory functions not implemented for this platform."
+#endif
 
 // Thread context
 void ThreadCtx_Init(ThreadContext* threadCtx, size_t scratchReserveSize, size_t scratchCommitSize)

@@ -41,6 +41,8 @@ void PrintTimings();
 // TODO: @cleanup Push some of the stuff here to the proper modules
 int main(int argCount, char** argValue)
 {
+    PrintNodeSizes();
+    
     FilePaths filePaths = ParseCmdLineArgs({ argValue, argCount });
     defer({
               filePaths.srcFiles.FreeAll();

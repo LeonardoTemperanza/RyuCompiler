@@ -93,7 +93,7 @@ cforceinline Ast_DeclSpec Ast_GetUnallowedDeclSpecs(Ast_DeclSpec specs, Ast_Decl
 }
 
 // Returns 0 if not a specifier
-cforceinline Ast_DeclSpec Ast_TokTypeToDeclSpec(TokenType tokType)
+cforceinline Ast_DeclSpec Ast_TokTypeToDeclSpec(TokenKind tokType)
 {
     switch_nocheck(tokType)
     {
@@ -199,7 +199,7 @@ TypeInfo Typer_Int64  = { Typeid_Integer, true, 8, 8 };
 TypeInfo Typer_Float  = { Typeid_Float, true, 4, 4 };
 TypeInfo Typer_Double = { Typeid_Float, true, 8, 8 };
 
-cforceinline TypeInfo* TokToPrimitiveType(TokenType tokType)
+cforceinline TypeInfo* TokToPrimitiveType(TokenKind tokType)
 {
     switch_nocheck(tokType)
     {
@@ -218,7 +218,7 @@ cforceinline TypeInfo* TokToPrimitiveType(TokenType tokType)
         case Tok_Raw:    return &Typer_Raw;
     } switch_nocheck_end;
     
-    Assert(false && "Unreachable code");
+    Assert(!"Unreachable code");
     return 0;
 }
 
@@ -304,7 +304,7 @@ struct Ast_Block : public Ast_Stmt
     // compute the hash for this.
     HashTable<int64, Ast_Declaration*> declsTable;
     
-    Ast_Block* enclosing = 0;
+    RelPtr<Ast_Block> enclosing = 0;
     Slice<Ast_Node*> stmts = { 0, 0 };
 };
 
@@ -325,42 +325,42 @@ struct Ast_If : public Ast_Stmt
 {
     Ast_If() { kind = AstKind_If; };
     
-    Ast_Node* condition;  // Declaration or expression
-    Ast_Block* thenBlock;  // This needs to be a block because the condition can have a declaration
-    Ast_Stmt* elseStmt = 0;
+    RelPtr<Ast_Node>  condition;  // Declaration or expression
+    RelPtr<Ast_Block> thenBlock;  // This needs to be a block because the condition can have a declaration
+    RelPtr<Ast_Stmt> elseStmt = 0;
 };
 
 struct Ast_For : public Ast_Stmt
 {
     Ast_For() { kind = AstKind_For; };
     
-    Ast_Node* initialization = 0;  // Declaration or expression
-    Ast_Node* condition = 0;  // Declaration or expression
-    Ast_Expr* update = 0;
-    Ast_Block* body;
+    RelPtr<Ast_Node>  initialization = 0;  // Declaration or expression
+    RelPtr<Ast_Node>  condition = 0;  // Declaration or expression
+    RelPtr<Ast_Expr>  update = 0;
+    RelPtr<Ast_Block> body;
 };
 
 struct Ast_While : public Ast_Stmt
 {
     Ast_While() { kind = AstKind_While; };
     
-    Ast_Node* condition;  // Declaration or expression
-    Ast_Block* doBlock;
+    RelPtr<Ast_Node> condition;  // Declaration or expression
+    RelPtr<Ast_Block> doBlock;
 };
 
 struct Ast_DoWhile : public Ast_Stmt
 {
     Ast_DoWhile() { kind = AstKind_DoWhile; };
     
-    Ast_Expr* condition;
-    Ast_Stmt* doStmt;
+    RelPtr<Ast_Expr> condition;
+    RelPtr<Ast_Stmt> doStmt;
 };
 
 struct Ast_Switch : public Ast_Stmt
 {
     Ast_Switch() { kind = AstKind_Switch; };
     
-    Ast_Expr* switchExpr;
+    RelPtr<Ast_Expr> switchExpr;
     Slice<Ast_Expr*> cases = { 0, 0 };
     Slice<Ast_Stmt*> stmts = { 0, 0 };
     int64 defaultIdx = -1;  // -1 if no default
@@ -370,7 +370,7 @@ struct Ast_Defer : public Ast_Stmt
 {
     Ast_Defer() { kind = AstKind_Defer; };
     
-    Ast_Stmt* stmt;
+    RelPtr<Ast_Stmt> stmt;
 };
 
 struct Ast_Return : public Ast_Stmt
@@ -693,24 +693,24 @@ cforceinline Token* Ast_GetTypecastTypeToken(Ast_Typecast* typecast)
 
 // It returns the token itself if it's not an assignment token.
 // It returns '=' if it's just that.
-cforceinline TokenType Ast_GetAssignUnderlyingOp(TokenType tokType, bool* outIsAssign)
+cforceinline TokenKind Ast_GetAssignUnderlyingOp(TokenKind tokType, bool* outIsAssign)
 {
     Assert(outIsAssign);
     *outIsAssign = true;
     
     switch_nocheck(tokType)
     {
-        case Tok_PlusEquals:   return (TokenType)'+';
-        case Tok_MinusEquals:  return (TokenType)'-';
-        case Tok_MulEquals:    return (TokenType)'*';
-        case Tok_DivEquals:    return (TokenType)'/';
-        case Tok_ModEquals:    return (TokenType)'%';
+        case Tok_PlusEquals:   return (TokenKind)'+';
+        case Tok_MinusEquals:  return (TokenKind)'-';
+        case Tok_MulEquals:    return (TokenKind)'*';
+        case Tok_DivEquals:    return (TokenKind)'/';
+        case Tok_ModEquals:    return (TokenKind)'%';
         case Tok_LShiftEquals: return Tok_LShift;
         case Tok_RShiftEquals: return Tok_RShift;
-        case Tok_AndEquals:    return (TokenType)'&';
-        case Tok_OrEquals:     return (TokenType)'|';
-        case Tok_XorEquals:    return (TokenType)'^';
-        case '=':              return (TokenType)'=';
+        case Tok_AndEquals:    return (TokenKind)'&';
+        case Tok_OrEquals:     return (TokenKind)'|';
+        case Tok_XorEquals:    return (TokenKind)'^';
+        case '=':              return (TokenKind)'=';
     } switch_nocheck_end;
     
     *outIsAssign = false;
@@ -721,4 +721,10 @@ cforceinline TokenType Ast_GetAssignUnderlyingOp(TokenType tokType, bool* outIsA
 cforceinline bool NodePassedStage(Ast_Node* node, CompPhase phase)
 {
     return node->phase > phase;
+}
+
+// For debugging and profiling only
+void PrintNodeSizes()
+{
+    printf("%lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld\n", sizeof(Ast_Node), sizeof(Ast_Typecast), sizeof(Ast_BinaryExpr), sizeof(Ast_UnaryExpr), sizeof(Ast_FuncCall), sizeof(Ast_If), sizeof(Ast_For), sizeof(Ast_While), sizeof(Ast_DoWhile), sizeof(Ast_Switch), sizeof(Ast_Defer), sizeof(Ast_Return), sizeof(Ast_Block));
 }
