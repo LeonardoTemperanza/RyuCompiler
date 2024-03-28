@@ -1,0 +1,39 @@
+
+proc putchar(char c);
+
+proc main()->int
+{
+    for(int i = 0; i < 10; ++i)
+        putchar(SwitchTest(i));
+    
+    putchar(10);
+    
+    int i = 0;
+    while(i < 10)
+    {
+        putchar(SwitchTest(i));
+        ++i;
+    }
+    
+    return 0;
+}
+
+proc SwitchTest(int a)->int
+{
+    // Unlike C, breaks are automatically inserted
+    // at the end of each case. For fallthroughs just use
+    // 'fallthrough;'
+    int res = 48;
+    switch(a)
+    {
+        case 0: res += 5;
+        case 1: { res += 2; fallthrough; }
+        case 2: res += 6;
+        case 3: res += 1;
+        case 4: res += 0;
+        case 5: res += 3;
+        default: res += 9;
+    }
+    
+    return res;
+}

@@ -1,5 +1,8 @@
 
-// program_exit: 0
+/* @test
+should_compile: true
+program_exit:   100
+*/
 
 proc main()->int
 {

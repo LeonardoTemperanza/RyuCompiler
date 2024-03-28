@@ -1,4 +1,6 @@
 
+// @test program_exit: 0
+
 proc main()->int
 {
     int a = 0;

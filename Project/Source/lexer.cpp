@@ -159,17 +159,17 @@ static void EatAllWhitespace(Tokenizer* t)
             ++t->at;
         }
         else if(IsWhitespace(t->at[0])) ++t->at;
-        else if(t->at[0] == '/' && t->at[1] == '/')
+        else if(t->at[0] == '/' && t->at[1] == '/')  // Single line comments
         {
-            // Handle comments
-            while(!IsNewline(t->at[0])) ++t->at;
+            // Eat the '//'
+            t->at += 2;
+            
+            while(!IsNewline(t->at[0]) && t->at[0] != '\0') ++t->at;
             
             t->startOfCurLine = t->at - t->fileContents + 1;
             ++t->curLineNum;
-            ++t->at;
         }
-        // Multiline comments
-        else if(t->at[0] == '/' && t->at[1] == '*')
+        else if(t->at[0] == '/' && t->at[1] == '*')  // Multiline comments
         {
             // Eat the '/' and the '*'
             t->at += 2;
@@ -210,16 +210,13 @@ static void LexFile(Tokenizer* t)
 {
     ProfileFunc(prof);
     
-    while(true)
+    Token tok;
+    do
     {
-        // TODO: Intern operators here, ...
-        
-        Token tok = GetToken(t);
+        tok = GetToken(t);
         t->tokens.Append(t->arena, tok);
-        
-        if(tok.kind == Tok_EOF || tok.kind == Tok_Error)
-            break;
     }
+    while(tok.kind != Tok_EOF && tok.kind != Tok_Error);
 }
 
 static Token GetToken(Tokenizer* t)
@@ -235,10 +232,12 @@ static Token GetToken(Tokenizer* t)
     result.text    = { t->at, 1 };
     result.ident.hash = 0;
     
-    if(t->at[0] == 0)  // String terminator
+    if(t->at[0] == '\0')  // String terminator
     {
         result.kind = Tok_EOF;
+        result.text = {0, 0};
         result.ec = result.sc;
+        return result;
     }
     else if(IsAllowedForStartIdent(t->at[0]))  // Identifiers or keywords
     {
@@ -307,7 +306,8 @@ static Token GetToken(Tokenizer* t)
             result.kind = Tok_IntNum;
             char* endPtr;
             result.intValue = strtoll(t->at, &endPtr, 10);
-            if(endPtr == t->at)
+            bool convFailed = (result.intValue == 0 && errno != 0) || endPtr == t->at;
+            if(convFailed)
             {
                 SetErrorColor();
                 fprintf(stderr, "Error");

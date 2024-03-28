@@ -45,8 +45,8 @@ set source_and_objs=..\Project\Source\unity_build.cpp microsoft_craziness.obj
 REM TODO: should add the option to pass a command line argument for this
 
 REM Development build, debug is enabled, profiling and optimization disabled
-REM cl /Zi /Feryu.exe %source_and_objs% /Od %debug_flags% %common%
-REM set build_ret=%errorlevel%
+cl /Zi /Feryu.exe %source_and_objs% /Od %debug_flags% %common%
+set build_ret=%errorlevel%
 
 REM Optimized build with debug information
 REM cl /O2 /Feryu.exe %source_and_objs% %debug_flags% %common%
@@ -57,8 +57,8 @@ REM cl /O2 /Feryu.exe %source_and_objs% %profile_flags% %common%
 REM set build_ret=%errorlevel%
 
 REM Final build
-cl /O2 /Feryu.exe %source_and_objs% %common%
-set build_ret=%errorlevel%
+REM cl /O2 /Feryu.exe %source_and_objs% %common%
+REM set build_ret=%errorlevel%
 
 echo Done.
 

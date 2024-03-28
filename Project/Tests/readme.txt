@@ -12,3 +12,4 @@ These are the keywords with their respective default value:
 
 should_compile: true
 program_exit:   0
+ignore_test:    false  // (useful for files that don't have a main, and are imported by other files)

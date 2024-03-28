@@ -137,7 +137,7 @@ Ast_ProcDecl* ParseProc(Parser* p, Ast_DeclSpec specs)
     
     Token* ident = 0;
     TypeInfo* typeInfo = ParseType(p, &ident);
-    Assert(typeInfo->kindId == Typeid_Proc);
+    Assert(typeInfo->typeId == Typeid_Proc);
     if(!isOperator && !IsTokIdent(ident->kind))
         ExpectedTokenError(p, ident, Tok_Ident);
     else if(isOperator && !IsTokOperator(ident->kind))

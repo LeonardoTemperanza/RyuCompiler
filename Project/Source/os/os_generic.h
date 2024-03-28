@@ -14,7 +14,6 @@ void SetThreadContext(void* ptr);
 void* GetThreadContext();
 
 // Timing utilities
-// This function should cache the result
 static inline uint64 GetRdtscFreq();
 
 // Printing utilities

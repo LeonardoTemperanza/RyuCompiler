@@ -2,7 +2,6 @@
 #pragma once
 
 #include "base.h"
-//#include "atom.h"
 
 // NOTE(Leo): ASCII characters are reserved in the enum
 // space, so that they can be used as token types. For instance,
