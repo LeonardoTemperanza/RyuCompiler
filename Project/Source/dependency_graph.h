@@ -103,11 +103,15 @@ struct DepGraph
     bool status = true;
 };
 
+// To use in other modules to update the dependency graph
+// based on the outcome of an operation.
+void Dg_Yield(Ast_Node* yieldUpon, CompPhase neededPhase);
+void Dg_Error();
+
 DepGraph Dg_InitGraph(Arena* phaseArenas[CompPhase_EnumSize][2]);
 Dg_IdxGen Dg_NewNode(Ast_Node* node, Arena* allocTo, Slice<Dg_Entity>* entities);
 void Dg_StartIteration(DepGraph* g, Queue* q);
-void Dg_Yield(DepGraph* g, Ast_Node* yieldUpon, CompPhase neededPhase);
-void Dg_Error(DepGraph* g);
+
 void Dg_UpdatePhase(Dg_Entity* entity, CompPhase newPhase);
 void Dg_UpdateQueue(DepGraph* graph, Queue* q, int inputIdx, bool success);
 void Dg_PerformStage(DepGraph* g, Queue* q);

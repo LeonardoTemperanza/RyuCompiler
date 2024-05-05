@@ -3,6 +3,8 @@
 #include "memory_management.h"
 #include "semantics.h"
 
+static DepGraph graph;
+
 // TODO: A lot of stuff still missing...
 
 // Lastly I should implement some more features that could
@@ -15,6 +17,8 @@ DepGraph Dg_InitGraph(Arena* phaseArenas[CompPhase_EnumSize][2])
     
     DepGraph graph;
     graph.arena = Arena_VirtualMemInit(GB(1), MB(2));
+    
+    Arena_VirtualMemInit(GB(1), MB(2));
     
     graph.queues[0].outputArena = phaseArenas[0][1];  // Input arena of stage 1
     for(int i = 1; i < CompPhase_EnumSize; ++i)
@@ -55,17 +59,16 @@ bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
         }
     }
     
-    DepGraph g = Dg_InitGraph(phaseArenaPtrs);
-    g.interp = interp;
-    g.items = p->entities;
+    graph = Dg_InitGraph(phaseArenaPtrs);
+    graph.interp = interp;
+    graph.items = p->entities;
     
     Typer t = InitTyper(&typeArena, p->tokenizer);
-    t.graph = &g;
     t.fileScope = file;
     
-    g.typer = &t;
+    graph.typer = &t;
     
-    *interp = Interp_Init(&g);
+    *interp = Interp_Init();
     
     // TODO: for now we only have one file, one ast.
     // Fill the typecheck queue with initial values
@@ -73,7 +76,7 @@ bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
     {
         ProfileBlock(prof, "InitQueue");
         
-        auto& typecheckQueue = g.queues[CompPhase_Typecheck];
+        auto& typecheckQueue = graph.queues[CompPhase_Typecheck];
         typecheckQueue.input.Append(typecheckQueue.inputArena, i);
     }
     
@@ -96,14 +99,14 @@ bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
             fprintf(stderr, "%.*s:\n", (int)phase.length, phase.ptr);
 #endif
             
-            auto& queue = g.queues[i];
-            Dg_StartIteration(&g, &queue);
+            auto& queue = graph.queues[i];
+            Dg_StartIteration(&graph, &queue);
             
             // Detect cycles and perform topological sorting
-            bool cycle = Dg_DetectCycle(&g, &queue);
-            Dg_PerformStage(&g, &queue);
+            bool cycle = Dg_DetectCycle(&graph, &queue);
+            Dg_PerformStage(&graph, &queue);
             
-            if(cycle) g.status = false;
+            if(cycle) graph.status = false;
             if(queue.numSucceeded > 0) progress = true;
             if(queue.input.length > 0) done = false;
             
@@ -117,7 +120,7 @@ bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
     if(!done && !progress)
         fprintf(stderr, "Internal error: Unable to resolve code dependencies and/or detect a cycle.\n");
     
-    return g.status;
+    return graph.status;
 }
 
 Dg_IdxGen Dg_NewNode(Ast_Node* node, Arena* allocTo, Slice<Dg_Entity>* entities)
@@ -153,7 +156,7 @@ void Dg_StartIteration(DepGraph* g, Queue* q)
     q->numFailed = 0;
 }
 
-void Dg_Yield(DepGraph* g, Ast_Node* yieldUpon, CompPhase neededPhase)
+void Dg_Yield(Ast_Node* yieldUpon, CompPhase neededPhase)
 {
     Dg_Dependency dep;
     Assert(yieldUpon->entityIdx != Dg_Null);
@@ -161,14 +164,14 @@ void Dg_Yield(DepGraph* g, Ast_Node* yieldUpon, CompPhase neededPhase)
     dep.idx = yieldUpon->entityIdx;
     
     dep.neededPhase = neededPhase;
-    g->items[g->curIdx].waitFor.Append(dep);
+    graph.items[graph.curIdx].waitFor.Append(dep);
 }
 
-void Dg_Error(DepGraph* g)
+void Dg_Error()
 {
     // Mark the current node
-    g->items[g->curIdx].flags |= Entity_Error;
-    g->status = false;
+    graph.items[graph.curIdx].flags |= Entity_Error;
+    graph.status = false;
 }
 
 void Dg_UpdatePhase(Dg_Entity* entity, CompPhase newPhase)

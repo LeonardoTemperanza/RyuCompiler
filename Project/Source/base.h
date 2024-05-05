@@ -601,7 +601,6 @@ Q_SWAP(q_a1, q_a2);               \
 } while (0)
 
 #if 0
-{ // For 4coder indentation
 #endif
     
     /* Partition [q_l,q_r] around a pivot.  After partitioning,

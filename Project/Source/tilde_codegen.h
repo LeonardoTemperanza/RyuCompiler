@@ -33,7 +33,7 @@ struct Tc_Context
     TB_PassingRule retPassingRule;
     Slice<TB_PassingRule> argPassingRules;
     
-    StringTable<TB_FunctionPrototype*> type2Proto;
+    //StringTable<TB_FunctionPrototype*> type2Proto;
     
     InstrIdx lastRegion = InstrIdx_Unused;
     

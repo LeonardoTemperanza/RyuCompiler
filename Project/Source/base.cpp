@@ -4,7 +4,7 @@
 char* ReadEntireFileIntoMemoryAndNullTerminate(const char* fileName)
 {
     ProfileFunc(prof);
-    
+
     char* result = NULL;
     
     FILE* file = fopen(fileName, "rb");

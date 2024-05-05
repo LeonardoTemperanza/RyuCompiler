@@ -267,10 +267,9 @@ RegIdx Interp_GetRVal(Interp_Builder* builder, Interp_Val val, TypeInfo* type)
     return val.reg;
 }
 
-Interp Interp_Init(DepGraph* graph)
+Interp Interp_Init()
 {
     Interp interp;
-    interp.graph = graph;
     
     TB_FeatureSet features = { 0 };
     TB_Arch arch = TB_ARCH_X86_64;
@@ -728,7 +727,7 @@ Interp_Val Interp_ConvertIdent(Interp_Builder* builder, Ast_IdentExpr* expr)
         auto procDecl = (Ast_ProcDecl*)expr->declaration;
         
         if(procDecl->phase < CompPhase_Bytecode)
-            Dg_Yield(builder->graph, procDecl, CompPhase_Bytecode);
+            Dg_Yield(procDecl, CompPhase_Bytecode);
         
         auto address = Interp_GetSymbolAddress(builder, procDecl->symIdx);
         
@@ -1268,7 +1267,6 @@ Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc, bool* outY
 {
     Interp_Builder builderVar;
     auto builder = &builderVar;
-    builder->graph = interp->graph;
     
     auto astDecl = Ast_GetProcDefType(astProc);
     
@@ -1291,7 +1289,7 @@ Interp_Proc* Interp_ConvertProc(Interp* interp, Ast_ProcDef* astProc, bool* outY
     
     if(astProc->decl->phase <= CompPhase_Bytecode)
     {
-        Dg_Yield(interp->graph, astProc->decl, CompPhase_Bytecode);
+        Dg_Yield(astProc->decl, CompPhase_Bytecode);
         return false;
     }
     

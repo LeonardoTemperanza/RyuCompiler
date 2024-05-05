@@ -1,7 +1,7 @@
 
 /* @test
-should_compile: true
-program_exit:   100
+compiles:     true
+program_exit: 100
 */
 
 proc main()->int

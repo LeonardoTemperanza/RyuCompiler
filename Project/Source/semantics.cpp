@@ -151,7 +151,7 @@ bool CheckProcDef(Typer* t, Ast_ProcDef* proc)
     
     if(!NodePassedStage(proc->decl, CompPhase_Typecheck))
     {
-        Dg_Yield(t->graph, proc->decl, CompPhase_Typecheck);
+        Dg_Yield(proc->decl, CompPhase_Typecheck);
         return false;
     }
     
@@ -613,7 +613,7 @@ Ast_Declaration* CheckIdent(Typer* t, Ast_IdentExpr* expr)
     // Check the compPhase only if it's an independent entity (so, != Dg_Null)
     if(node->entityIdx != Dg_Null && !NodePassedStage(node, CompPhase_Typecheck))
     {
-        Dg_Yield(t->graph, node, CompPhase_Typecheck);
+        Dg_Yield(node, CompPhase_Typecheck);
         return 0;
     }
     
@@ -1257,7 +1257,7 @@ bool FillInTypeSize(Typer* t, TypeInfo* type, Token* errTok)
         auto referTo = identType->structDef;
         if(!NodePassedStage(referTo, CompPhase_ComputeSize))
         {
-            Dg_Yield(t->graph, referTo, CompPhase_ComputeSize);
+            Dg_Yield(referTo, CompPhase_ComputeSize);
             return false;
         }
         
@@ -1332,7 +1332,7 @@ ComputeSize_Ret ComputeStructSize(Typer* t, Ast_StructType* declStruct, Token* e
             auto structDecl = Ast_GetStructType(structDef);
             if(!NodePassedStage(structDef, CompPhase_ComputeSize))
             {
-                Dg_Yield(t->graph, structDef, CompPhase_ComputeSize);
+                Dg_Yield(structDef, CompPhase_ComputeSize);
                 *outcome = false;
                 continue;
             }
@@ -1950,7 +1950,7 @@ void SemanticError(Typer* t, Token* token, String message, ...)
         t->status = false;
     }
     
-    Dg_Error(t->graph);
+    Dg_Error();
     
     ScratchArena scratch;
     

@@ -15,7 +15,7 @@ Tc_Context Tc_InitCtx(TB_Module* module, Arena* strArena, bool emitAsm)
     Tc_Context result;
     result.module = module;
     result.emitAsm = emitAsm;
-    result.type2Proto.Init(64);
+    //result.type2Proto.Init(64);
     return result;
 }
 

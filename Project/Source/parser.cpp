@@ -1209,14 +1209,6 @@ Ast_DeclSpec ParseDeclSpecs(Parser* p)
     return res;
 }
 
-#if 0
-void DeferStringInterning(Parser* p, String string, Atom** atom)
-{
-    ToIntern toIntern = { string, HashString(string), atom };
-    p->internArray.Append(p->internArena, toIntern);
-}
-#endif
-
 // A table could be used for this information
 // These are binary operators only
 int GetOperatorPrec(TokenKind tokType)

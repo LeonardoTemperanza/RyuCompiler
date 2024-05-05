@@ -15,7 +15,8 @@ const char* testsPath = "../Project/Tests/";
 // A compile-time mechanism would be a pain to set up
 // in C++, so instead i chose a runtime approach here.
 // This means it's more expensive and you don't get compile-time
-// errors, but for this, it's fine.
+// errors, but for this, it's fine. Again, not ideal, but good enough
+// for now.
 
 enum Type
 {
@@ -34,9 +35,9 @@ struct Arg
 
 static const Arg defArgs[] =
 {
-    {"should_compile", Type_Bool, (void*)true},
-    {"program_exit",   Type_Int,  (void*)0},
-    {"ignore_test",    Type_Bool, (void*)false}
+    {"compiles",     Type_Bool, (void*)true},
+    {"program_exit", Type_Int,  (void*)0},
+    {"ignore_test",  Type_Bool, (void*)false}
 };
 
 constexpr int numArgs = StArraySize(defArgs);
@@ -108,7 +109,7 @@ void SetArg(const char* ident, t setTo, Arg (&args)[numArgs])
 {
     bool found = false;
     Arg* ptr = GetRecord(ident, &found, args);
-    assert(found);
+    assert(found && "Trying to access argument name which does not exist");
     if(!found) return;
     
     assert(GetType<t>() == ptr->type);
@@ -422,7 +423,7 @@ void RunAndCheckBehavior(const char* sourcePath, const char* exePath, int optLev
         fclose(toCheck);
         
         // Compiled program exists, so we can try to execute it
-        SetArg<bool>("should_compile", true, actualArgs);
+        SetArg<bool>("compiles", true, actualArgs);
         
         LaunchProcess_Outcome outcome;
         int64 exitCode = LaunchProcess(exePath, msTimeout, &outcome);
@@ -452,7 +453,7 @@ void RunAndCheckBehavior(const char* sourcePath, const char* exePath, int optLev
     }
     else 
     {
-        SetArg<bool>("should_compile", false, actualArgs);
+        SetArg<bool>("compiles", false, actualArgs);
     }
     
     // Compare actual behavior to desired behavior

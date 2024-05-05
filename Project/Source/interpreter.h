@@ -497,7 +497,6 @@ struct Interp
     // the tb functions that are used to get
     // the ABI-compliant signatures require a module
     TB_Module* module;
-    DepGraph* graph;
     
     Array<Interp_Symbol> symbols;
     Array<Interp_Proc> procs;
@@ -553,7 +552,7 @@ cforceinline bool Interp_IsValueValid(Interp_Val val)
 }
 
 // Code generation
-Interp Interp_Init(DepGraph* graph);
+Interp Interp_Init();
 bool GenBytecode(Interp* interp, Ast_Node* node);
 Interp_Proc* Interp_MakeProc(Interp_Builder* builder, Interp* interp);
 Interp_Symbol* Interp_MakeSymbol(Interp* interp);

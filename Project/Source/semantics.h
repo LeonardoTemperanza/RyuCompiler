@@ -23,8 +23,6 @@ struct Typer
     bool inSwitchBlock = false;
     bool inDeferBlock  = false;
     
-    DepGraph* graph;
-    
     bool status = true;
 };
 
