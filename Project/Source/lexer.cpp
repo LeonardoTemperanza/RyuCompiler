@@ -243,18 +243,18 @@ static Token GetToken(Tokenizer* t)
     {
         result.kind = Tok_Ident;
         for(int i = 1; IsAllowedForMiddleIdent(t->at[i]); ++i)
-            ++result.text.length;
+            ++result.text.len;
         
         bool isKeyword = false;
-        TokenKind match = MatchKeywords(t, result.text.length);
+        TokenKind match = MatchKeywords(t, result.text.len);
         if(match != (TokenKind)-1)
         {
             isKeyword = true;
             result.kind = match;
         }
         
-        t->at += result.text.length;
-        result.ec = result.sc + result.text.length - 1;
+        t->at += result.text.len;
+        result.ec = result.sc + result.text.len - 1;
         
         // Fill in the hash for faster string comparisons
         if(!isKeyword) result.ident.hash = HashString(result.text);
@@ -262,43 +262,43 @@ static Token GetToken(Tokenizer* t)
     else if(IsNumeric(t->at[0]))  // Numbers
     {
         // Determine which type of number it is
-        int length = 0;
+        int len = 0;
         bool32 isFloatingPoint = false;
         bool32 isDoublePrecision = false;
         
         do
         {
-            ++length;
-            if(!isFloatingPoint && (t->at[length] == '.' || t->at[length] == 'e'))
+            ++len;
+            if(!isFloatingPoint && (t->at[len] == '.' || t->at[len] == 'e'))
                 isFloatingPoint = true;
         }
-        while(IsAllowedForMiddleNum(t->at[length]));
+        while(IsAllowedForMiddleNum(t->at[len]));
         
         // Use c-stdlib functions for number parsing
         // (parsing floating pointer numbers with accurate precision
         // is kinda hard)
         if(isFloatingPoint)
         {
-            if(t->at[length] == 'd')
+            if(t->at[len] == 'd')
             {
                 result.kind = Tok_DoubleNum;
                 char* endPtr;
                 result.doubleValue = strtod(t->at, &endPtr);
-                Assert(endPtr == t->at + length);
+                Assert(endPtr == t->at + len);
                 
                 isDoublePrecision = true;
-                ++length;
+                ++len;
             }
             else
             {
                 result.kind = Tok_FloatNum;
                 char* endPtr;
                 result.floatValue = strtof(t->at, &endPtr);
-                Assert(endPtr == t->at + length);
+                Assert(endPtr == t->at + len);
                 
                 // Eat the optional 'f' at the end of single precision floating point
-                if(t->at[length] == 'f')
-                    ++length;
+                if(t->at[len] == 'f')
+                    ++len;
             }
         }
         else
@@ -317,13 +317,13 @@ static Token GetToken(Tokenizer* t)
                 result.doubleValue = 0.0f;
             }
             else
-                Assert(endPtr == t->at + length);
+                Assert(endPtr == t->at + len);
             
         }
         
-        t->at += length;
-        result.text.length = length;
-        result.ec = result.sc + result.text.length - 1;
+        t->at += len;
+        result.text.len = len;
+        result.ec = result.sc + result.text.len - 1;
     }
     else  // Anything else (operators, parentheses, etc)
     {
@@ -333,7 +333,7 @@ static Token GetToken(Tokenizer* t)
         {
             if(StringBeginsWith(result.text.ptr, operatorStrings[i]))
             {
-                result.text.length = operatorStrings[i].length;
+                result.text.len = operatorStrings[i].len;
                 result.kind = operatorTypes[i];
                 found = true;
                 break;
@@ -342,13 +342,13 @@ static Token GetToken(Tokenizer* t)
         
         if(found)
         {
-            t->at += result.text.length;
-            result.ec = result.sc + result.text.length - 1;
+            t->at += result.text.len;
+            result.ec = result.sc + result.text.len - 1;
         }
         else
         {
             result.kind = (TokenKind)t->at[0];
-            result.text.length = 1;
+            result.text.len = 1;
             result.ec   = result.sc;
             ++t->at;
         }
@@ -545,14 +545,14 @@ void CompileError(Tokenizer* t, Token* token, String message)
     char* fileContents = t->fileContents;
     t->lastCompileErrorNumChars = 0;
     
-    t->lastCompileErrorNumChars += fprintf(stderr, "%.*s", (int)t->path.length, t->path.ptr); 
+    t->lastCompileErrorNumChars += fprintf(stderr, "%.*s", (int)t->path.len, t->path.ptr); 
     fprintf(stderr, "(%d,%d): ", token->lineNum, token->sc - token->sl + 1);
     
     SetErrorColor();
     fprintf(stderr, "Error");
     ResetColor();
     
-    fprintf(stderr, ": %.*s\n", (int)message.length, message.ptr);
+    fprintf(stderr, ": %.*s\n", (int)message.len, message.ptr);
     
     PrintFileLine(token, fileContents);
     
@@ -577,7 +577,7 @@ void CompileErrorContinue(Tokenizer* t, Token* token, String message)
         fprintf(stderr, " ");
     
     fprintf(stderr, "(%d,%d): Note: ", token->lineNum, token->sc - token->sl + 1);
-    fprintf(stderr, "%.*s\n", (int)message.length, message.ptr);
+    fprintf(stderr, "%.*s\n", (int)message.len, message.ptr);
     
     PrintFileLine(token, fileContents);
 }

@@ -9,6 +9,7 @@
 // and typeinfo?
 // update: it seems that it is not needed, the structure is pretty much the same
 // anyways
+// update update: Actually I think I should rethink this...
 
 template<typename t>
 t* Ast_MakeNode(Arena* arena, Token* token)
@@ -42,6 +43,32 @@ t* Ast_MakeEntityNode(Parser* p, Token* token)
 }
 
 template<typename t>
+t* Ast_MakeProcDefNode(Parser* p, Token* token)
+{
+    auto result   = Arena_AllocAndInitPack(p->arena, t);
+    result->where = token;
+    
+    Dg_NewNode(result, p->entityArena, &p->entities);
+    
+    Dg_ProcDef procDef = {0};
+    procDef.entity = &p->entities.last();
+    p->procs.Append(procDef);
+    return result;
+}
+
+template<typename t>
+t* Ast_MakeGlobalVarNode(Parser* p, Token* token)
+{
+    assert(!"TODO");
+    
+    auto result   = Arena_AllocAndInitPack(p->arena, t);
+    result->where = token;
+    
+    Dg_NewNode(result, p->entityArena, &p->entities);
+    return result;
+}
+
+template<typename t>
 t Ast_InitNode(Token* token)
 {
     t result;
@@ -51,7 +78,7 @@ t Ast_InitNode(Token* token)
 
 void AddDeclToScope(Ast_Block* block, Ast_Declaration* decl)
 {
-    if(block->decls.length + 1 >= Ast_Block::maxArraySize && !(block->flags & Block_UseHashTable))
+    if(block->decls.len + 1 >= Ast_Block::maxArraySize && !(block->flags & Block_UseHashTable))
     {
         block->flags |= Block_UseHashTable;
         
@@ -155,12 +182,12 @@ Ast_ProcDecl* ParseProc(Parser* p, Ast_DeclSpec specs)
     }
     else
     {
-        auto procDef = Ast_MakeEntityNode<Ast_ProcDef>(p, procDecl->where);
+        auto procDef = Ast_MakeProcDefNode<Ast_ProcDef>(p, procDecl->where);
         procDef->decl = procDecl;
         auto procType = (Ast_ProcType*)typeInfo;
         
         // Special error for this token
-        bool hasMultipleReturns = ((Ast_ProcType*)typeInfo)->retTypes.length > 1;
+        bool hasMultipleReturns = ((Ast_ProcType*)typeInfo)->retTypes.len > 1;
         if(!hasMultipleReturns && p->at->kind == ',')
             ParseError(p, p->at, StrLit("Multiple return values should be wrapped with '()' parentheses."));
         else
@@ -301,7 +328,7 @@ Ast_VarDecl* ParseVarDecl(Parser* p, Ast_DeclSpec specs, bool forceInit, bool ig
     {
         Assert(p->curProc);
         p->curProc->declsFlat.Append(decl);
-        decl->declIdx = p->curProc->declsFlat.length - 1;
+        decl->declIdx = p->curProc->declsFlat.len - 1;
     }
     
     if(!ignoreInit)
@@ -536,7 +563,7 @@ Ast_Switch* ParseSwitch(Parser* p)
     {
         if(p->at->kind == Tok_Default)
         {
-            stmt->defaultIdx = stmt->cases.length;
+            stmt->defaultIdx = stmt->cases.len;
             ++p->at;
         }
         else
@@ -1078,7 +1105,7 @@ Ast_ProcType ParseProcType(Parser* p, Token** outIdent, bool forceArgNames)
             argDecl->name = t->ident;
             
             args.Append(scratch, argDecl);
-            argDecl->declIdx = args.length - 1;
+            argDecl->declIdx = args.len - 1;
             
             if(p->at->kind == ',') ++p->at;
             else break;
@@ -1099,7 +1126,7 @@ Ast_ProcType ParseProcType(Parser* p, Token** outIdent, bool forceArgNames)
             Token* token = 0;
             TypeInfo* type = ParseType(p, &token);
             
-            decl.retTypes.length = 1;
+            decl.retTypes.len = 1;
             decl.retTypes.ptr = Arena_FromStackPack(p->arena, type);
         }
         else
@@ -1176,11 +1203,11 @@ Ast_StructType ParseStructType(Parser* p, Token** outIdent)
     decl.memberTypes      = types.CopyToArena(p->arena);
     decl.memberNameTokens = tokens.CopyToArena(p->arena);
     
-    decl.memberNames.ptr    = Arena_AllocArrayPack(p->arena, tokens.length, HashedString);
-    decl.memberNames.length = tokens.length;
+    decl.memberNames.ptr = Arena_AllocArrayPack(p->arena, tokens.len, HashedString);
+    decl.memberNames.len = tokens.len;
     
-    decl.memberOffsets.ptr    = Arena_AllocArrayPack(p->arena, types.length, uint32);
-    decl.memberOffsets.length = types.length;
+    decl.memberOffsets.ptr = Arena_AllocArrayPack(p->arena, types.len, uint32);
+    decl.memberOffsets.len = types.len;
     
     //for_array(i, decl.memberNames)
     //decl.memberNames[i] = decl.memberNameTokens[i]->ident;

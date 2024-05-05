@@ -4,7 +4,7 @@
 char* ReadEntireFileIntoMemoryAndNullTerminate(const char* fileName)
 {
     ProfileFunc(prof);
-
+    
     char* result = NULL;
     
     FILE* file = fopen(fileName, "rb");
@@ -46,43 +46,43 @@ template<typename t>
 void Slice<t>::Append(Arena* a, t element)
 {
     // If empty, allocate a new array
-    if(this->length == 0)
+    if(this->len == 0)
         this->ptr = Arena_FromStack(a, element);
     else
     {
         auto ptr = (t*)Arena_ResizeLastAlloc(a, this->ptr,
-                                             sizeof(t) * this->length,
-                                             sizeof(t) * (this->length + 1));
+                                             sizeof(t) * this->len,
+                                             sizeof(t) * (this->len + 1));
         Assert(ptr == this->ptr && "Adding an element to an array that was not the last allocation performed in the linear arena is not allowed");
         this->ptr = ptr;
-        this->ptr[this->length] = element;
+        this->ptr[this->len] = element;
     }
     
-    ++this->length;
+    ++this->len;
 }
 
 template<typename t>
 void Slice<t>::Resize(Arena* a, uint32 newSize)
 {
     // If empty, allocate a new array
-    if(this->length == 0)
+    if(this->len == 0)
         this->ptr = (t*)Arena_Alloc(a, sizeof(t) * newSize, alignof(t));
     else
     {
         auto ptr = (t*)Arena_ResizeLastAlloc(a, this->ptr,
-                                             sizeof(t) * this->length,
+                                             sizeof(t) * this->len,
                                              sizeof(t) * (newSize));
         Assert(ptr == this->ptr && "Adding an element to an array that was not the last allocation performed in the linear arena is not allowed");
         this->ptr = ptr;
     }
     
-    this->length = newSize;
+    this->len = newSize;
 }
 
 template<typename t>
 void Slice<t>::ResizeAndInit(Arena* a, uint32 newSize)
 {
-    uint32 oldLength = this->length;
+    uint32 oldLength = this->len;
     this->Resize(a, newSize);
     
     // Call default constructor on new elements
@@ -94,39 +94,39 @@ template<typename t>
 Slice<t> Slice<t>::CopyToArena(Arena* to)
 {
     Slice<t> result = *this;
-    result.ptr = (t*)Arena_AllocAndCopy(to, this->ptr, sizeof(t) * this->length);
+    result.ptr = (t*)Arena_AllocAndCopy(to, this->ptr, sizeof(t) * this->len);
     return result;
 }
 
 void String::Append(Arena* a, char element)
 {
     // If empty, allocate a new array
-    if(this->length == 0)
+    if(this->len == 0)
         this->ptr = Arena_FromStack(a, element);
     else
     {
         auto ptr = (char*)Arena_ResizeLastAlloc(a, this->ptr,
-                                                sizeof(char) * this->length,
-                                                sizeof(char) * (this->length + 1));
+                                                sizeof(char) * this->len,
+                                                sizeof(char) * (this->len + 1));
         Assert(ptr == this->ptr && "Adding an element to an array that was not the last allocation performed in the linear arena is not allowed");
         this->ptr = ptr;
-        this->ptr[this->length] = element;
+        this->ptr[this->len] = element;
     }
     
-    ++this->length;
+    ++this->len;
 }
 
 String String::CopyToArena(Arena* to)
 {
     String result = *this;
-    result.ptr = (char*)Arena_AllocAndCopy(to, this->ptr, sizeof(char) * this->length);
+    result.ptr = (char*)Arena_AllocAndCopy(to, this->ptr, sizeof(char) * this->len);
     return result;
 }
 
 uint64 HashString(String str, uint64 seed)
 {
     uint64 hash = seed;
-    for(int i = 0; i < str.length; ++i)
+    for(int i = 0; i < str.len; ++i)
         hash = RotateLeft(hash, 9) + (uchar)str.ptr[i];
     
     // Thomas Wang 64-to-32 bit mix function, hopefully also works in 32 bits
@@ -161,30 +161,30 @@ uint64 HashString(char* str, uint64 seed)
 template<typename t>
 void Array<t>::Append(t element)
 {
-    this->Resize(this->length + 1);
-    this->ptr[this->length - 1] = element;
+    this->Resize(this->len + 1);
+    this->ptr[this->len - 1] = element;
 }
 
 template<typename t>
 void Array<t>::InsertAtIdx(Slice<t> elements, int idx)
 {
-    Assert(idx < this->length);
-    this->Resize(this->length + elements.length);
+    Assert(idx < this->len);
+    this->Resize(this->len + elements.len);
     
-    int count = this->length - idx - 1;
-    int shiftBy = elements.length;
+    int count = this->len - idx - 1;
+    int shiftBy = elements.len;
     memmove(&this->ptr[idx + shiftBy], &this->ptr[idx], count*sizeof(t));
-    memcpy(&this->ptr[idx], elements.ptr, elements.length);
+    memcpy(&this->ptr[idx], elements.ptr, elements.len);
 }
 
 // Specialized for single element, probably faster
 template<typename t>
 void Array<t>::InsertAtIdx(t element, int idx)
 {
-    Assert(idx < this->length && idx >= 0);
-    this->Resize(this->length + 1);
+    Assert(idx < this->len && idx >= 0);
+    this->Resize(this->len + 1);
     
-    int count = this->length - idx - 1;
+    int count = this->len - idx - 1;
     memmove(&this->ptr[idx + 1], &this->ptr[idx], count*sizeof(t));
     this->ptr[idx] = element;
 }
@@ -192,8 +192,8 @@ void Array<t>::InsertAtIdx(t element, int idx)
 template<typename t>
 t* Array<t>::Reserve()
 {
-    this->Resize(this->length + 1);
-    return &this->ptr[this->length - 1];
+    this->Resize(this->len + 1);
+    return &this->ptr[this->len - 1];
 }
 
 // TODO: the buffer doesn't shrink when reducing
@@ -202,13 +202,13 @@ t* Array<t>::Reserve()
 template<typename t>
 void Array<t>::Resize(uint32 newSize)
 {
-    this->length = newSize;
-    if(this->capacity < this->length)
+    this->len = newSize;
+    if(this->capacity < this->len)
     {
         if(this->capacity < Array_MinCapacity)
             capacity = Array_MinCapacity;
         else
-            this->capacity = this->length * 3 / 2;
+            this->capacity = this->len * 3 / 2;
         
         this->ptr = (t*)realloc(this->ptr, sizeof(t) * this->capacity);
         Assert(this->ptr && "realloc failed");
@@ -218,7 +218,7 @@ void Array<t>::Resize(uint32 newSize)
 template<typename t>
 void Array<t>::ResizeAndInit(uint32 newSize)
 {
-    uint32 oldLength = this->length;
+    uint32 oldLength = this->len;
     this->Resize(newSize);
     
     // Call default constructor for new elements
@@ -232,7 +232,7 @@ void Array<t>::FreeAll()
     free(this->ptr);
     this->ptr      = 0;
     this->capacity = 0;
-    this->length   = 0;
+    this->len   = 0;
 }
 
 template<typename k, typename v>
@@ -470,18 +470,18 @@ void StringBuilder::Append(String str)
     if(this->string.ptr)
     {
         auto ptr = (char*)Arena_ResizeLastAlloc(this->arena, this->string.ptr,
-                                                sizeof(char) * this->string.length,
-                                                sizeof(char) * (this->string.length + str.length));
+                                                sizeof(char) * this->string.len,
+                                                sizeof(char) * (this->string.len + str.len));
         Assert(ptr == this->string.ptr && "Appending to a string that was not the last allocation performed in the linear arena is not allowed");
         this->string.ptr = ptr;
-        memcpy((void*)(this->string.ptr + this->string.length), str.ptr, str.length);
-        this->string.length += str.length;
+        memcpy((void*)(this->string.ptr + this->string.len), str.ptr, str.len);
+        this->string.len += str.len;
     }
     else
     {
-        this->string.ptr = Arena_AllocArray(this->arena, str.length, char);
-        memcpy(this->string.ptr, str.ptr, str.length);
-        this->string.length = str.length;
+        this->string.ptr = Arena_AllocArray(this->arena, str.len, char);
+        memcpy(this->string.ptr, str.ptr, str.len);
+        this->string.len = str.len;
     }
 }
 
@@ -491,19 +491,19 @@ void StringBuilder::Append(char* str)
     if(this->string.ptr)
     {
         auto ptr = (char*)Arena_ResizeLastAlloc(this->arena, this->string.ptr,
-                                                sizeof(char) * this->string.length,
-                                                sizeof(char) * (this->string.length + strLength));
+                                                sizeof(char) * this->string.len,
+                                                sizeof(char) * (this->string.len + strLength));
         
         Assert(ptr == this->string.ptr && "Appending to a string that was not the last allocation performed in the linear arena is not allowed");
         this->string.ptr = ptr;
-        memcpy((void*)(this->string.ptr + this->string.length), str, strLength);
-        this->string.length += strLength;
+        memcpy((void*)(this->string.ptr + this->string.len), str, strLength);
+        this->string.len += strLength;
     }
     else
     {
         this->string.ptr = Arena_AllocArray(this->arena, strLength, char);
         memcpy(this->string.ptr, str, strLength);
-        this->string.length = strLength;
+        this->string.len = strLength;
     }
 }
 
@@ -512,19 +512,19 @@ void StringBuilder::Append(char c)
     if(this->string.ptr)
     {
         auto ptr = (char*)Arena_ResizeLastAlloc(this->arena, this->string.ptr,
-                                                sizeof(char) * this->string.length,
-                                                sizeof(char) * (this->string.length + 1));
+                                                sizeof(char) * this->string.len,
+                                                sizeof(char) * (this->string.len + 1));
         
         Assert(ptr == this->string.ptr && "Appending to a string that was not the last allocation performed in the linear arena is not allowed");
         this->string.ptr = ptr;
-        this->string.ptr[this->string.length] = c;
-        this->string.length += 1;
+        this->string.ptr[this->string.len] = c;
+        this->string.len += 1;
     }
     else
     {
         this->string.ptr = Arena_AllocArray(this->arena, 1, char);
         this->string.ptr[0] = c;
-        this->string.length = 1;
+        this->string.len = 1;
     }
 }
 
@@ -549,10 +549,10 @@ String StringBuilder::ToString(Arena* dest)
 // String utilities
 bool operator ==(String s1, String s2)
 {
-    if(s1.length != s2.length)
+    if(s1.len != s2.len)
         return false;
     
-    for(int i = 0; i < s1.length; ++i)
+    for(int i = 0; i < s1.len; ++i)
     {
         if(s1[i] != s2[i])
             return false;
@@ -565,7 +565,7 @@ bool operator ==(String s1, String s2)
 bool operator ==(String s1, char* s2)
 {
     int i = 0;
-    while(i < s1.length)
+    while(i < s1.len)
     {
         if(s2[i] == 0 || s1[i] != s2[i])
             return false;
@@ -582,7 +582,7 @@ bool operator ==(String s1, char* s2)
 bool operator ==(char* s1, String s2)
 {
     int i = 0;
-    while(i < s2.length)
+    while(i < s2.len)
     {
         if(s1[i] == 0 || s2[i] != s1[i])
             return false;
@@ -599,7 +599,7 @@ inline bool operator ==(HashedString s1, HashedString s2)
     
     // Slow path, regular string compare
     int i = 0;
-    while(i < s2.length)
+    while(i < s2.len)
     {
         if(s1[i] == 0 || s2[i] != s1[i])
             return false;
@@ -613,7 +613,7 @@ inline bool operator ==(HashedString s1, HashedString s2)
 // only checks if the first 
 bool StringBeginsWith(char* stream, String str)
 {
-    for(int i = 0; i < str.length; ++i)
+    for(int i = 0; i < str.len; ++i)
     {
         if(stream[i] == 0 || stream[i] != str[i])
             return false;
@@ -626,7 +626,7 @@ bool StringBeginsWith(String stream, char* str)
 {
     for(int i = 0; str[i] != 0; ++i)
     {
-        if(i >= stream.length || stream[i] != str[i])
+        if(i >= stream.len || stream[i] != str[i])
             return false;
     }
     

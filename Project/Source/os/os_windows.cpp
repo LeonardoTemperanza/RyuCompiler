@@ -123,7 +123,7 @@ int RunPlatformLinker(char* outputPath, char** objFiles, int objFileCount)
         return 1;
     }
     
-    // Launch subprocess with link.exe
+    // Launch subprocess executing link.exe
     
     if(!findRes.vs_exe_path)
     {

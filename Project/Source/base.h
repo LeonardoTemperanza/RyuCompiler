@@ -140,19 +140,19 @@ template<typename t>
 struct Slice
 {
     t* ptr = 0;
-    int64 length = 0;
+    int64 len = 0;
     
     void Append(Arena* a, t element);
     void Resize(Arena* a, uint32 newSize);
     void ResizeAndInit(Arena* a, uint32 newSize);
     Slice<t> CopyToArena(Arena* to);
-    cforceinline t last() { return this->ptr[this->length-1]; };
+    cforceinline t last() { return this->ptr[this->len-1]; };
     
 #ifdef BoundsChecking
     // For reading the value
-    cforceinline t  operator [](int idx) const { Assert(idx < length); return ptr[idx]; };
+    cforceinline t  operator [](int idx) const { Assert(idx < len); return ptr[idx]; };
     // For writing to the value (this returns a left-value)
-    cforceinline t& operator [](int idx) { Assert(idx < length); return ptr[idx]; };
+    cforceinline t& operator [](int idx) { Assert(idx < len); return ptr[idx]; };
 #else
     // For reading the value
     cforceinline t  operator [](int idx) const { return ptr[idx]; };
@@ -163,7 +163,7 @@ struct Slice
     cforceinline operator RelSlice<t>();
 };
 
-#define for_array(loopVar, array) for(int loopVar = 0; loopVar < (array).length; ++loopVar)
+#define for_array(loopVar, array) for(int loopVar = 0; loopVar < (array).len; ++loopVar)
 
 // Used for dynamic arrays with unknown/variable lifetimes
 #define Array_MinCapacity 16
@@ -180,15 +180,15 @@ struct Array : public Slice<t>
     t* Reserve();
     void Resize(uint32 numElements);
     void ResizeAndInit(uint32 numElements);
-    cforceinline t last() { return this->ptr[this->length-1]; };
+    cforceinline t last() { return this->ptr[this->len-1]; };
     //Array<t> CopyToArena(Arena* to);
     void FreeAll();
     
 #ifdef BoundsChecking
     // For reading the value
-    cforceinline t  operator [](int idx) const { Assert(idx < length); return vec[idx]; };
+    cforceinline t  operator [](int idx) const { Assert(idx < len); return vec[idx]; };
     // For writing to the value (this returns a left-value)
-    cforceinline t& operator [](int idx) { Assert(idx < length); return vec[idx]; };
+    cforceinline t& operator [](int idx) { Assert(idx < len); return vec[idx]; };
 #else
     // For reading the value
     cforceinline t  operator [](int idx) const { return ptr[idx]; };
@@ -202,19 +202,19 @@ struct Array : public Slice<t>
 // it's better to keep the null terminator for C compatibility.
 // It's the same thing either way, the length shouldn't take the
 // null terminator into account, if present. This is not just a typedef
-// of Array<char> because Strings are considered immutable (can't write to it),
-// so there is no [] operator for writing to it.
+// of Array<char> because Strings are considered immutable, so there is
+// no [] operator for writing to it.
 struct String
 {
     char* ptr;
-    int64 length;
+    int64 len;
     
     void Append(Arena* a, char element);
     String CopyToArena(Arena* to);
     
 #ifdef BoundsChecking
     // For reading the value
-    inline char operator [](int idx) const { Assert(idx < length); return ptr[idx]; };
+    inline char operator [](int idx) const { Assert(idx < len); return ptr[idx]; };
 #else
     // For reading the value
     inline char operator [](int idx) const { return ptr[idx]; };
@@ -228,7 +228,7 @@ struct HashedString
         struct
         {
             char* ptr;
-            int64 length;
+            int64 len;
         };
         String str;
     };
@@ -237,7 +237,7 @@ struct HashedString
     
 #ifdef BoundsChecking
     // For reading the value
-    inline char operator [](int idx) const { Assert(idx < length); return ptr[idx]; };
+    inline char operator [](int idx) const { Assert(idx < len); return ptr[idx]; };
 #else
     // For reading the value
     inline char operator [](int idx) const { return ptr[idx]; };
@@ -455,19 +455,19 @@ template<typename t>
 struct RelSlice
 {
     RelPtr<t> ptr = 0;
-    int32 length = 0;
+    int32 len = 0;
     
     void Append(Arena* a, t element);
     void Resize(Arena* a, uint32 newSize);
     void ResizeAndInit(Arena* a, uint32 newSize);
     Slice<t> CopyToArena(Arena* to);
-    cforceinline t last() { return this->ptr[this->length-1]; };
+    cforceinline t last() { return this->ptr[this->len-1]; };
     
 #ifdef BoundsChecking
     // For reading the value
-    cforceinline t  operator [](int idx) const { Assert(idx < length); return ptr[idx]; };
+    cforceinline t  operator [](int idx) const { Assert(idx < len); return ptr[idx]; };
     // For writing to the value (this returns a left-value)
-    cforceinline t& operator [](int idx) { Assert(idx < length); return ptr[idx]; };
+    cforceinline t& operator [](int idx) { Assert(idx < len); return ptr[idx]; };
 #else
     // For reading the value
     cforceinline t  operator [](int idx) const { return ptr[idx]; };
@@ -476,11 +476,11 @@ struct RelSlice
 #endif
     
     // Conversion operator to slice
-    cforceinline operator Slice<t>() { return {.ptr=ptr.operator->(), .length=length}; }
+    cforceinline operator Slice<t>() { return {.ptr=ptr.operator->(), .len=len}; }
 };
 
 template<typename t>
-cforceinline Slice<t>::operator RelSlice<t>() { return {.ptr=ptr, .length=(int32)length}; }
+cforceinline Slice<t>::operator RelSlice<t>() { return {.ptr=ptr, .len=(int32)len}; }
 
 #if 0
 void test2()
@@ -602,39 +602,39 @@ Q_SWAP(q_a1, q_a2);               \
 
 #if 0
 #endif
-    
-    /* Partition [q_l,q_r] around a pivot.  After partitioning,
-     * [q_l,q_j] are the elements that are less than or equal to the pivot,
-     * while [q_i,q_r] are the elements greater than or equal to the pivot. */
+
+/* Partition [q_l,q_r] around a pivot.  After partitioning,
+ * [q_l,q_j] are the elements that are less than or equal to the pivot,
+ * while [q_i,q_r] are the elements greater than or equal to the pivot. */
 #define Q_PARTITION(q_l, q_r, q_i, q_j, Q_UINT, Q_LESS, Q_SWAP)          \
 do {                                                                 \
 /* The middle element, not to be confused with the median. */    \
 Q_UINT q_m = q_l + ((q_r - q_l) >> 1);                           \
-    /* Reorder the second, the middle, and the last items.               \
-     * As [Edelkamp Weiss 2016] explain, using the second element         \
-     * instead of the first one helps avoid bad behaviour for             \
-     * decreasingly sorted arrays.  This method is used in recent         \
-     * versions of gcc's std::sort, see gcc bug 58437#c13, although       \
-     * the details are somewhat different (cf. #c14). */                  \
-    Q_SORT3(q_l + 1, q_m, q_r, Q_LESS, Q_SWAP);                          \
-    /* Place the median at the beginning. */                             \
-    Q_SWAP(q_l, q_m);                                                    \
-    /* Partition [q_l+2, q_r-1] around the median which is in q_l.       \
-     * q_i and q_j are initially off by one, they get decremented         \
-     * in the do-while loops. */                                          \
-    q_i = q_l + 1; q_j = q_r;                                            \
-    while (1) {                                                          \
-        do q_i++; while (Q_LESS(q_i, q_l));                              \
-        do q_j--; while (Q_LESS(q_l, q_j));                              \
-        if (q_i >= q_j) break; /* Sedgewick says "until j < i" */        \
-        Q_SWAP(q_i, q_j);                                                \
-    }                                                                    \
-    /* Compensate for the i==j case. */                                  \
-    q_i = q_j + 1;                                                       \
-    /* Put the median to its final place. */                             \
-    Q_SWAP(q_l, q_j);                                                    \
-    /* The median is not part of the left subfile. */                    \
-    q_j--;                                                               \
+/* Reorder the second, the middle, and the last items.               \
+ * As [Edelkamp Weiss 2016] explain, using the second element         \
+ * instead of the first one helps avoid bad behaviour for             \
+ * decreasingly sorted arrays.  This method is used in recent         \
+ * versions of gcc's std::sort, see gcc bug 58437#c13, although       \
+ * the details are somewhat different (cf. #c14). */                  \
+Q_SORT3(q_l + 1, q_m, q_r, Q_LESS, Q_SWAP);                          \
+/* Place the median at the beginning. */                             \
+Q_SWAP(q_l, q_m);                                                    \
+/* Partition [q_l+2, q_r-1] around the median which is in q_l.       \
+ * q_i and q_j are initially off by one, they get decremented         \
+ * in the do-while loops. */                                          \
+q_i = q_l + 1; q_j = q_r;                                            \
+while (1) {                                                          \
+    do q_i++; while (Q_LESS(q_i, q_l));                              \
+    do q_j--; while (Q_LESS(q_l, q_j));                              \
+    if (q_i >= q_j) break; /* Sedgewick says "until j < i" */        \
+    Q_SWAP(q_i, q_j);                                                \
+}                                                                    \
+/* Compensate for the i==j case. */                                  \
+q_i = q_j + 1;                                                       \
+/* Put the median to its final place. */                             \
+Q_SWAP(q_l, q_j);                                                    \
+/* The median is not part of the left subfile. */                    \
+q_j--;                                                               \
 } while (0)
 
 /* Insertion sort is applied to small subfiles - this is contrary to

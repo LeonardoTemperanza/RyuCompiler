@@ -113,14 +113,14 @@ bool CheckProcDecl(Typer* t, Ast_ProcDecl* decl)
     auto procType = Ast_GetProcType(decl);
     
     // Look up return types
-    if(procType->retTypes.length > 0)
+    if(procType->retTypes.len > 0)
     {
         if(!CheckType(t, procType->retTypes[0], decl->where))
             return false;
     }
     
     // Look up argument types
-    for(int i = 0; i < procType->args.length; ++i)
+    for(int i = 0; i < procType->args.len; ++i)
     {
         if(!CheckType(t, procType->args[i]->type, decl->where))
             return false;
@@ -159,7 +159,7 @@ bool CheckProcDef(Typer* t, Ast_ProcDef* proc)
     if(!CheckBlock(t, &proc->block)) return false;
     
     auto retTypes = Ast_GetProcDefType(proc)->retTypes;
-    if(retTypes.length > 0 && !t->checkedReturnStmt)
+    if(retTypes.len > 0 && !t->checkedReturnStmt)
     {
         SemanticError(t, t->currentProc->where, StrLit("Procedure has a return type but no return statement was found."));
         return false;
@@ -220,7 +220,7 @@ bool CheckBlock(Typer* t, Ast_Block* block)
     defer(t->curScope = prevScope);
     
     bool result = true;
-    for(int i = 0; i < block->stmts.length && result; ++i)
+    for(int i = 0; i < block->stmts.len && result; ++i)
     {
         Ast_Node* node = block->stmts[i];
         result &= CheckNode(t, node);
@@ -441,13 +441,13 @@ bool CheckReturn(Typer* t, Ast_Return* stmt)
     Slice<TypeInfo*> retTypes = Ast_GetProcDefType(t->currentProc)->retTypes;
     
     // Mismatching
-    if(retTypes.length != retStmt->rets.length)
+    if(retTypes.len != retStmt->rets.len)
     {
-        IncompatibleReturnsError(t, retStmt->where, retStmt->rets.length, retTypes.length);
+        IncompatibleReturnsError(t, retStmt->where, retStmt->rets.len, retTypes.len);
         return false;
     }
     
-    if(retStmt->rets.length > 0)
+    if(retStmt->rets.len > 0)
     {
         for_array(i, retStmt->rets)
         {
@@ -467,7 +467,7 @@ bool CheckReturn(Typer* t, Ast_Return* stmt)
     }
     else  // Check if this function is supposed to have one or more ret types
     {
-        if(retTypes.length > 0)
+        if(retTypes.len > 0)
         {
             SemanticError(t, retStmt->where, StrLit("Return statement does not specify a value, ..."));
             SemanticErrorContinue(t, t->currentProc->where, StrLit("... but the procedure requires a return value."));
@@ -529,7 +529,7 @@ bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt)
     
     int leftCounter = 0;
     int rightCounter = 0;
-    while(leftCounter < lefts.length && rightCounter < rights.length)
+    while(leftCounter < lefts.len && rightCounter < rights.len)
     {
         Slice<TypeInfo*> toCheck;  // > 1 if there's a function call with multiple return values, = 1 for anything else
         
@@ -558,14 +558,14 @@ bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt)
                 toCheck.ptr = &expr->type;
             }
             
-            toCheck.length = 1;
+            toCheck.len = 1;
         }
         
         ++rightCounter;
         
         // Check type compatibility between lhs and rhs
         bool exit = false;
-        for(int i = 0; i < toCheck.length && leftCounter < lefts.length; ++i)
+        for(int i = 0; i < toCheck.len && leftCounter < lefts.len; ++i)
         {
             auto lhs = lefts[leftCounter];
             auto lhsType = leftTypes[leftCounter];
@@ -585,9 +585,9 @@ bool CheckMultiAssign(Typer* t, Ast_MultiAssign* stmt)
         }
     }
     
-    if(leftCounter != lefts.length || rightCounter != rights.length)
+    if(leftCounter != lefts.len || rightCounter != rights.len)
     {
-        SemanticError(t, stmt->where, StrLit("Mismatching number of left-hand and right-hand side values (%d and %d, respectively)"), lefts.length, rightCounter);
+        SemanticError(t, stmt->where, StrLit("Mismatching number of left-hand and right-hand side values (%d and %d, respectively)"), lefts.len, rightCounter);
         return false;
     }
     
@@ -661,7 +661,7 @@ bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign)
     // returns cannot be used in this context.
     // NOTE: Maybe rethink this language feature, so that it can be more
     // flexible?
-    if(!isMultiAssign && procType->retTypes.length > 1)
+    if(!isMultiAssign && procType->retTypes.len > 1)
     {
         SemanticError(t, call->where,
                       StrLit("Calling procedures with multiple return values in expression is not allowed. Use a MultiAssign statement instead."));
@@ -671,13 +671,13 @@ bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign)
     // Check that number of parameters and types correspond
     // Support varargs in the future maybe?
     
-    if(call->args.length != procType->args.length)
+    if(call->args.len != procType->args.len)
     {
-        SemanticError(t, call->where, StrLit("Procedure does not take %d arguments"), call->args.length);
+        SemanticError(t, call->where, StrLit("Procedure does not take %d arguments"), call->args.len);
         return false;
     }
     
-    int numArgs = call->args.length;
+    int numArgs = call->args.len;
     for(int i = 0; i < numArgs; ++i)
     {
         if(!CheckNode(t, call->args[i]))
@@ -688,7 +688,7 @@ bool CheckFuncCall(Typer* t, Ast_FuncCall* call, bool isMultiAssign)
         call->args[i]->castType = procType->args[i]->type;
     }
     
-    if(procType->retTypes.length <= 0)
+    if(procType->retTypes.len <= 0)
         call->type = &Typer_None;
     else
         call->type = procType->retTypes[0];
@@ -1088,7 +1088,7 @@ bool CheckMemberAccess(Typer* t, Ast_MemberAccess* expr)
     expr->structDecl = structType;
     
     int idx = -1;
-    for(int i = 0; i < structType->memberNames.length; ++i)
+    for(int i = 0; i < structType->memberNames.len; ++i)
     {
         if(structType->memberNames[i] == expr->memberName)
         {
@@ -1411,7 +1411,7 @@ Ast_Declaration* IdentResolution(Typer* t, Ast_Block* scope, Token* where, Hashe
         {
             auto& decls = curScope->decls;
             
-            for(int i = 0; i < decls.length; ++i)
+            for(int i = 0; i < decls.len; ++i)
             {
                 bool applyOrderConstraint = ApplyOrderConstraint(decls[i]);
                 if(applyOrderConstraint && curScope->decls[i]->where >= where)
@@ -1449,7 +1449,7 @@ bool CheckNotAlreadyDeclared(Typer* t, Ast_Block* scope, Ast_Declaration* decl)
     }
     else
     {
-        for(int i = 0; i < scope->decls.length && scope->decls[i]->where < decl->where; ++i)
+        for(int i = 0; i < scope->decls.len && scope->decls[i]->where < decl->where; ++i)
         {
             if(scope->decls[i]->name == decl->name)
             {
@@ -1660,9 +1660,9 @@ bool TypesIdentical(Typer* t, TypeInfo* type1, TypeInfo* type2)
             {
                 auto proc1 = (Ast_ProcType*)type1;
                 auto proc2 = (Ast_ProcType*)type2;
-                if(proc1->args.length != proc2->args.length)
+                if(proc1->args.len != proc2->args.len)
                     return false;
-                if(proc1->retTypes.length != proc2->retTypes.length)
+                if(proc1->retTypes.len != proc2->retTypes.len)
                     return false;
                 
                 for_array(i, proc1->args)
@@ -1812,8 +1812,8 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
             case Typeid_Proc:
             {
                 auto procType = (Ast_ProcType*)type;
-                auto argTypesStr = Arena_AllocArray(scratch2, procType->args.length, String);
-                auto retTypesStr = Arena_AllocArray(scratch2, procType->retTypes.length, String);
+                auto argTypesStr = Arena_AllocArray(scratch2, procType->args.len, String);
+                auto retTypesStr = Arena_AllocArray(scratch2, procType->retTypes.len, String);
                 
                 for_array(i, procType->args)
                     argTypesStr[i] = TypeInfo2String(procType->args[i]->type, scratch2);
@@ -1826,19 +1826,19 @@ String TypeInfo2String(TypeInfo* type, Arena* dest)
                 for_array(i, procType->args)
                 {
                     strBuilder.Append(argTypesStr[i]);
-                    if(i != procType->args.length - 1)
+                    if(i != procType->args.len - 1)
                         strBuilder.Append(", ");
                 }
                 
                 strBuilder.Append(")->");
                 
-                if(procType->retTypes.length > 1)
+                if(procType->retTypes.len > 1)
                     strBuilder.Append("(");
                 
                 for_array(i, procType->retTypes)
                     strBuilder.Append(retTypesStr[i]);
                 
-                if(procType->retTypes.length > 1)
+                if(procType->retTypes.len > 1)
                     strBuilder.Append(StrLit(")"));
                 
                 quit = true;
@@ -1875,9 +1875,9 @@ String GenerateErrorString(String message, va_list args, Arena* allocTo)
     // First and last characters of string separated by %T (to append)
     int first = 0;
     int last  = 0;
-    while(i < message.length)
+    while(i < message.len)
     {
-        bool isLastChar = i >= message.length - 1;
+        bool isLastChar = i >= message.len - 1;
         if(!isLastChar && message[i] == '%')
         {
             if(message[i+1] == 'T')
@@ -1887,7 +1887,7 @@ String GenerateErrorString(String message, va_list args, Arena* allocTo)
                 {
                     String toAppend;
                     toAppend.ptr = message.ptr + first;
-                    toAppend.length = last - first + 1;
+                    toAppend.len = last - first + 1;
                     resBuilder.Append(toAppend);
                 }
                 
@@ -1905,7 +1905,7 @@ String GenerateErrorString(String message, va_list args, Arena* allocTo)
                 {
                     String toAppend;
                     toAppend.ptr = message.ptr + first;
-                    toAppend.length = last - first + 1;
+                    toAppend.len = last - first + 1;
                     resBuilder.Append(toAppend);
                 }
                 
@@ -1924,12 +1924,12 @@ String GenerateErrorString(String message, va_list args, Arena* allocTo)
         ++i;
     }
     
-    last = message.length - 1;
+    last = message.len - 1;
     if(first <= last)
     {
         String toAppend;
         toAppend.ptr = message.ptr + first;
-        toAppend.length = last - first + 1;
+        toAppend.len = last - first + 1;
         resBuilder.Append(toAppend);
     }
     

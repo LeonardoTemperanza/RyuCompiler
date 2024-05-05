@@ -47,7 +47,7 @@ int main(int argCount, char** argValue)
               filePaths.objFiles.FreeAll();
           });
     
-    bool noFiles = filePaths.srcFiles.length <= 0 && filePaths.objFiles.length <= 0;
+    bool noFiles = filePaths.srcFiles.len <= 0 && filePaths.objFiles.len <= 0;
     
     if(cmdLineArgs.help)
     {
@@ -130,7 +130,7 @@ int main(int argCount, char** argValue)
     fflush(stderr);
 #endif
     
-    Tc_CodegenAndLink(fileAst, &interp, filePaths.objFiles);
+    //Tc_CodegenAndLink(fileAst, &interp, filePaths.objFiles);
     
     if(cmdLineArgs.time) PrintTimings();
     
@@ -190,11 +190,11 @@ FilePaths ParseCmdLineArgs(Slice<char*> args)
     
     // First argument is executable name
     int at = 1;
-    while(at < args.length)
+    while(at < args.len)
     {
         String argStr = { args[at], (int64)strlen(args[at]) };
         
-        if(argStr.length <= 0 || argStr[0] != '-')
+        if(argStr.len <= 0 || argStr[0] != '-')
         {
             // This is required to be a file name.
             
@@ -213,7 +213,7 @@ FilePaths ParseCmdLineArgs(Slice<char*> args)
         }
         
         ++argStr.ptr;
-        --argStr.length;
+        --argStr.len;
         
         // Use the X macro to parse arguments based on their type, default value, etc.
 #define X(varName, string, type, defaultVal, desc) \
@@ -224,7 +224,7 @@ if(strcmp(argStr.ptr, string) == 0) { ++at; cmdLineArgs.varName = ParseArg<type>
             // If not any other case
         {
             ++at;
-            fprintf(stderr, "Unknown command line argument: '%.*s', will be ignored.\n", (int)argStr.length, argStr.ptr);
+            fprintf(stderr, "Unknown command line argument: '%.*s', will be ignored.\n", (int)argStr.len, argStr.ptr);
         }
 #undef X
     }

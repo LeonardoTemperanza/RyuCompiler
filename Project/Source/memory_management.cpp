@@ -162,8 +162,8 @@ void* Arena_ResizeLastAlloc(Arena* arena, void* oldMemory, size_t oldSize, size_
 template<typename t>
 cforceinline void Arena_ResizeLastAllocatedSlice(Arena* arena, Slice<t>* array, size_t newLength, size_t align)
 {
-    array->ptr = (t*)Arena_ResizeLastAlloc(arena, array->ptr, sizeof(t) * array->length, sizeof(t) * newLength, align);
-    array->length = newLength;
+    array->ptr = (t*)Arena_ResizeLastAlloc(arena, array->ptr, sizeof(t) * array->len, sizeof(t) * newLength, align);
+    array->len = newLength;
 }
 
 void* Arena_AllocAndCopy(Arena* arena, void* toCopy, size_t size, size_t align)
@@ -183,9 +183,9 @@ char* Arena_PushStringAndNullTerminate(Arena* arena, void* toCopy, size_t size)
 
 char* Arena_PushStringAndNullTerminate(Arena* arena, String str)
 {
-    char* result = (char*)Arena_Alloc(arena, str.length+1, 1);
-    memcpy(result, str.ptr, str.length);
-    result[str.length] = 0;
+    char* result = (char*)Arena_Alloc(arena, str.len+1, 1);
+    memcpy(result, str.ptr, str.len);
+    result[str.len] = 0;
     return result;
 }
 

@@ -16,6 +16,8 @@
 #include "parser.cpp"
 #include "semantics.cpp"
 #include "dependency_graph.cpp"
-#include "tilde_codegen.cpp"
-#include "bytecode_builder.cpp"
-#include "interpreter.cpp"
+//#include "tilde_codegen.cpp"
+//#include "bytecode_builder.cpp"
+//#include "interpreter.cpp"
+
+#include "tilde_codegen_from_ast.h"

@@ -39,7 +39,7 @@ IF NOT EXIST "microsoft_craziness.obj" (
 cl /nologo /c /DMICROSOFT_CRAZINESS_IMPLEMENTATION /TP ..\Project\Source\os\microsoft_craziness.h -Fo:microsoft_craziness.obj
 )
 
-set common=/FC /std:c++20 /permissive %warning_level% /we4061 /we4062 /we4714 /wd4530 /wd4200 /nologo %include_dirs% /link ..\Project\Libs\LLVM-C.lib ..\Project\Libs\tb.lib Ole32.lib OleAut32.lib
+set common=/FC /std:c++20 /permissive %warning_level% /we4061 /we4062 /we4714 /wd4530 /wd4200 /nologo %include_dirs% /link ..\Project\Libs\LLVM-C.lib ..\Project\Libs\tb.lib Ole32.lib OleAut32.lib Advapi32.lib
 set source_and_objs=..\Project\Source\unity_build.cpp microsoft_craziness.obj
 
 REM TODO: should add the option to pass a command line argument for this
@@ -63,12 +63,14 @@ REM set build_ret=%errorlevel%
 echo Done.
 
 REM Compile test program
-echo Tests:
 cl /Od /Feryu_test.exe ..\Project\Source\utils\ryu_test.cpp %common%
 set test_build_ret=%errorlevel%
 
 if %test_build_ret%==0 (
+echo Tests:
+if %build_ret%==0 (
 ryu_test.exe
+)
 )
 
 REM For quicker testing

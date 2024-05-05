@@ -5,37 +5,9 @@
 
 static DepGraph graph;
 
-// TODO: A lot of stuff still missing...
-
-// Lastly I should implement some more features that could
+// I should implement some more features that could
 // stress the dependency system more... Like #size_of and #type_of
 // which are very simple to implement
-
-DepGraph Dg_InitGraph(Arena* phaseArenas[CompPhase_EnumSize][2])
-{
-    ProfileFunc(prof);
-    
-    DepGraph graph;
-    graph.arena = Arena_VirtualMemInit(GB(1), MB(2));
-    
-    Arena_VirtualMemInit(GB(1), MB(2));
-    
-    graph.queues[0].outputArena = phaseArenas[0][1];  // Input arena of stage 1
-    for(int i = 1; i < CompPhase_EnumSize; ++i)
-    {
-        auto& queue = graph.queues[i];
-        queue.inputArena = graph.queues[i-1].outputArena;
-        queue.processingArena = phaseArenas[i][0];
-        queue.outputArena = phaseArenas[i][1];
-        queue.input      = { 0, 0 };
-        queue.processing = { 0, 0 };
-        queue.output     = { 0, 0 };
-        
-        queue.phase  = (CompPhase)i;
-    }
-    
-    return graph;
-}
 
 bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
 {
@@ -47,38 +19,19 @@ bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
     
     Arena typeArena = Arena_VirtualMemInit(size, commitSize);
     
-    // Initialize the graph
-    Arena  phaseArenas[CompPhase_EnumSize][2];
-    Arena* phaseArenaPtrs[CompPhase_EnumSize][2];
-    for(int i = 0; i < CompPhase_EnumSize; ++i)
-    {
-        for(int j = 0; j < 2; ++j)
-        {
-            phaseArenaPtrs[i][j] = &phaseArenas[i][j];
-            phaseArenas[i][j] = Arena_VirtualMemInit(size, commitSize);
-        }
-    }
-    
-    graph = Dg_InitGraph(phaseArenaPtrs);
+    // Graph initialization
+    // TODO: For now we only have one file, one ast.
+    // later on we'll need to merge all dynamic arrays
     graph.interp = interp;
     graph.items = p->entities;
+    graph.queues[0].procs = p->procs;
+    p->procs.ptr    = nullptr;
+    p->procs.len = 0;
     
     Typer t = InitTyper(&typeArena, p->tokenizer);
     t.fileScope = file;
     
     graph.typer = &t;
-    
-    *interp = Interp_Init();
-    
-    // TODO: for now we only have one file, one ast.
-    // Fill the typecheck queue with initial values
-    for_array(i, p->entities)
-    {
-        ProfileBlock(prof, "InitQueue");
-        
-        auto& typecheckQueue = graph.queues[CompPhase_Typecheck];
-        typecheckQueue.input.Append(typecheckQueue.inputArena, i);
-    }
     
     // NOTE(Leo): The called functions have the responsibility of
     // appropriately calling Yield or SaveError to update
@@ -94,22 +47,23 @@ bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
         // For each stage in the pipeline
         for(int i = CompPhase_Uninit + 1; i < CompPhase_EnumSize; ++i)
         {
+            CompPhase phase = (CompPhase)i;
+            
 #if DebugDep
-            String phase = Dg_CompPhase2Str((CompPhase)i);
-            fprintf(stderr, "%.*s:\n", (int)phase.length, phase.ptr);
+            String phaseStr = Dg_CompPhase2Str(phase);
+            fprintf(stderr, "%.*s:\n", (int)phaseStr.len, phaseStr.ptr);
 #endif
             
-            auto& queue = graph.queues[i];
-            Dg_StartIteration(&graph, &queue);
-            
             // Detect cycles and perform topological sorting
-            bool cycle = Dg_DetectCycle(&graph, &queue);
-            Dg_PerformStage(&graph, &queue);
+            bool cycle = Dg_DetectCycle(&graph, phase);
+            Dg_PerformStage(&graph, phase);
             
-            if(cycle) graph.status = false;
-            if(queue.numSucceeded > 0) progress = true;
-            if(queue.input.length > 0) done = false;
+            if(cycle) graph.error = true;
             
+            if(graph.infos[phase].numPassed > 0)
+                progress = true;
+            if(graph.infos[phase].numRemaining > 0)
+                done = false;
 #if DebugDep
             Dg_DebugPrintDeps(&g);
 #endif
@@ -120,13 +74,28 @@ bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
     if(!done && !progress)
         fprintf(stderr, "Internal error: Unable to resolve code dependencies and/or detect a cycle.\n");
     
-    return graph.status;
+    return !graph.error;
+}
+
+Queue* GetInputPipe(DepGraph graph, CompPhase phase)
+{
+    return &graph.queues[phase*2];
+}
+
+Queue* GetProcessingPipe(DepGraph graph, CompPhase phase)
+{
+    return &graph.queues[phase*2+1];
+}
+
+Queue* GetOutputPipe(DepGraph graph, CompPhase phase)
+{
+    return &graph.queues[(phase+1)*2];
 }
 
 Dg_IdxGen Dg_NewNode(Ast_Node* node, Arena* allocTo, Slice<Dg_Entity>* entities)
 {
-    entities->ResizeAndInit(allocTo, entities->length+1);
-    Dg_IdxGen res = { (uint32)entities->length-1, 0 };
+    entities->ResizeAndInit(allocTo, entities->len+1);
+    Dg_IdxGen res = { (uint32)entities->len-1, 0 };
     
     // Update the node. The idx will be same until
     // the node has gone through all stages in the
@@ -144,18 +113,6 @@ Dg_IdxGen Dg_NewNode(Ast_Node* node, Arena* allocTo, Slice<Dg_Entity>* entities)
     return res;
 }
 
-void Dg_StartIteration(DepGraph* g, Queue* q)
-{
-    if(q->phase < CompPhase_EnumSize - 1)
-        q->output = g->queues[q->phase+1].input;
-    
-    if(q->phase > CompPhase_Uninit + 1)
-        q->input = g->queues[q->phase-1].output;
-    
-    q->numSucceeded = 0;
-    q->numFailed = 0;
-}
-
 void Dg_Yield(Ast_Node* yieldUpon, CompPhase neededPhase)
 {
     Dg_Dependency dep;
@@ -171,16 +128,11 @@ void Dg_Error()
 {
     // Mark the current node
     graph.items[graph.curIdx].flags |= Entity_Error;
-    graph.status = false;
+    graph.error = true;
 }
 
-void Dg_UpdatePhase(Dg_Entity* entity, CompPhase newPhase)
-{
-    entity->phase = newPhase;
-    entity->node->phase = newPhase;
-}
-
-void Dg_UpdateQueue(DepGraph* graph, Queue* q, int inputIdx, bool success)
+#if 0
+void Dg_UpdateQueue(DepGraph* graph, CompPhase phase, int inputIdx, bool success)
 {
     Dg_Idx entityIdx = q->processing[inputIdx];
     Dg_Entity& entity = graph->items[entityIdx];
@@ -199,7 +151,52 @@ void Dg_UpdateQueue(DepGraph* graph, Queue* q, int inputIdx, bool success)
         ++q->numFailed;
     }
 }
+#endif
 
+void Dg_PerformStage(DepGraph* graph, CompPhase phase)
+{
+    ProfileFunc(prof);
+    
+    ResetTyper(graph->typer);
+    
+    Queue* inputQueue      = GetInputPipe(*graph, phase);
+    Queue* processingQueue = GetProcessingPipe(*graph, phase);
+    Queue* outputQueue     = GetOutputPipe(*graph, phase);
+    
+    // Procedure definitions
+    bool passed = true;
+    switch(phase)
+    {
+        case CompPhase_Uninit: break;
+        case CompPhase_EnumSize: break;
+        case CompPhase_Typecheck:
+        {
+            for(int i = 0; i < inputQueue->procs.len; ++i)
+            {
+                Dg_Idx id = inputQueue->procs[i].id;
+                auto proc = (Ast_ProcDef*)graph->items[id].node;
+                bool ok = CheckProcDef(graph->typer, proc);
+            }
+            
+            break;
+        }
+        case CompPhase_ComputeSize: break;
+        case CompPhase_Bytecode:
+        {
+            
+            
+            break;
+        }
+        case CompPhase_Run:
+        {
+            
+            
+            break;
+        }
+    }
+}
+
+#if 0
 void Dg_PerformStage(DepGraph* graph, Queue* q)
 {
     ProfileFunc(prof);
@@ -251,8 +248,8 @@ void Dg_PerformStage(DepGraph* graph, Queue* q)
                 auto& gNode = graph->items[q->processing[i]];
                 auto astNode = gNode.node;
                 
-                bool success = GenBytecode(graph->interp, astNode);
-                Dg_UpdateQueue(graph, q, i, success);
+                //bool success = GenBytecode(graph->interp, astNode);
+                Dg_UpdateQueue(graph, q, i, true);
             }
             
             break;
@@ -273,23 +270,26 @@ void Dg_PerformStage(DepGraph* graph, Queue* q)
     
     Arena_FreeAll(q->processingArena);
     q->processing.ptr = 0;
-    q->processing.length = 0;
+    q->processing.len = 0;
 }
+#endif
 
 uint32 globalIdx = 0;
-bool Dg_DetectCycle(DepGraph* g, Queue* q)
+bool Dg_DetectCycle(DepGraph* g, CompPhase phase)
 {
     ProfileFunc(prof);
     
     // Apply Tarjan's algorithm to find all Strongly Connected Components
-    // Found here: https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm
     
     // Only nodes from the current phase queue are considered for
-    // the start of the DFS. Of course in the DFS all nodes are considered
+    // the start of the DFS. In the DFS all nodes are considered
+    
+    Queue* input = GetInputPipe(g, phase);
     
     // Clean variables for next use of algorithm
     globalIdx = 0;
-    for_array(i, q->input)
+    
+    for(int i = 0; i < input->procs.len; ++i)
         g->items[q->input[i]].stackIdx = -1;
     
     for_array(i, q->input)
@@ -321,12 +321,12 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
     // Number of SCCs which contain at least one cycle
     uint32 numCycles = 0;
     
-    while(start < q->input.length)
+    while(start < q->input.len)
     {
         auto groupId = g->items[q->input[start]].sccIdx;
         
         uint32 end = start;
-        while(end < q->input.length && g->items[q->input[end]].sccIdx == groupId) ++end;
+        while(end < q->input.len && g->items[q->input[end]].sccIdx == groupId) ++end;
         
         ++numGroups;
         bool isCycle = false;
@@ -393,6 +393,9 @@ bool Dg_DetectCycle(DepGraph* g, Queue* q)
 
 void Dg_TarjanVisit(DepGraph* g, Dg_Entity* node, Slice<Dg_Entity*>* stack, Arena* stackArena)
 {
+    // Apply Tarjan's algorithm to find all Strongly Connected Components
+    // Found here: https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm
+    
     node->stackIdx = globalIdx;
     node->sccIdx = globalIdx;
     ++globalIdx;
@@ -441,8 +444,8 @@ void Dg_TarjanVisit(DepGraph* g, Dg_Entity* node, Slice<Dg_Entity*>* stack, Aren
         Dg_Entity* popped;
         do
         {
-            popped = (*stack)[stack->length-1];
-            stack->Resize(stackArena, stack->length-1);
+            popped = (*stack)[stack->len-1];
+            stack->Resize(stackArena, stack->len-1);
             popped->flags &= ~Entity_OnStack;
         }
         while(popped != node);
@@ -456,11 +459,12 @@ void Dg_TopologicalSort(DepGraph* graph, Queue* queue)
     
 #define Tmp_Less(i, j) graph->items[queue->input[i]].stackIdx < graph->items[queue->input[j]].stackIdx
 #define Tmp_Swap(i, j) tmp = queue->input[i], queue->input[i] = queue->input[j], queue->input[j] = tmp
-    QSORT(queue->input.length, Tmp_Less, Tmp_Swap);
+    QSORT(queue->input.len, Tmp_Less, Tmp_Swap);
 #undef Tmp_Swap
 #undef Tmp_Less
 }
 
+// TODO: We need an error API, where error infos are produced
 void Dg_ExplainCyclicDependency(DepGraph* g, Queue* q, Dg_Idx start, Dg_Idx end)
 {
     SetErrorColor();
@@ -608,9 +612,9 @@ void Dg_DebugPrintDeps(DepGraph* g)
                 nodeStr.ptr[j] = ' ';
         }
         
-        numChars += fprintf(stderr, "%.*s ... ", (int)nodeStr.length, nodeStr.ptr);
+        numChars += fprintf(stderr, "%.*s ... ", (int)nodeStr.len, nodeStr.ptr);
         String phase = Dg_CompPhase2Str(g->items[i].phase);
-        numChars += fprintf(stderr, "(%.*s)", (int)phase.length, phase.ptr);
+        numChars += fprintf(stderr, "(%.*s)", (int)phase.len, phase.ptr);
         
         if(g->items[i].node->kind == AstKind_ProcDecl)
             fprintf(stderr, " (decl)");
@@ -619,7 +623,7 @@ void Dg_DebugPrintDeps(DepGraph* g)
             fprintf(stderr, " (error)");
         
         auto& waitFor = g->items[i].waitFor;
-        if(waitFor.length <= 0)
+        if(waitFor.len <= 0)
             fprintf(stderr, " (no deps)\n");
         
         for_array(j, waitFor)
@@ -644,9 +648,9 @@ void Dg_DebugPrintDeps(DepGraph* g)
                         nodeStr.ptr[j] = ' ';
                 }
                 
-                fprintf(stderr, "%.*s ... ", (int)nodeStr.length, nodeStr.ptr);
+                fprintf(stderr, "%.*s ... ", (int)nodeStr.len, nodeStr.ptr);
                 String phase = Dg_CompPhase2Str(waitFor[j].neededPhase);
-                fprintf(stderr, "(%.*s)\n", (int)phase.length, phase.ptr);
+                fprintf(stderr, "(%.*s)\n", (int)phase.len, phase.ptr);
             }
         }
     }

@@ -16,6 +16,8 @@ struct Parser
     
     Arena* entityArena;
     Slice<Dg_Entity> entities;
+    Array<Dg_ProcDef> procs;
+    // others
     
     // False if in error mode
     bool status = true;
