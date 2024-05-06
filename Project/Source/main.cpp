@@ -132,11 +132,16 @@ int main(int argCount, char** argValue)
     
     //Tc_CodegenAndLink(fileAst, &interp, filePaths.objFiles);
     
+    // Render compilation messages
+    SortMessages();
+    ShowMessages();
+    
     if(cmdLineArgs.time) PrintTimings();
     
     return !status;
 }
 
+// TODO This seems a bit too complicated, but it is c++ so not sure we can do better...
 template<typename t>
 t ParseArg(Slice<char*> args, int* at) { static_assert(false, "Unknown command line argument type"); }
 template<> int ParseArg<int>(Slice<char*> args, int* at) { int val = atoi(args[*at]); ++*at; return val; }

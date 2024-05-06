@@ -9,6 +9,7 @@
 // the CmdLineArgsInfo macro.
 
 // Var name, string representation, type, default value, description
+// This is an X-macro. For more info: https://en.wikipedia.org/wiki/X_macro
 #define CmdLineArgsInfo \
 X(help,              "h",               bool,  false,        "Print description of available command line arguments") \
 X(optLevel,          "O",               int,   0, \

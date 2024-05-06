@@ -592,6 +592,12 @@ bool operator ==(char* s1, String s2)
     return s1[i] == 0;
 }
 
+int LexCmp(String s1, String s2)
+{
+    assert(!"todo");
+    return 0;
+}
+
 inline bool operator ==(HashedString s1, HashedString s2)
 {
     // Fast path, the hashes match

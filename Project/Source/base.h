@@ -360,6 +360,7 @@ struct StringBuilder
 bool operator ==(String s1, String s2);
 bool operator ==(char* s1, String s2);
 bool operator ==(String s1, char* s2);
+int LexCmp(String s1, String s2);
 
 bool StringBeginsWith(char* stream, String str);
 bool StringBeginsWith(char* stream, char* str);

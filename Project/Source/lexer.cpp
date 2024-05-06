@@ -2,6 +2,7 @@
 #include "lexer.h"
 #include "base.h"
 
+// This is an X-macro. For more info: https://en.wikipedia.org/wiki/X_macro
 #define KeywordStringTokenMapping     \
 X("proc", Tok_Proc)               \
 X("operator", Tok_Operator)       \
