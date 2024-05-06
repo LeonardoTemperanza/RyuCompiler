@@ -7,7 +7,8 @@ CG_Ctx CG_Init()
     
     // Create module
     // TODO: Add target options
-    tb_module_create_for_host(false);
+    ctx.module = tb_module_create_for_host(false);
+    
 }
 
 void CG_Cleanup(CG_Ctx* ctx)
