@@ -561,7 +561,6 @@ bool operator ==(String s1, String s2)
     return true;
 }
 
-// char* strings are null-terminated strings.
 bool operator ==(String s1, char* s2)
 {
     int i = 0;
@@ -575,10 +574,6 @@ bool operator ==(String s1, char* s2)
     return s2[i] == 0;
 }
 
-// Copied from the operator above because another
-// function call might slow down the program if lots
-// of string compares are being performed (on debug
-// builds optimizations are disabled)
 bool operator ==(char* s1, String s2)
 {
     int i = 0;
@@ -594,8 +589,30 @@ bool operator ==(char* s1, String s2)
 
 int LexCmp(String s1, String s2)
 {
-    assert(!"todo");
-    return 0;
+    int res = 0;
+    for(int i = 0; i < s1.len && i < s2.len; ++i)
+    {
+        if(s1[i] > s2[i])
+        {
+            res = -1;
+            break;
+        }
+        else if(s1[i] < s2[i])
+        {
+            res = 1;
+            break;
+        }
+    }
+    
+    if(res == 0)
+    {
+        if(s1.len > s2.len)
+            res = -1;
+        else if(s1.len < s2.len)
+            res = 1;
+    }
+    
+    return res;
 }
 
 inline bool operator ==(HashedString s1, HashedString s2)

@@ -132,11 +132,11 @@ int main(int argCount, char** argValue)
     
     //Tc_CodegenAndLink(fileAst, &interp, filePaths.objFiles);
     
+    if(cmdLineArgs.time) PrintTimings();
+    
     // Render compilation messages
     SortMessages();
     ShowMessages();
-    
-    if(cmdLineArgs.time) PrintTimings();
     
     return !status;
 }

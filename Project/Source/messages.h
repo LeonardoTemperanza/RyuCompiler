@@ -6,16 +6,37 @@
 
 enum MessageKind
 {
-    MesKind_None = 0,  // Sentinel value, used for "null" messages
-    MesKind_Error,
-    MesKind_Warning,
-    MesKind_Log
+    MsgKind_None = 0,  // Sentinel value, used for "null" messages
+    MsgKind_Error,
+    MsgKind_Warning,
+    MsgKind_Log
 };
 
 enum MessagePhase
 {
-    MesPhase_Syntax = 0,
-    MesPhase_Semantics
+    MsgPhase_Syntax = 0,
+    MsgPhase_Semantics
+};
+
+enum MessageContentKind
+{
+    Msg_None = 0,
+    Msg_UnexpectedToken,
+    Msg_IncompatibleTypes,
+    Msg_IncompatibleReturns,
+    Msg_CannotDereference,
+    Msg_CannotConvertToScalar,
+    Msg_CannotConvertToIntegral,
+    Msg_LookAtProcDecl,
+    Msg_SpecializedMessage
+};
+
+struct MessageContent
+{
+    MessageContentKind contentKind;
+    char* message;
+    TokenKind token;
+    
 };
 
 struct Message
@@ -25,11 +46,14 @@ struct Message
     
     Token* token;
     String fileName;
+    String fileContents;
+    
+    MessageContent content;
     
     // N-ary tree. Children are nodes that continue
     // this message. Things like:
     // 1: "incorrect number of arguments in function call"
-    // 2 (based on 1): "Here's the function call signature"
+    // 2 (child of 1): "Here's the procedure call signature"
     // It's possible to have multiple levels of nesting,
     // though i'm not sure if that would be any useful
     Message* first;

@@ -17,7 +17,7 @@ Message* AppendMessage(MessageKind kind, MessagePhase phase, Message* parent, Ar
     
     Message* newMsg = nullptr;
     
-    if(firstMessage.kind == MesKind_None)
+    if(firstMessage.kind == MsgKind_None)
     {
         firstMessage = msg;
         lastMessage  = &firstMessage;
@@ -80,14 +80,14 @@ void SortMessages()
     // Sort the files lexicographically
     {
         String tmp;
-#define Tmp_Less(i, j) i < j
+#define Tmp_Less(i, j) LexCmp(fileNames[i], fileNames[j])
 #define Tmp_Swap(i, j) tmp = fileNames[i], fileNames[i] = fileNames[j], fileNames[j] = tmp 
         QSORT(fileNames.len, Tmp_Less, Tmp_Swap);
 #undef Tmp_Swap
 #undef Tmp_Less
     }
     
-    // For each file in the sorted array, do a sorting pass
+    // For each file in the sorted array, do a sorting pass on the nodes in the tree
     {
         for(int i = 0; i < fileNames.len; ++i)
         {
@@ -98,17 +98,26 @@ void SortMessages()
 
 void ShowMessages()
 {
-    ShowMessages(&firstMessage, {0});
+    MessageDrawCmd cmd = {0};
+    cmd.showFileName = true;
+    ShowMessages(&firstMessage, cmd);
 }
 
 void ShowMessages(Message* message, MessageDrawCmd cmd)
 {
-    // Draw message
-    printf("Show message");
+    if(!message || message->kind == MsgKind_None) return;
     
-    if(0)
-    {
-        ShowMessages(message->first, {0});
-        ShowMessages(message->next, {0});
-    }
+    // Draw message
+    static int debug = 0;
+    printf("message %d", debug++);
+    
+    MessageDrawCmd childCmd = cmd;
+    childCmd.showFileName = false;
+    ShowMessages(message->first, childCmd);
+    ShowMessages(message->next, cmd);
+}
+
+void ShowFileLine(Token* token, char* fileContents)
+{
+    
 }
