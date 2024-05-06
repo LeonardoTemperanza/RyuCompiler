@@ -134,7 +134,7 @@ Arg* GetRecord(String ident, bool* outFound, Arg (&args)[numArgs])
 
 Arg* GetRecord(const char* ident, bool* outFound, Arg (&args)[numArgs])
 {
-    String str = {.ptr=(char*)ident, .length=(int64)strlen(ident)};
+    String str = {.ptr=(char*)ident, .len=(int64)strlen(ident)};
     return GetRecord(str, outFound, args);
 }
 
@@ -242,7 +242,7 @@ bool ParseValue(char** at, const char* fileName, String ident, Arg (&args)[numAr
     Arg* record = GetRecord(ident, &found, args);
     if(!found)
     {
-        fprintf(stderr, "%s contains an unidentified directive: '%.*s'\n", fileName, (int32)ident.length, ident.ptr);
+        fprintf(stderr, "%s contains an unidentified directive: '%.*s'\n", fileName, (int32)ident.len, ident.ptr);
         return false;
     }
     
@@ -256,7 +256,7 @@ bool ParseValue(char** at, const char* fileName, String ident, Arg (&args)[numAr
             bool convFailed = (val == 0 && errno != 0) || endPtr == *at;
             if(convFailed)
             {
-                fprintf(stderr, "%s contains a syntax error, expecting an integer value for '%.*s' but got something else instead.\n", fileName, (int32)ident.length, ident.ptr);
+                fprintf(stderr, "%s contains a syntax error, expecting an integer value for '%.*s' but got something else instead.\n", fileName, (int32)ident.len, ident.ptr);
                 return false;
             }
             
@@ -278,7 +278,7 @@ bool ParseValue(char** at, const char* fileName, String ident, Arg (&args)[numAr
             }
             else
             {
-                fprintf(stderr, "%s contains a syntax error, expecting a boolean value (true|false) for '%.*s' but got something else instead.\n", fileName, (int32)ident.length, ident.ptr);
+                fprintf(stderr, "%s contains a syntax error, expecting a boolean value (true|false) for '%.*s' but got something else instead.\n", fileName, (int32)ident.len, ident.ptr);
                 return false;
             }
             break;
@@ -346,13 +346,13 @@ bool ParseFile(const char* fileName, char* contents, Arg (&args)[numArgs])
         do ++at;
         while(IsAllowedForMiddleIdent(*at) && *at != '\0');
         
-        String ident = {.ptr=startIdent, .length=at-startIdent};
+        String ident = {.ptr=startIdent, .len=at-startIdent};
         EatWhitespace(&at, isMultiline);
         
         // Eat :
         if(*at != ':')
         {
-            fprintf(stderr, "%s contains a syntax error, expected ':' following '%.*s'\n", fileName, (int32)ident.length, ident.ptr);
+            fprintf(stderr, "%s contains a syntax error, expected ':' following '%.*s'\n", fileName, (int32)ident.len, ident.ptr);
             return false;
         }
         

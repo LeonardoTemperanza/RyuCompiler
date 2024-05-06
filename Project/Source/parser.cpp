@@ -51,7 +51,7 @@ t* Ast_MakeProcDefNode(Parser* p, Token* token)
     Dg_NewNode(result, p->entityArena, &p->entities);
     
     Dg_ProcDef procDef = {0};
-    procDef.entity = &p->entities.last();
+    procDef.id = p->entities.len-1;
     p->procs.Append(procDef);
     return result;
 }

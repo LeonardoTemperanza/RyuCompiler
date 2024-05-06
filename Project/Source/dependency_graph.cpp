@@ -284,17 +284,22 @@ bool Dg_DetectCycle(DepGraph* g, CompPhase phase)
     // Only nodes from the current phase queue are considered for
     // the start of the DFS. In the DFS all nodes are considered
     
-    Queue* input = GetInputPipe(g, phase);
+    Queue* input = GetInputPipe(*g, phase);
     
     // Clean variables for next use of algorithm
     globalIdx = 0;
     
     for(int i = 0; i < input->procs.len; ++i)
-        g->items[q->input[i]].stackIdx = -1;
-    
-    for_array(i, q->input)
     {
-        auto it = &g->items[q->input[i]];
+        int id = input->procs[i].id;
+        g->items[id].stackIdx = -1;
+    }
+    // Repeat for all things
+    
+    for(int i = 0; i < input->procs.len; ++i)
+    {
+        int id = input->procs[i].id;
+        auto it = &g->items[id];
         if(it->stackIdx == -1)
         {
             ScratchArena scratch;
@@ -312,7 +317,7 @@ bool Dg_DetectCycle(DepGraph* g, CompPhase phase)
     // because this is done in place instead of
     // producing a separate array (I suspect this could be faster)
     // Also slightly easier to implement.
-    Dg_TopologicalSort(g, q);  // Changes the order in the queue
+    //Dg_TopologicalSort(g, q);  // Changes the order in the queue
     
     // Loop through all SCCs
     uint32 start = 0;
@@ -321,19 +326,21 @@ bool Dg_DetectCycle(DepGraph* g, CompPhase phase)
     // Number of SCCs which contain at least one cycle
     uint32 numCycles = 0;
     
-    while(start < q->input.len)
+    while(start < input->procs.len)
     {
-        auto groupId = g->items[q->input[start]].sccIdx;
+        int startId = input->procs[start].id;
+        auto groupId = g->items[startId].sccIdx;
         
         uint32 end = start;
-        while(end < q->input.len && g->items[q->input[end]].sccIdx == groupId) ++end;
+        while(end < input->procs.len && g->items[input->procs[end].id].sccIdx == groupId)
+            ++end;
         
         ++numGroups;
         bool isCycle = false;
         
         if(end <= start + 1)  // If only one item, there might be no cycle
         {
-            auto& startNode = g->items[q->input[start]];
+            auto& startNode = g->items[input->procs[start].id];
             if(!(startNode.flags & Entity_Error))  // Ignore errors
             {
                 for_array(i, startNode.waitFor)
@@ -374,11 +381,11 @@ bool Dg_DetectCycle(DepGraph* g, CompPhase phase)
             // to all dependant nodes
             for(int i = start; i < end; ++i)
             {
-                auto& item = g->items[q->input[i]];
+                auto& item = g->items[input->procs[i].id];
                 item.flags |= Entity_Error;
             }
             
-            Dg_ExplainCyclicDependency(g, q, start, end);
+            //Dg_ExplainCyclicDependency(g, q, start, end);
         }
         
 #if DebugDep
@@ -452,6 +459,7 @@ void Dg_TarjanVisit(DepGraph* g, Dg_Entity* node, Slice<Dg_Entity*>* stack, Aren
     }
 }
 
+#if 0
 // Assumes that 'stackIdx' is populated
 void Dg_TopologicalSort(DepGraph* graph, Queue* queue)
 {
@@ -463,7 +471,9 @@ void Dg_TopologicalSort(DepGraph* graph, Queue* queue)
 #undef Tmp_Swap
 #undef Tmp_Less
 }
+#endif
 
+#if 0
 // TODO: We need an error API, where error infos are produced
 void Dg_ExplainCyclicDependency(DepGraph* g, Queue* q, Dg_Idx start, Dg_Idx end)
 {
@@ -539,6 +549,7 @@ void Dg_ExplainCyclicDependency(DepGraph* g, Queue* q, Dg_Idx start, Dg_Idx end)
     CompileErrorContinue(g->typer->tokenizer, startNode->where, strBuilder.string);
 #endif
 }
+#endif
 
 String Dg_CompPhase2Sentence(CompPhase phase, bool pastTense)
 {
