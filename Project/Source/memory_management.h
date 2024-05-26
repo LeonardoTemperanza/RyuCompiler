@@ -130,6 +130,7 @@ uintptr AlignForward(uintptr ptr, size_t align);
 void Arena_Init(Arena* arena, void* backingBuffer,
                 size_t backingBufferLength, size_t commitSize);
 Arena Arena_VirtualMemInit(size_t reserveSize, size_t commitSize);
+Arena Arena_StackInit(void* buffer, size_t size);
 void* Arena_Alloc(Arena* arena,
                   size_t size, size_t align = Default_Alignment);
 void* Arena_ResizeLastAlloc(Arena* arena, void* oldMemory,

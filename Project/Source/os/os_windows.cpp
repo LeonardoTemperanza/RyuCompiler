@@ -6,28 +6,16 @@
 #include "microsoft_craziness.h"
 
 static DWORD win32ThreadContextIdx = 0;
-static HANDLE win32ConsoleHandle = 0;
-static CONSOLE_SCREEN_BUFFER_INFO win32SavedScreenBufferInfo;
 static bool win32TlsInitted = false;
-static bool win32ConsoleScreenBufferInitted = false;
+static DWORD defaultConsoleAttributes;
 
 void OS_Init()
 {
     win32ThreadContextIdx = TlsAlloc();
-    win32ConsoleHandle = GetStdHandle(STD_ERROR_HANDLE);
     
-    GetConsoleScreenBufferInfo(win32ConsoleHandle, &win32SavedScreenBufferInfo);
+    
     
     win32TlsInitted = true;
-    win32ConsoleScreenBufferInitted = true;
-}
-
-void OS_OutputColorInit()
-{
-    win32ConsoleHandle = GetStdHandle(STD_ERROR_HANDLE);
-    GetConsoleScreenBufferInfo(win32ConsoleHandle, &win32SavedScreenBufferInfo);
-    
-    win32ConsoleScreenBufferInitted = true;
 }
 
 // Thread context
@@ -96,15 +84,27 @@ uint64 GetRdtscFreq()
 
 void SetErrorColor()
 {
-    assert(win32ConsoleScreenBufferInitted);
-    GetConsoleScreenBufferInfo(win32ConsoleHandle, &win32SavedScreenBufferInfo);
-    SetConsoleTextAttribute(win32ConsoleHandle, 12);  // Bright red color
+    HANDLE consoleHandle = GetStdHandle(STD_ERROR_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO info = {0};
+    GetConsoleScreenBufferInfo(consoleHandle, &info);
+    
+    defaultConsoleAttributes = info.wAttributes;
+    
+    SetConsoleTextAttribute(consoleHandle, 12);  // Bright red color
 }
 
 void ResetColor()
 {
-    assert(win32ConsoleScreenBufferInitted);
-    SetConsoleTextAttribute(win32ConsoleHandle, win32SavedScreenBufferInfo.wAttributes);
+    HANDLE consoleHandle = GetStdHandle(STD_ERROR_HANDLE);
+    SetConsoleTextAttribute(consoleHandle, defaultConsoleAttributes);
+}
+
+int CurrentTerminalWidth()
+{
+    HANDLE consoleHandle = GetStdHandle(STD_ERROR_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO info = {0};
+    GetConsoleScreenBufferInfo(consoleHandle, &info);
+    return info.dwSize.X;
 }
 
 char* GetPlatformLinkerName()

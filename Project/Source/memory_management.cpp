@@ -70,6 +70,19 @@ Arena Arena_VirtualMemInit(size_t reserveSize, size_t commitSize)
     return result;
 }
 
+Arena Arena_StackInit(void* buffer, size_t size)
+{
+    Assert(size > 0);
+    
+    Arena result;
+    result.buffer     = (uchar*) buffer;
+    result.length     = size;
+    result.offset     = 0;
+    result.prevOffset = 0;
+    result.commitSize = 0;
+    return result;
+}
+
 // TODO: Handle buffer overflow
 void* Arena_Alloc(Arena* arena, size_t size, size_t align)
 {
