@@ -10,18 +10,21 @@ struct Parser
     Tokenizer* tokenizer;
     Token* at;  // Current analyzed token in the stream
     
-    Ast_Block* scope = 0;  // Current scope
-    Ast_Block* fileScope = 0;
-    Ast_ProcDef* curProc = 0;
+    Arena* messageArena;  // For compilation messages
+    
+    Ast_Block* scope;  // Current scope
+    Ast_Block* fileScope;
+    Ast_ProcDef* curProc;
     
     Arena* entityArena;
     Slice<Dg_Entity> entities;
     Array<Dg_ProcDef> procs;
     // others
     
-    // False if in error mode
-    bool status = true;
+    bool foundError;
 };
+
+Parser InitParser(Arena* astArena, Tokenizer* tokenizer, Arena* messageArena, Arena* entityArena);
 
 template<typename t>
 t* Ast_MakeEntityNode(Parser* p, Token* token);
@@ -55,12 +58,6 @@ Ast_StructType ParseStructType(Parser* p, Token** outIdent);
 Ast_DeclSpec ParseDeclSpecs(Parser* p);
 void CheckDeclSpecs(Parser* p, Ast_DeclSpec specs, Ast_DeclSpec allowedSpecs);
 
-// Inserts the string and the associated atom address to patch later
-// in the parser array (internArray)
-#if 0
-void DeferStringInterning(Parser* p, String string, Atom** atom);
-#endif
-
 // Operators
 
 // NOTE: Declaration keywords need to be inserted here
@@ -80,8 +77,8 @@ bool IsTokOperator(TokenKind tokType);
 Token* SkipParens(Token* start, char openParen, char closeParen);
 
 inline void ParseError(Parser* p, Token* token, String message);
-inline void ParseError(Parser* p, Token* token, int numStrings, char* message1, ...);
 inline void ParseError(Parser* p, Token* token, char* message);
+inline void ParseError(Parser* p, Token* token, MessageContent content);
 
 inline Token* EatRequiredToken(Parser* p, TokenKind tokType);
 inline Token* EatRequiredToken(Parser* p, char tokType);

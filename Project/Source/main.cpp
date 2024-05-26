@@ -7,13 +7,9 @@
 #include "semantics.h"
 #include "interpreter.h"
 #include "bytecode_builder.h"
-#include "cmdline_args.h"
+#include "messages.h"
 
 #include "tilde_codegen.h"
-
-// Set at the start of main,
-// can be used in any module
-CmdLineArgs cmdLineArgs;
 
 struct FilePaths
 {
@@ -33,32 +29,21 @@ struct Timings
 Timings timings;
 
 FilePaths ParseCmdLineArgs(Slice<char*> args);
-void PrintHelp();
-template<typename t>
-void PrintArg(char* argName, char* desc, t defVal, int lpad, int rpad);
-void PrintTimings();
 
-// TODO: @cleanup Push some of the stuff here to the proper modules
 int main(int argCount, char** argValue)
 {
     FilePaths filePaths = ParseCmdLineArgs({ argValue, argCount });
-    defer({
-              filePaths.srcFiles.FreeAll();
-              filePaths.objFiles.FreeAll();
-          });
+    defer({ filePaths.srcFiles.FreeAll(); filePaths.objFiles.FreeAll(); });
     
     bool noFiles = filePaths.srcFiles.len <= 0 && filePaths.objFiles.len <= 0;
     
-    if(cmdLineArgs.help)
-    {
+    // OS-specific initialization
+    OS_Init();
+    
+    if(args.help)
         PrintHelp();
-        if(noFiles)
-            return 0;
-    }
     else if(noFiles)
     {
-        OS_OutputColorInit();
-        
         SetErrorColor();
         fprintf(stderr, "Error");
         ResetColor();
@@ -66,8 +51,7 @@ int main(int argCount, char** argValue)
         return 1;
     }
     
-    // OS-specific initialization
-    OS_Init();
+    if(noFiles) return 0;
     
 #ifdef Profile
     InitSpall();
@@ -90,49 +74,35 @@ int main(int argCount, char** argValue)
     
     size_t size = GB(1);
     size_t commitSize = MB(2);
-    Arena astArena = Arena_VirtualMemInit(size, commitSize);
-    Arena internArena = Arena_VirtualMemInit(size, commitSize);
+    Arena permArena   = Arena_VirtualMemInit(size, commitSize);
+    Arena astArena    = Arena_VirtualMemInit(size, commitSize);
     Arena entityArena = Arena_VirtualMemInit(size, commitSize);
     
-    Tokenizer tokenizer = InitTokenizer(&astArena, &internArena, fileContents, { filePaths.srcFiles[0], (int64)strlen(filePaths.srcFiles[0]) });
-    Parser parser = { &astArena, &tokenizer };
-    parser.entityArena = &entityArena;
+    String firstFilePath = { filePaths.srcFiles[0], (int64)strlen(filePaths.srcFiles[0]) };
+    Tokenizer tokenizer = InitTokenizer(&astArena, fileContents, firstFilePath);
+    Parser parser = InitParser(&astArena, &tokenizer, &permArena, &entityArena);
     
     // Main stuff
     LexFile(&tokenizer);
     Ast_FileScope* fileAst = ParseFile(&parser);
     
-    if(!parser.status)
+    bool status = !parser.foundError;
+    if(status)
     {
-        printf("There were syntax errors!\n");
-        return 1;
+        // Main program loop
+        Interp interp;
+        status &= MainDriver(&parser, &interp, fileAst);
     }
-    
-#ifdef Debug
-    fflush(stdout);
-    fflush(stderr);
-#endif
-    
-    // Main program loop
-    Interp interp;
-    bool status = MainDriver(&parser, &interp, fileAst);
     
     timings.frontend += 1.0 / GetRdtscFreq() * (__rdtsc() - frontendTimeStart);
     
-    if(!status)
+    if(status)
     {
-        printf("There were semantic errors!\n");
-        return 1;
+        //Tc_CodegenAndLink(fileAst, &interp, filePaths.objFiles);
     }
     
-#ifdef Debug
-    fflush(stdout);
-    fflush(stderr);
-#endif
-    
-    //Tc_CodegenAndLink(fileAst, &interp, filePaths.objFiles);
-    
-    if(cmdLineArgs.time) PrintTimings();
+    if(args.time)
+        PrintTimeBenchmark(timings.frontend, timings.irGen, timings.backend, timings.linker);
     
     // Render compilation messages
     SortMessages();
@@ -143,7 +113,7 @@ int main(int argCount, char** argValue)
 
 // TODO This seems a bit too complicated, but it is c++ so not sure we can do better...
 template<typename t>
-t ParseArg(Slice<char*> args, int* at) { static_assert(false, "Unknown command line argument type"); }
+t ParseArg(Slice<char*> args, int* at) { static_assert(false, "Unknown command line argument type."); }
 template<> int ParseArg<int>(Slice<char*> args, int* at) { int val = atoi(args[*at]); ++*at; return val; }
 template<> bool ParseArg<bool>(Slice<char*> args, int* at) { return true; }
 template<> char* ParseArg<char*>(Slice<char*> args, int* at) { char* val = args[*at]; ++*at; return val; }
@@ -189,15 +159,15 @@ FileExtension GetExtensionFromPath(char* path, char** outExt)
     return File_Unknown;
 }
 
-FilePaths ParseCmdLineArgs(Slice<char*> args)
+FilePaths ParseCmdLineArgs(Slice<char*> argStrings)
 {
     FilePaths paths;
     
     // First argument is executable name
     int at = 1;
-    while(at < args.len)
+    while(at < argStrings.len)
     {
-        String argStr = { args[at], (int64)strlen(args[at]) };
+        String argStr = { argStrings[at], (int64)strlen(argStrings[at]) };
         
         if(argStr.len <= 0 || argStr[0] != '-')
         {
@@ -222,92 +192,17 @@ FilePaths ParseCmdLineArgs(Slice<char*> args)
         
         // Use the X macro to parse arguments based on their type, default value, etc.
 #define X(varName, string, type, defaultVal, desc) \
-if(strcmp(argStr.ptr, string) == 0) { ++at; cmdLineArgs.varName = ParseArg<type>(args, &at); continue; }
+if(strcmp(argStr.ptr, string) == 0) { ++at; args.varName = ParseArg<type>(argStrings, &at); continue; }
         
         CmdLineArgsInfo
             
             // If not any other case
         {
             ++at;
-            fprintf(stderr, "Unknown command line argument: '%.*s', will be ignored.\n", (int)argStr.len, argStr.ptr);
+            fprintf(stderr, "Unknown command line argument: '%.*s', will be ignored. Use '-h' for more info.\n", (int)argStr.len, argStr.ptr);
         }
 #undef X
     }
     
     return paths;
-}
-
-void PrintHelp()
-{
-    constexpr int lpad = 5;
-    constexpr int rpad = 40;
-    
-    printf("Ryu Compiler v0.0\n");
-    printf("Usage: ryu file1.ryu [ options ]\n");
-    
-    printf("Options:\n");
-    
-    // Use the X macro to print the arguments
-#define X(varName, string, type, defaultVal, desc) PrintArg<type>(string, desc, defaultVal, lpad, rpad);
-    CmdLineArgsInfo
-#undef X
-}
-
-// Only specializations can be used
-template<typename t> int PrintArgAttributes(t defVal) { static_assert(false, "Unknown command line argument type"); }
-template<> int PrintArgAttributes<int>(int defVal) { return printf("<int value> (default: %d)", defVal); }
-template<> int PrintArgAttributes<bool>(bool defVal) { return 0; }
-template<> int PrintArgAttributes<char*>(char* defVal) { return printf("<string value> (default: %s)", defVal); }
-
-template<typename t>
-void PrintArg(char* argName, char* desc, t defVal, int lpad, int rpad)
-{
-    // Print left padding
-    printf("%*c", lpad, ' ');
-    
-    printf("-");
-    int numChars = printf("%s", argName);
-    numChars += printf(" ");
-    
-    numChars += PrintArgAttributes<t>(defVal);
-    
-    // Print right padding
-    printf("%*c", max(0, rpad - numChars), ' ');
-    
-    printf("%s", desc);
-    
-    printf("\n");
-}
-
-void PrintTimings()
-{
-    const double totalExceptLinker = timings.frontend + timings.irGen + timings.backend;
-    const double total = totalExceptLinker + timings.linker;
-    const int pad = 19;
-    int numChars = 0;
-    
-    printf("----- Timings -----\n");
-    numChars = printf("Frontend:", timings.frontend);
-    printf("%*c%lfs\n", max(1, pad - numChars), ' ', timings.frontend);
-    numChars = printf("IR Generation:");
-    printf("%*c%lfs\n", max(1, pad - numChars), ' ', timings.irGen);
-    // TODO: Update this with the llvm backend
-    numChars = printf("Backend (Tilde):");
-    printf("%*c%lfs\n", max(1, pad - numChars), ' ', timings.backend);
-    
-    numChars = printf("Total (no link):");
-    printf("%*c%lfs\n\n", max(1, pad - numChars), ' ', totalExceptLinker);
-    
-    // TODO: Linker name is platform dependant
-    if(cmdLineArgs.useTildeLinker)
-        numChars = printf("Linker (Tilde):");
-    else
-        numChars = printf("Linker (%s):", GetPlatformLinkerName());
-    
-    printf("%*c%lfs\n\n", max(1, pad - numChars), ' ', timings.linker);
-    
-    numChars = printf("Total:", total);
-    printf("%*c%lfs\n", max(1, pad - numChars), ' ', total);
-    
-    printf("-------------------\n");
 }

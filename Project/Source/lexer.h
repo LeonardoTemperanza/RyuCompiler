@@ -138,7 +138,7 @@ struct Tokenizer
     int lastCompileErrorNumChars = 0;
 };
 
-Tokenizer InitTokenizer(Arena* arena, Arena* internArena, char* fileContents, String path);
+Tokenizer InitTokenizer(Arena* arena, char* fileContents, String path);
 
 static Token GetToken(Tokenizer* t);
 

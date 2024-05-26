@@ -4,12 +4,23 @@
 #include "memory_management.h"
 #include "dependency_graph.h"
 #include "parser.h"
+#include "messages.h"
 
 // @architecture Do we want to do a conversion between syntactic declarators
 // and typeinfo?
 // update: it seems that it is not needed, the structure is pretty much the same
 // anyways
 // update update: Actually I think I should rethink this...
+
+Parser InitParser(Arena* astArena, Tokenizer* tokenizer, Arena* messageArena, Arena* entityArena)
+{
+    Parser p = {0};
+    p.arena        = astArena;
+    p.messageArena = messageArena;
+    p.entityArena  = entityArena;
+    p.tokenizer    = tokenizer;
+    return p;
+}
 
 template<typename t>
 t* Ast_MakeNode(Arena* arena, Token* token)
@@ -133,8 +144,18 @@ Ast_FileScope* ParseFile(Parser* p)
             // a global variable declaration
             default:
             {
-                node = ParseVarDecl(p, declSpecs);
-                EatRequiredToken(p, ';');
+                // For better error message
+                bool forbidden = p->at->kind == '{' || p->at->kind == '}';
+                if(forbidden)
+                {
+                    ParseError(p, p->at, "'%t' is not allowed in top level.");
+                }
+                else
+                {
+                    node = ParseVarDecl(p, declSpecs);
+                    EatRequiredToken(p, ';');
+                }
+                
                 break;
             }
         } switch_nocheck_end;
@@ -1242,6 +1263,9 @@ int GetOperatorPrec(TokenKind tokType)
 {
     ProfileFunc(prof);
     
+    // TODO: I should use tables for this... It would be faster
+    // and more convenient. I should write a table generator that
+    // outputs a .h file.
     switch_nocheck(tokType)
     {
         case '*': case '/':
@@ -1376,7 +1400,7 @@ bool IsOperatorLToR(TokenKind tokType)
 
 // TODO: This is pretty bad, if closeParen is missing then the
 // whole file is scanned. (not that big of a deal for now, compilation
-// will be way faster with syntax errors anyway)
+// will be way faster with syntax errors anyway since we don't run codegen)
 Token* SkipParens(Token* start, char openParen, char closeParen)
 {
     ProfileFunc(prof);
@@ -1401,18 +1425,41 @@ Token* SkipParens(Token* start, char openParen, char closeParen)
 
 inline void ParseError(Parser* p, Token* token, String message)
 {
-    if(p->status)
-        CompileError(p->tokenizer, token, message);
+    MessageContent content = {0};
+    content.kind    = Msg_SpecializedMessage;
+    content.message = message;
+    ParseError(p, token, content);
+}
+
+inline void ParseError(Parser* p, Token* token, char* message)
+{
+    MessageContent content = {0};
+    content.kind    = Msg_SpecializedMessage;
+    content.message = {.ptr=message, .len=(int64)strlen(message)};
+    ParseError(p, token, content);
+}
+
+inline void ParseError(Parser* p, Token* token, MessageContent content)
+{
+    // Don't show more than one syntax error as all
+    // the ones after the first are tipically garbage
+    // anyway. With short compilation times this matters
+    // very little.
+    if(p->foundError) return;
     
-    p->status   = false;
-    p->at->kind = Tok_EOF;
+    String fileContents = {p->tokenizer->fileContents, (int64)strlen(p->tokenizer->fileContents)};
+    Message message = MakeMessage(MsgKind_Error, MsgPhase_Syntax, p->tokenizer->path, fileContents, token, content);
+    AppendMessage(message, p->messageArena);
+    
+    p->foundError = true;
+    p->at->kind   = Tok_EOF;
 }
 
 inline Token* EatRequiredToken(Parser* p, TokenKind tokType)
 {
     if(p->at->kind != tokType && !(IsTokIdent(p->at->kind) && IsTokIdent(tokType)))
     {
-        ExpectedTokenError(p, tokType);
+        ExpectedTokenError(p, p->at, tokType);
         return p->at;
     }
     
@@ -1424,24 +1471,12 @@ inline Token* EatRequiredToken(Parser* p, char tokType)
     return EatRequiredToken(p, (TokenKind)tokType);
 }
 
-inline void ExpectedTokenError(Parser* p, Token* tok, TokenKind tokType)
+inline void ExpectedTokenError(Parser* p, Token* at, TokenKind tokType)
 {
-    if(IsTokIdent(tokType))
-        ParseError(p, tok, StrLit("Expecting identifier"));
-    else
-    {
-        ScratchArena scratch;
-        String tokTypeStr = TokTypeToString(tokType, scratch);
-        
-        StringBuilder strBuilder(scratch);
-        strBuilder.Append(3, StrLit("Expecting '"), tokTypeStr, StrLit("'"));
-        ParseError(p, tok, strBuilder.string);
-    }
-}
-
-inline void ExpectedTokenError(Parser* p, TokenKind tokType)
-{
-    ExpectedTokenError(p, p->at, tokType);
+    MessageContent content = {0};
+    content.kind    = Msg_UnexpectedToken;
+    content.token   = tokType;
+    ParseError(p, at, content);
 }
 
 inline void ExpectedTokenError(Parser* p, Token* tok, char tokType)

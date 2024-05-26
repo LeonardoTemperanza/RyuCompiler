@@ -8,7 +8,6 @@
 
 // Setup
 void OS_Init();
-void OS_OutputColorInit();
 
 void SetThreadContext(void* ptr);
 void* GetThreadContext();
@@ -19,6 +18,7 @@ static inline uint64 GetRdtscFreq();
 // Printing utilities
 void SetErrorColor();
 void ResetColor();
+int CurrentTerminalWidth();
 
 // Linker
 char* GetPlatformLinkerName();

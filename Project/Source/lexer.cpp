@@ -94,7 +94,7 @@ const TokenKind operatorTypes[] =
 };
 #undef X
 
-Tokenizer InitTokenizer(Arena* arena, Arena* internArena, char* fileContents, String path)
+Tokenizer InitTokenizer(Arena* arena, char* fileContents, String path)
 {
     Tokenizer t;
     t.arena = arena;

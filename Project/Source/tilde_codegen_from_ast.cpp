@@ -25,3 +25,4 @@ void Codegen(Interp* interp, Dg_Entity* entity)
 {
     ProfileFunc(prof);
 }
+
