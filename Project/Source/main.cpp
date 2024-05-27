@@ -33,7 +33,7 @@ FilePaths ParseCmdLineArgs(Slice<char*> args);
 int main(int argCount, char** argValue)
 {
     FilePaths filePaths = ParseCmdLineArgs({ argValue, argCount });
-    defer({ filePaths.srcFiles.FreeAll(); filePaths.objFiles.FreeAll(); });
+    defer( filePaths.srcFiles.FreeAll(); filePaths.objFiles.FreeAll(); );
     
     bool noFiles = filePaths.srcFiles.len <= 0 && filePaths.objFiles.len <= 0;
     
@@ -98,6 +98,7 @@ int main(int argCount, char** argValue)
     
     if(status)
     {
+        TestCodegen();
         //Tc_CodegenAndLink(fileAst, &interp, filePaths.objFiles);
     }
     
