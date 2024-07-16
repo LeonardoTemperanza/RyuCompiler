@@ -10,9 +10,9 @@
 #include "os/os_generic.cpp"
 
 #include "base.cpp"
+#include "lexer.cpp"
 #include "messages.cpp"
 #include "main.cpp"
-#include "lexer.cpp"
 #include "memory_management.cpp"
 #include "parser.cpp"
 #include "semantics.cpp"

@@ -17,6 +17,8 @@ static inline uint64 GetRdtscFreq();
 
 // Printing utilities
 void SetErrorColor();
+void SetWarningColor();
+void SetLogColor();
 void ResetColor();
 int CurrentTerminalWidth();
 

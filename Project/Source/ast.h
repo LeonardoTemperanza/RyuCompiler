@@ -726,5 +726,5 @@ cforceinline bool NodePassedStage(Ast_Node* node, CompPhase phase)
 // For debugging and profiling only
 void PrintNodeSizes()
 {
-    printf("%lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld\n", sizeof(Ast_Node), sizeof(Ast_Typecast), sizeof(Ast_BinaryExpr), sizeof(Ast_UnaryExpr), sizeof(Ast_FuncCall), sizeof(Ast_If), sizeof(Ast_For), sizeof(Ast_While), sizeof(Ast_DoWhile), sizeof(Ast_Switch), sizeof(Ast_Defer), sizeof(Ast_Return), sizeof(Ast_Block));
+    printf("Ast_Node: %lld, Ast_Typecast: %lld, Ast_BinaryExpr: %lld, Ast_UnaryExpr: %lld, Ast_FuncCall: %lld, Ast_If: %lld, Ast_For: %lld, Ast_While: %lld, Ast_DoWhile: %lld, Ast_Switch: %lld, Ast_Defer: %lld, Ast_Return: %lld, Ast_Block: %lld\n", sizeof(Ast_Node), sizeof(Ast_Typecast), sizeof(Ast_BinaryExpr), sizeof(Ast_UnaryExpr), sizeof(Ast_FuncCall), sizeof(Ast_If), sizeof(Ast_For), sizeof(Ast_While), sizeof(Ast_DoWhile), sizeof(Ast_Switch), sizeof(Ast_Defer), sizeof(Ast_Return), sizeof(Ast_Block));
 }

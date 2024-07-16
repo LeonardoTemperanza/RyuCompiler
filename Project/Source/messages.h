@@ -37,8 +37,11 @@ enum MessageContentKind
 struct MessageContent
 {
     MessageContentKind kind;
+    
+    // The payload can have different meaning based on the MessageContentKind
+    // Some variables might even not be used in certain content types
     String message;
-    TokenKind token;
+    TokenKind tokKind;
 };
 
 struct Message
@@ -49,12 +52,13 @@ struct Message
     Token* token;
     String path;
     String fileContents;
+    int fileNumLines;
     
     MessageContent content;
     
     // N-ary tree. Children are nodes that continue
     // this message. Things like:
-    // 1: "incorrect number of arguments in function call"
+    // 1: "incorrect number of arguments in procedure call"
     // 2 (child of 1): "Here's the procedure call signature"
     // It's possible to have multiple levels of nesting,
     // though i'm not sure if that would be any useful
@@ -64,7 +68,7 @@ struct Message
     Message* prev;
 };
 
-struct MessageDrawCmd
+struct MessagePrintCmd
 {
     bool showFileName;
     //others
@@ -80,7 +84,20 @@ Message* AppendMessage(Message msg, Arena* dst);
 // Message renderer
 void SortMessages();
 void ShowMessages();
-void ShowMessages(Message* message, MessageDrawCmd cmd);
+void ShowMessages(Message* message, MessagePrintCmd cmd);
+void PrintMessage(Message* message, MessagePrintCmd cmd);
+void PrintMessageLocation(Message* message);
+void PrintMessageSource(Message* message);  // Print actual file content
+
+////////
+// Print Utilities
+// Printing utilities (alternative to printf, which also works for my custom types, such as TypeInfo
+int Print(char* fmt, ...);
+int EPrint(char* fmt, ...);
+int Println(char* fmt, ...);
+int EPrintln(char* fmt, ...);
+int Print(FILE* stream, char* fmt, ...);
+int Print(FILE* stream, char* fmt, va_list args);
 
 ////////
 // Command line arguments
@@ -120,7 +137,7 @@ CmdLineArgs args;
 // minCol and maxCol is the range of column indices within which to print the description.
 // minCol should be where to start and maxCol should be the width of the terminal
 template<typename t>
-void PrintArg(char* argName, char* desc, t defVal, int lPad, int rPad, int minCol, int maxCol, bool printDesc);
+void PrintHelpArg(char* argName, char* desc, t defVal, int lPad, int rPad, int minCol, int maxCol, bool printDesc);
 
 // Only specializations can be used
 template<typename t> int PrintArgAttributes(t defVal)  { static_assert(false, "Unknown command line argument type"); }
@@ -134,3 +151,15 @@ template<> int ArgAttributes<char*>(char* defVal) { return snprintf(nullptr, 0, 
 
 void PrintHelp();
 void PrintTimeBenchmark(double frontend, double irGen, double backend, double linker);
+
+struct FilePaths
+{
+    Array<char*> srcFiles;
+    Array<char*> objFiles;
+};
+
+template<typename t>
+t ParseArg(Slice<char*> args, int* at) { static_assert(false, "Unknown command line argument type."); }
+template<> int ParseArg<int>(Slice<char*> args, int* at) { int val = atoi(args[*at]); ++*at; return val; }
+template<> bool ParseArg<bool>(Slice<char*> args, int* at) { return true; }
+template<> char* ParseArg<char*>(Slice<char*> args, int* at) { char* val = args[*at]; ++*at; return val; }

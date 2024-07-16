@@ -1,5 +1,6 @@
 
 #include "tilde_codegen_from_ast.h"
+#include "ast.h"
 
 CG_Ctx CG_Init()
 {
@@ -18,12 +19,11 @@ void CG_Cleanup(CG_Ctx* ctx)
     ctx->module = nullptr;
 }
 
-// TODO: If we start using a smarter error system (and we should,
-// because for example we'll have to order the error messages,
-// which right now we don't do) then we probably won't need to have to return
-// anything
 void Codegen(Interp* interp, Dg_Entity* entity)
 {
     ProfileFunc(prof);
 }
 
+void CG_Proc(Ast_ProcDef* proc)
+{
+}

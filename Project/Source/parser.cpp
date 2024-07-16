@@ -12,6 +12,8 @@
 // anyways
 // update update: Actually I think I should rethink this...
 
+Token nullToken = Token { .kind = Tok_EOF };
+
 Parser InitParser(Arena* astArena, Tokenizer* tokenizer, Arena* messageArena, Arena* entityArena)
 {
     Parser p = {0};
@@ -940,7 +942,7 @@ Ast_Expr* ParsePrimaryExpression(Parser* p)
         return constExpr;
     }
     
-    String tokType = TokTypeToString(p->at->kind, scratch.arena());
+    String tokType = TokKindToString(p->at->kind, scratch.arena());
     
     StringBuilder strBuilder(scratch);
     
@@ -1081,7 +1083,7 @@ Ast_ProcType ParseProcType(Parser* p, Token** outIdent, bool forceArgNames)
         ++p->at;
     else  // This in practice never happens
     {
-        String tokType = TokTypeToString(p->at->kind, scratch.arena());
+        String tokType = TokKindToString(p->at->kind, scratch.arena());
         
         StringBuilder strBuilder(scratch);
         strBuilder.Append("Unexpected '");
@@ -1452,7 +1454,7 @@ inline void ParseError(Parser* p, Token* token, MessageContent content)
     AppendMessage(message, p->messageArena);
     
     p->foundError = true;
-    p->at->kind   = Tok_EOF;
+    p->at = &nullToken;
 }
 
 inline Token* EatRequiredToken(Parser* p, TokenKind tokType)
@@ -1475,7 +1477,7 @@ inline void ExpectedTokenError(Parser* p, Token* at, TokenKind tokType)
 {
     MessageContent content = {0};
     content.kind    = Msg_UnexpectedToken;
-    content.token   = tokType;
+    content.tokKind = tokType;
     ParseError(p, at, content);
 }
 
