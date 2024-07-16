@@ -329,6 +329,9 @@ cforceinline t clamp(t val, t minVal, t maxVal) { return val < minVal ? minVal :
 
 int numDigits(int n);
 
+template<typename t>
+cforceinline t sign(t i) { return i > 0 ? 1 : i < 0 ? -1 : 0; }
+
 // I/O utilities
 size_t GetFileSize(FILE* file);
 char* ReadEntireFileIntoMemoryAndNullTerminate(const char* fileName);

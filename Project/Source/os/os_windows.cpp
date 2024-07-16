@@ -93,6 +93,28 @@ void SetErrorColor()
     SetConsoleTextAttribute(consoleHandle, 12);  // Bright red color
 }
 
+void SetWarningColor()
+{
+    HANDLE consoleHandle = GetStdHandle(STD_ERROR_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO info = {0};
+    GetConsoleScreenBufferInfo(consoleHandle, &info);
+    
+    defaultConsoleAttributes = info.wAttributes;
+    
+    SetConsoleTextAttribute(consoleHandle, 14);  // Bright red color
+}
+
+void SetLogColor()
+{
+    HANDLE consoleHandle = GetStdHandle(STD_ERROR_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO info = {0};
+    GetConsoleScreenBufferInfo(consoleHandle, &info);
+    
+    defaultConsoleAttributes = info.wAttributes;
+    
+    SetConsoleTextAttribute(consoleHandle, 11);  // Bright red color
+}
+
 void ResetColor()
 {
     HANDLE consoleHandle = GetStdHandle(STD_ERROR_HANDLE);

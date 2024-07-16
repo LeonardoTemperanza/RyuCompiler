@@ -164,3 +164,4 @@ inline Token* PeekNextToken(Tokenizer* t) { return PeekToken(t, 1); }
 
 void CompileError(Tokenizer* t, Token* token, String message);
 void CompileErrorContinue(Tokenizer* t, Token* token, String message);
+String TokKindToString(TokenKind tokType, Arena* dest);

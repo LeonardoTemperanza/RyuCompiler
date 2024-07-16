@@ -583,7 +583,7 @@ void CompileErrorContinue(Tokenizer* t, Token* token, String message)
     PrintFileLine(token, fileContents);
 }
 
-String TokTypeToString(TokenKind tokType, Arena* dest)
+String TokKindToString(TokenKind tokType, Arena* dest)
 {
     // No need to allocate in these cases
     for(int i = 0; i < StArraySize(keywordTypes); ++i)
