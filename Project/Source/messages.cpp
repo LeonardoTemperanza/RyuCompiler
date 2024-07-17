@@ -12,6 +12,8 @@
 #include "parser.h"
 #include "lexer.h"
 
+#include<string_view>
+
 static Message firstMessage;
 static Message* lastMessage;
 
@@ -254,21 +256,21 @@ void PrintMessage(Message* message, MessagePrintCmd cmd)
         case MsgKind_Error:
         {
             SetErrorColor();
-            EPrint("Error: ");
+            EPrint<"Error: ">();
             ResetColor();
             break;
         }
         case MsgKind_Warning:
         {
             SetWarningColor();
-            EPrint("Warning: ");
+            EPrint<"Warning: ">();
             ResetColor();
             break;
         }
         case MsgKind_Log:
         {
             SetLogColor();
-            EPrint("Log: ");
+            EPrint<"Log: ">();
             ResetColor();
             break;
         }
@@ -278,60 +280,60 @@ void PrintMessage(Message* message, MessagePrintCmd cmd)
     Token* token = message->token;
     switch(content.kind)
     {
-        case Msg_None: EPrintln("Null message."); break;
+        case Msg_None: EPrintln<"Null message.">(); break;
         case Msg_UnexpectedToken:
         {
-            EPrint("Unexpectedly found '%S', instead of ", token->text);
+            EPrint<"Unexpectedly found '%', instead of ">(token->text);
             
             if(content.tokKind == Tok_Ident)
             {
-                EPrintln("an identifier.");
+                EPrintln<"an identifier.">();
             }
             else
             {
-                EPrintln("'%S'.", TokKindToString(content.tokKind, scratch));
+                EPrintln<"'%'.">(TokKindToString(content.tokKind, scratch));
             }
             
             break;
         }
         case Msg_IncompatibleTypes:
         {
-            EPrint("Incompatible types!\n");
+            EPrint<"Incompatible types!\n">();
             break;
         }
         case Msg_IncompatibleReturns:
         {
-            EPrint("Incompatible returns!\n");
+            EPrint<"Incompatible returns!\n">();
             break;
         }
         case Msg_CannotDereference:
         {
-            EPrint("Cannot dereference this type!\n");
+            EPrint<"Cannot dereference this type!\n">();
             break;
         }
         case Msg_CannotConvertToScalar:
         {
-            EPrint("Cannot convert this type to a scalar type!\n");
+            EPrint<"Cannot convert this type to a scalar type!\n">();
             break;
         }
         case Msg_CannotConvertToIntegral:
         {
-            EPrint("Cannot convert this type to an integral type!\n");
+            EPrint<"Cannot convert this type to an integral type!\n">();
             break;
         }
         case Msg_LookAtProcDecl:
         {
-            EPrint("Here's the procedure call signature:\n");
+            EPrint<"Here's the procedure call signature:\n">();
             break;
         }
         case Msg_SpecializedMessage:
         {
-            EPrint("%.*s\n", (int)content.message.len, content.message.ptr);
+            EPrint<"%\n">(content.message);
             break;
         }
     }
     
-    EPrint("\n");
+    EPrint<"\n">();
     PrintMessageSource(message);
 }
 
@@ -348,17 +350,17 @@ void PrintMessageLocation(Message* message)
     int charNum = token->sc - token->sl + 1;
     if(token->kind == Tok_EOF)
     {
-        EPrint("EOF: ");
+        EPrint<"EOF: ">();
         return;
     }
     
-    EPrint("%S", message->path);
-    EPrint("(%d,%d): ", token->lineNum, token->sc - token->sl + 1);
+    EPrint<"%">(message->path);
+    EPrint<"(%,%): ">(token->lineNum, token->sc - token->sl + 1);
 }
 
 void PrintMessageSource(Message* message)
 {
-    EPrint("    > ");
+    EPrint<"    > ">();
     
     Token* token = message->token;
     String fileContents = message->fileContents;
@@ -369,9 +371,9 @@ void PrintMessageSource(Message* message)
     while(!endOfLine)
     {
         if(fileContents[i] == '\t')
-            EPrint("    ");
+            EPrint<"    ">();
         else
-            EPrint("%c", fileContents[i]);
+            EPrint<"%">(fileContents[i]);
         
         ++i;
         endOfLine = fileContents[i] == '\r' ||
@@ -381,173 +383,220 @@ void PrintMessageSource(Message* message)
     
     int length = i - token->sl;
     
-    EPrint("\n    > ");
+    EPrint<"\n    > ">();
     
     for(int i = token->sl; i < token->sc; ++i)
     {
         if(fileContents[i] == '\t')
-            EPrint("    ");
+            EPrint<"    ">();
         else
-            EPrint(" ");
+            EPrint<" ">();
     }
     
-    EPrint("^");
+    EPrint<"^">();
     
     for(int i = token->sc; i < token->ec - 1; ++i)
     {
         if(fileContents[i] == '\t')
-            EPrint("----");
+            EPrint<"----">();
         else
-            EPrint("-");
+            EPrint<"-">();
     }
     
     if(token->sc != token->ec)
-        EPrint("^\n");
+        EPrint<"^\n">();
     else
-        EPrint("\n");
+        EPrint<"\n">();
 }
 
-// Printing utilities (alternative to printf, which also works for my custom types, such as TypeInfo and String)
-int Print(char* fmt, ...)
+template<StringLiteral fmt>
+int Print()
 {
-    va_list args;
-    va_start(args, fmt);
-    int res = Print(stdout, fmt, args);
-    va_end(args);
-    return res;
+    return Print<fmt>(stdout);
 }
 
-int EPrint(char* fmt, ...)
+template<StringLiteral fmt, typename... Args>
+int Print(Args... args)
 {
-    va_list args;
-    va_start(args, fmt);
-    int res = Print(stderr, fmt, args);
-    va_end(args);
-    return res;
+    return Print<fmt>(stdout, args...);
 }
 
-int Println(char* fmt, ...)
+template<StringLiteral fmt>
+int EPrint()
 {
-    va_list args;
-    va_start(args, fmt);
-    int res = Print(stdout, fmt, args);
-    va_end(args);
-    
-    putc('\n', stdout);
+    return Print<fmt>(stderr);
+}
+
+template<StringLiteral fmt, typename... Args>
+int EPrint(Args... args)
+{
+    return Print<fmt>(stderr, args...);
+}
+
+template<StringLiteral fmt>
+int Println()
+{
+    int res = Print<fmt>(stdout);
+    fputc('\n', stdout);
     ++res;
     return res;
 }
 
-int EPrintln(char* fmt, ...)
+template<StringLiteral fmt, typename... Args>
+int Println(Args... args)
 {
-    va_list args;
-    va_start(args, fmt);
-    int res = Print(stderr, fmt, args);
-    va_end(args);
-    
-    putc('\n', stderr);
+    int res = Print<fmt>(stdout, args...);
+    fputc('\n', stdout);
     ++res;
     return res;
 }
 
-int Print(FILE* stream, char* fmt, ...)
+template<StringLiteral fmt>
+int EPrintln()
 {
-    va_list args;
-    va_start(args, fmt);
-    int res = Print(stream, fmt, args);
-    va_end(args);
+    int res = Print<fmt>(stderr);
+    fputc('\n', stderr);
+    ++res;
     return res;
 }
 
-int Print(FILE* stream, char* fmt, va_list args)
+template<StringLiteral fmt, typename... Args>
+int EPrintln(Args... args)
+{
+    int res = Print<fmt>(stderr, args...);
+    fputc('\n', stderr);
+    ++res;
+    return res;
+}
+
+template<size_t size>
+constexpr size_t CountFormatSpecifiers(StringLiteral<size> fmt)
+{
+    const char (&str)[size] = fmt.value;
+    size_t count = 0;
+    for (size_t i = 0; i < size; ++i)
+    {
+        if (str[i] == '%')
+        {
+            if(i + 1 < size && str[i + 1] == '%')
+                ++i;
+            else
+                count++;
+        }
+    }
+    
+    return count;
+}
+
+template<typename T>
+int PrintArgument(FILE* stream, T value)
 {
     int res = 0;
+    if constexpr (std::is_same_v<T, const char*> || std::is_same_v<T, char*> || std::is_same_v<T, std::string>)
+        res += fprintf(stream, "%s", value);
+    else if constexpr (std::is_same_v<T, char>)
+        res += fprintf(stream, "%c", value);
+    else if constexpr (std::is_integral_v<T>)
+        res += fprintf(stream, "%d", value);
+    else if constexpr (std::is_floating_point_v<T>)
+        res += fprintf(stream, "%f", value);
+    else if constexpr (std::is_same_v<T, String>)
+        res += fprintf(stream, "%.*s", (int)value.len, value.ptr);
+    else
+        static_assert(!std::is_same_v<T, T>, "Unsupported type for printing");
     
-    ScratchArena scratch;
-    for(int i = 0; fmt[i] != '\0'; ++i)
+    return res;
+}
+
+// This needs to be recursive because variadic templates... Sigh...
+// Base case for template recursion
+template<StringLiteral fmt, typename T>
+int PrintRec(FILE* stream, int firstChar, T firstArg)
+{
+    int res = 0;
+    const char (&str)[fmt.len] = fmt.value;
+    for(size_t i = firstChar; i < fmt.len - 1; ++i)
     {
-        if(fmt[i] == '%')
+        if(str[i] == '%')
         {
-            switch(fmt[i+1])
+            if((i + 1 < fmt.len - 1) && str[i + 1] == '%')
             {
-                default:
-                {
-                    putc(fmt[i], stream);
-                    putc(fmt[i+1], stream);
-                    res += 2;
-                    break;
-                }
-                case 'd':
-                {
-                    int toPrint = va_arg(args, int);
-                    res += fprintf(stream, "%d", toPrint);
-                    break;
-                }
-                case 'f':
-                {
-                    double toPrint = va_arg(args, double);
-                    res += fprintf(stream, "%f", toPrint);
-                    break;
-                }
-                case 'c':
-                {
-                    char toPrint = va_arg(args, int);
-                    putc(toPrint, stream);
-                    ++res;
-                    break;
-                }
-                case 's':
-                {
-                    char* toPrint = va_arg(args, char*);
-                    res += fprintf(stream, "%s", toPrint);
-                    break;
-                }
-                case '.':
-                {
-                    if(fmt[i+2] == '*' && fmt[i+3] == 's')
-                    {
-                        i += 2;
-                        int numChars = va_arg(args, int);
-                        char* toPrint = va_arg(args, char*);
-                        res += fprintf(stream, "%.*s", numChars, toPrint);
-                    }
-                    else
-                    {
-                        putc(fmt[i], stream);
-                        putc(fmt[i+1], stream);
-                        res += 2;
-                    }
-                    
-                    break;
-                }
-                // Custom specifiers
-                case 'T':  // TypeInfo*
-                {
-                    TypeInfo* toPrint = va_arg(args, TypeInfo*);
-                    String typeStr = TypeInfo2String(toPrint, scratch);
-                    res += fprintf(stream, "%.*s", (int)typeStr.len, typeStr.ptr);
-                    break;
-                }
-                case 'S':  // String
-                {
-                    static_assert(sizeof(String) >= sizeof(int));
-                    
-                    String toPrint = va_arg(args, String);
-                    res += fprintf(stream, "%.*s", (int)toPrint.len, toPrint.ptr);
-                    break;
-                }
+                fputc('%', stream);
+                ++i;
+                ++res;
             }
-            
-            ++i;
+            else
+            {
+                res += PrintArgument(stream, firstArg);
+                
+                // Keep going to print the rest of the string
+            }
         }
         else
         {
-            putc(fmt[i], stream);
+            fputc(str[i], stream);
             ++res;
         }
     }
     
     return res;
+}
+
+template<StringLiteral fmt, typename T, typename... Args>
+int PrintRec(FILE* stream, int firstChar, T firstArg, Args... args)
+{
+    int res = 0;
+    const char (&str)[fmt.len] = fmt.value;
+    for(size_t i = firstChar; i < fmt.len - 1; ++i)
+    {
+        if(str[i] == '%')
+        {
+            if((i + 1 < fmt.len - 1) && str[i + 1] == '%')
+            {
+                fputc('%', stream);
+                ++i;
+                ++res;
+            }
+            else
+            {
+                res += PrintArgument(stream, firstArg);
+                return res + PrintRec<fmt>(stream, i+1, args...);
+            }
+        }
+        else
+        {
+            fputc(str[i], stream);
+            ++res;
+        }
+    }
+    
+    // Should not get here
+    return res;
+}
+
+// Faster impl when not using args
+template<StringLiteral fmt>
+int Print(FILE* stream)
+{
+    static_assert(CountFormatSpecifiers(fmt) == 0, "Number of format specifiers does not match the number of arguments");
+    
+    int res = 0;
+    const char (&str)[fmt.len] = fmt.value;
+    for(size_t i = 0; i < fmt.len - 1; ++i)
+    {
+        fputc(str[i], stream);
+        ++res;
+    }
+    
+    return res;
+}
+
+template<StringLiteral fmt, typename... Args>
+int Print(FILE* stream, Args... args)
+{
+    static_assert(CountFormatSpecifiers(fmt) == sizeof...(args), "Number of format specifiers does not match the number of arguments");
+    
+    return PrintRec<fmt>(stream, 0, args...);
 }
 
 template<typename t>
@@ -733,7 +782,7 @@ FilePaths ParseCmdLineArgs(Slice<char*> argStrings)
             else if(extType == File_Obj)
                 paths.objFiles.Append(argStr.ptr);
             else if(extType == File_Unknown)
-                EPrint("Unknown file extension '.%s', will be ignored.\n", extStr);
+                EPrintln<"Unknown file extension '%', will be ignored.">(extStr);
             
             ++at;
             continue;

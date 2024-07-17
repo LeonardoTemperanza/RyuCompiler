@@ -91,13 +91,43 @@ void PrintMessageSource(Message* message);  // Print actual file content
 
 ////////
 // Print Utilities
-// Printing utilities (alternative to printf, which also works for my custom types, such as TypeInfo
-int Print(char* fmt, ...);
-int EPrint(char* fmt, ...);
-int Println(char* fmt, ...);
-int EPrintln(char* fmt, ...);
-int Print(FILE* stream, char* fmt, ...);
-int Print(FILE* stream, char* fmt, va_list args);
+// Printing utilities (alternative to printf, which also works for my custom types, such as TypeInfo and String)
+
+// Using variadic templates and all this nonsense to have
+// compile time errors for incorrect arguments. I love c++...
+// NOTE: size and len include a null terminator
+template<size_t size>
+struct StringLiteral
+{
+    char value[size];
+    static const size_t len = size;
+    
+    constexpr StringLiteral(const char (&str)[size])
+    {
+        std::copy(str, str + size, value);
+    }
+};
+
+template<StringLiteral fmt>
+int Print();
+template<StringLiteral fmt, typename... Args>
+int Print(Args... args);
+template<StringLiteral fmt>
+int EPrint();
+template<StringLiteral fmt, typename... Args>
+int EPrint(Args... args);
+template<StringLiteral fmt>
+int Println();
+template<StringLiteral fmt, typename... Args>
+int Println(Args... args);
+template<StringLiteral fmt>
+int EPrintln();
+template<StringLiteral fmt, typename... Args>
+int EPrintln(Args... args);
+template<StringLiteral fmt>
+int Print(FILE* stream);
+template<StringLiteral fmt, typename... Args>
+int Print(FILE* stream, Args... args);
 
 ////////
 // Command line arguments
