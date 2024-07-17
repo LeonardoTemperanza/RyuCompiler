@@ -694,7 +694,7 @@ void PrintTimeBenchmark(double frontend, double irGen, double backend, double li
     const int pad = 19;
     int numChars = 0;
     
-    printf("----- Timings -----\n");
+    Println<"----- Timings -----">();
     numChars = printf("Frontend:", frontend);
     printf("%*c%lfs\n", max(1, pad - numChars), ' ', frontend);
     numChars = printf("IR Generation:");
@@ -800,7 +800,7 @@ if(strcmp(argStr.ptr, string) == 0) { ++at; args.varName = ParseArg<type>(argStr
             // If not any other case
         {
             ++at;
-            fprintf(stderr, "Unknown command line argument: '%.*s', will be ignored. Use '-h' for more info.\n", (int)argStr.len, argStr.ptr);
+            EPrintln<"Unknown command line argument: '%', will be ignored. Use '-h' for more info.">(argStr);
         }
 #undef X
     }

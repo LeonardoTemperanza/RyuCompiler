@@ -311,9 +311,9 @@ static Token GetToken(Tokenizer* t)
             if(convFailed)
             {
                 SetErrorColor();
-                fprintf(stderr, "Error");
+                EPrint<"Error">();
                 ResetColor();
-                fprintf(stderr, ": Unidentified token\n");
+                EPrintln<": Unidentified token">();
                 result.kind = Tok_Error;
                 result.doubleValue = 0.0f;
             }

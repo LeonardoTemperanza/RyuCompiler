@@ -39,9 +39,9 @@ int main(int argCount, char** argValue)
     else if(noFiles)
     {
         SetErrorColor();
-        fprintf(stderr, "Error");
+        EPrint<"Error">();
         ResetColor();
-        fprintf(stderr, ": No input files.\n");
+        EPrintln<": No input files.">();
         return 1;
     }
     
@@ -92,7 +92,6 @@ int main(int argCount, char** argValue)
     
     if(status)
     {
-        //TestCodegen();
         //Tc_CodegenAndLink(fileAst, &interp, filePaths.objFiles);
     }
     

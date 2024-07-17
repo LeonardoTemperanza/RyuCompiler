@@ -51,7 +51,7 @@ bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
             
 #if DebugDep
             String phaseStr = Dg_CompPhase2Str(phase);
-            fprintf(stderr, "%.*s:\n", (int)phaseStr.len, phaseStr.ptr);
+            EPrintln<"%:">(phaseStr);
 #endif
             
             // Detect cycles and perform topological sorting
@@ -72,7 +72,7 @@ bool MainDriver(Parser* p, Interp* interp, Ast_FileScope* file)
     while(!done && progress);
     
     if(!done && !progress)
-        fprintf(stderr, "Internal error: Unable to resolve code dependencies and/or detect a cycle.\n");
+        EPrintln<"Internal error: Unable to resolve code dependencies and/or detect a cycle.">();
     
     return !graph.error;
 }
@@ -180,10 +180,25 @@ void Dg_PerformStage(DepGraph* graph, CompPhase phase)
             
             break;
         }
-        case CompPhase_ComputeSize: break;
+        case CompPhase_ComputeSize:
+        {
+            for(int i = 0; i < inputQueue->procs.len; ++i)
+            {
+                Dg_Idx id = inputQueue->procs[i].id;
+                auto proc = (Ast_ProcDef*)graph->items[id].node;
+                bool ok = ComputeSizeProc(t, proc);
+            }
+            
+            break;
+        }
         case CompPhase_Bytecode:
         {
-            
+            for(int i = 0; i < inputQueue->procs.len; ++i)
+            {
+                Dg_Idx id = inputQueue->procs[i].id;
+                auto proc = (Ast_ProcDef*)graph->items[id].node;
+                bool ok = CG_GenProc(t, proc);
+            }
             
             break;
         }
@@ -194,6 +209,8 @@ void Dg_PerformStage(DepGraph* graph, CompPhase phase)
             break;
         }
     }
+    
+    // Global variables, etc.
 }
 
 #if 0
@@ -367,13 +384,13 @@ bool Dg_DetectCycle(DepGraph* g, CompPhase phase)
             isCycle = true;
         
 #if DebugDep
-        fprintf(stderr, "Group %d, indices %d %d", groupId, start, end-1);
+        EPrint<"Group %, indices % %">(groupId, start, end-1);
 #endif
         
         if(isCycle)
         {
 #if DebugDep
-            fprintf(stderr, ", cycle\n");
+            EPrintln<", cycle\n">();
 #endif
             
             ++numCycles;
@@ -389,9 +406,8 @@ bool Dg_DetectCycle(DepGraph* g, CompPhase phase)
         }
         
 #if DebugDep
-        fprintf(stderr, "\n");
+        EPrintln<"">();
 #endif
-        
         start = end;
     }
     
@@ -478,9 +494,9 @@ void Dg_TopologicalSort(DepGraph* graph, Queue* queue)
 void Dg_ExplainCyclicDependency(DepGraph* g, Queue* q, Dg_Idx start, Dg_Idx end)
 {
     SetErrorColor();
-    fprintf(stderr, "Error");
+    EPrint<"Error">();
     ResetColor();
-    fprintf(stderr, ": Cyclic dependency was detected in the code; (TODO: complete message)\n");
+    EPrintln<": Cyclic dependency was detected in the code; (TODO: complete message)">();
     
 #if 0
     auto& startItem = g->items[q->input[start]];
@@ -605,7 +621,7 @@ void Dg_DebugPrintDeps(DepGraph* g)
 {
     ScratchArena scratch;
     
-    fprintf(stderr, "Graph:\n");
+    EPrintln<"Graph:">();
     
     for_array(i, g->items)
     {
@@ -623,27 +639,26 @@ void Dg_DebugPrintDeps(DepGraph* g)
                 nodeStr.ptr[j] = ' ';
         }
         
-        numChars += fprintf(stderr, "%.*s ... ", (int)nodeStr.len, nodeStr.ptr);
         String phase = Dg_CompPhase2Str(g->items[i].phase);
-        numChars += fprintf(stderr, "(%.*s)", (int)phase.len, phase.ptr);
+        numChars += EPrint<"% ... (%)">(nodeStr, phase);
         
         if(g->items[i].node->kind == AstKind_ProcDecl)
-            fprintf(stderr, " (decl)");
+            EPrint<" (decl)">();
         
         if(g->items[i].flags & Entity_Error)
-            fprintf(stderr, " (error)");
+            EPrint<" (error)">();
         
         auto& waitFor = g->items[i].waitFor;
         if(waitFor.len <= 0)
-            fprintf(stderr, " (no deps)\n");
+            EPrintln<" (no deps)">();
         
         for_array(j, waitFor)
         {
             int numSpaces = j > 0 ? numChars : 1;
             for(int i = 0; i < numSpaces; ++i)
-                fprintf(stderr, " ");
+                EPrint<" ">();
             
-            fprintf(stderr, "-> ");
+            EPrint<"-> ">();
             
             {
                 Token* start = g->items[waitFor[j].idx].node->where;
@@ -659,9 +674,9 @@ void Dg_DebugPrintDeps(DepGraph* g)
                         nodeStr.ptr[j] = ' ';
                 }
                 
-                fprintf(stderr, "%.*s ... ", (int)nodeStr.len, nodeStr.ptr);
+                EPrint<"% ... ">(nodeStr);
                 String phase = Dg_CompPhase2Str(waitFor[j].neededPhase);
-                fprintf(stderr, "(%.*s)\n", (int)phase.len, phase.ptr);
+                EPrintln<"(%)">(phase);
             }
         }
     }

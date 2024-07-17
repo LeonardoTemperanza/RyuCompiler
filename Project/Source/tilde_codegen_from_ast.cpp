@@ -19,11 +19,7 @@ void CG_Cleanup(CG_Ctx* ctx)
     ctx->module = nullptr;
 }
 
-void Codegen(Interp* interp, Dg_Entity* entity)
-{
-    ProfileFunc(prof);
-}
-
 void CG_Proc(Ast_ProcDef* proc)
 {
+    
 }

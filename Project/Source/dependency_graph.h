@@ -98,11 +98,18 @@ struct Dg_ProcDef
     TB_Function* ir;
 };
 
+struct Dg_GlobalVar
+{
+    Dg_Idx id;
+    
+    TB_Symbol* sym;
+};
+
 struct Queue
 {
     Array<Dg_ProcDef> procs;
-    // others
     
+    // Global variables, etc.
     
 };
 

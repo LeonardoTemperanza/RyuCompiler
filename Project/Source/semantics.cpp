@@ -6,8 +6,6 @@
 
 #include "semantics.h"
 
-// TODO TODO: missing compute size for procedures.
-
 // Primitive types
 
 Typer InitTyper(Arena* arena, Tokenizer* tokenizer)
@@ -1231,22 +1229,27 @@ bool ComputeSize(Typer* t, Ast_Node* node)
         case AstKind_ProcDef:
         {
             auto procDef = (Ast_ProcDef*)node;
-            for_array(i, procDef->declsFlat)
-            {
-                auto decl = procDef->declsFlat[i];
-                if(!FillInTypeSize(t, decl->type, decl->typeTok)) return false;
-            }
-            
-            for_array(i, procDef->toComputeSize)
-            {
-                if(!FillInTypeSize(t, procDef->toComputeSize[i], 0)) return false;
-            }
-            
-            return true;
+            return ComputeSizeProc(t, procDef);
         }
     } switch_nocheck_end;
     
     return false;
+}
+
+bool ComputeSizeProc(Typer* t, Ast_ProcDef* procDef)
+{
+    for_array(i, procDef->declsFlat)
+    {
+        auto decl = procDef->declsFlat[i];
+        if(!FillInTypeSize(t, decl->type, decl->typeTok)) return false;
+    }
+    
+    for_array(i, procDef->toComputeSize)
+    {
+        if(!FillInTypeSize(t, procDef->toComputeSize[i], 0)) return false;
+    }
+    
+    return true;
 }
 
 bool FillInTypeSize(Typer* t, TypeInfo* type, Token* errTok)
